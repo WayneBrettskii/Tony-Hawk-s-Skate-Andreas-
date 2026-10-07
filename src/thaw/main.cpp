@@ -19,6 +19,10 @@
 // Phase 1-2: also reads menus/level/pause state every 100 ms (read only), logs
 // changes, and tags each position line [menu] or [level].
 //
+// Phase 2-1: reads state and skater about every 15 ms and publishes them in the
+// shared block (version 2) for the GTA side. The log still gets one position
+// line per 100 ms. Still read only inside reTHAWed.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
@@ -271,11 +275,11 @@ struct StateTrack {
 };
 StateTrack g_state;
 
-// Read the game state; log anything that changed. Returns the tag for
+// Read the game state into `s`; log anything that changed. Returns the tag for
 // position lines: "[menu]", "[level]" or "[?]".
-const char* SampleGameState()
+const char* SampleGameState(mp::thaw::GameState& s)
 {
-    const mp::thaw::GameState s = mp::thaw::ReadGameState();
+    s = mp::thaw::ReadGameState();
     StateTrack& t = g_state;
     if (!s.readOk) {
         ++t.failures;
@@ -306,9 +310,11 @@ const char* SampleGameState()
     return "[?]";
 }
 
-void SampleSkater(const char* tag)
+// Read the skater into `s`. Writes a position line only when `logLine` is set
+// (10 times per second), but uses every sample for the once-per-second check.
+void SampleSkater(const char* tag, bool logLine, mp::thaw::SkaterSample& s)
 {
-    const mp::thaw::SkaterSample s = mp::thaw::ReadSkater();
+    s = mp::thaw::ReadSkater();
     SkaterTrack& t = g_track;
 
     if (!s.readOk) {
@@ -336,8 +342,9 @@ void SampleSkater(const char* tag)
 
     const ULONGLONG nowTick = GetTickCount64();
     const float speed = Length3(s.vel);
-    Log("skater %s: pos %.2f %.2f %.2f | vel %.2f %.2f %.2f | speed %.2f", tag, s.pos[0], s.pos[1],
-        s.pos[2], s.vel[0], s.vel[1], s.vel[2], speed);
+    if (logLine)
+        Log("skater %s: pos %.2f %.2f %.2f | vel %.2f %.2f %.2f | speed %.2f", tag, s.pos[0],
+            s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], speed);
 
     if (!t.haveStart) {
         for (int i = 0; i < 3; ++i) t.startPos[i] = s.pos[i];
@@ -391,7 +398,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough THAW plugin: loaded (phase 1-2, attempt 2)");
+    Log("my-passthrough THAW plugin: loaded (phase 2-1)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -420,19 +427,54 @@ DWORD WINAPI MainThread(LPVOID)
     const bool canReadState = CheckCodeGroup(mp::thaw::kGroupState, "state (menus/level/pause)");
     LogInFrontendJump();
 
-    // Loop every 100 ms: skater sample each time; heartbeat + link once per second.
+    // Loop as fast as Sleep(10) allows (about every 15 ms on Windows):
+    //   every pass:     read state + skater, publish to the link (phase 2-1)
+    //   every 100 ms:   one position line in the log (as before)
+    //   every second:   heartbeat, distance-vs-speed check, link report
     unsigned long beat = 0;
-    unsigned int tick = 0;
+    LONG published = 0;
+    ULONGLONG nextLog = GetTickCount64();
+    ULONGLONG nextSecond = nextLog + 1000;
     while (!g_stop) {
-        Sleep(100);
-        const char* tag = canReadState ? SampleGameState() : "[?]";
-        if (canReadSkater) SampleSkater(tag);
-        if (++tick % 10 != 0) continue;
+        Sleep(10);
+        const ULONGLONG now = GetTickCount64();
+        const bool logLine = now >= nextLog;
+        if (logLine) nextLog = now + 100;
+
+        mp::thaw::GameState state;
+        const char* tag = canReadState ? SampleGameState(state) : "[?]";
+        mp::thaw::SkaterSample sample;
+        if (canReadSkater) SampleSkater(tag, logLine, sample);
+
+        if (g_link) {
+            mp::SkaterShared shared;
+            if (canReadSkater && sample.readOk && sample.skater) {
+                shared.flags |= mp::kSkaterValid;
+                for (int i = 0; i < 3; ++i) {
+                    shared.pos[i] = sample.pos[i];
+                    shared.vel[i] = sample.vel[i];
+                }
+            }
+            if (canReadState && state.readOk) {
+                shared.flags |= mp::kStateValid;
+                if (state.inFrontend == 0) shared.flags |= mp::kInLevel;
+                if (state.paused == 1) shared.flags |= mp::kPaused;
+                shared.levelId = static_cast<LONG>(state.levelId);
+            }
+            shared.sampleTick = static_cast<LONG>(now & 0xFFFFFFFFu);
+            shared.sampleCount = ++published;
+            mp::PublishSkater(g_link, shared);
+        }
+
+        if (now < nextSecond) continue;
+        nextSecond += 1000;
+        if (nextSecond < now) nextSecond = now + 1000; // after a long stall, don't catch up
 
         ++beat;
         Log("heartbeat %lu", beat);
         if (canReadSkater) SkaterSecondCheck();
         ReportLink(beat);
+        if (g_link) Log("link: published %ld skater samples so far", published);
     }
     return 0;
 }

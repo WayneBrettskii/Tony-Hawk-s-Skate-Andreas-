@@ -2,6 +2,69 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Phase 2-1 tested: GTA receives reTHAWed's skater ~95 times per second
+
+**Changed:** no code. `README.md`, `docs/DESIGN.md` 8.6 updated.
+**Why:** record the test of step 2-1.
+**Tested how:** user built (all four targets built at 14:07, first time on Windows: `convert_test.exe` 121,344 bytes, THAW plugin 124,928, GTA plugin 148,992), ran GTA and the launcher, loaded a level, skated, paused and unpaused, back to menu, quit. Claude read `gta.log`, `thaw.log`, `launcher.log` and matched GTA's received samples against reTHAWed's own position lines.
+**Result:** works.
+- **Rate and freshness:** GTA logged 156 once-per-second reports: **93 to 96 new samples per second** (median 95; `Sleep(10)` gave ~10.5 ms here, faster than the 15 ms planned), samples **0 to 16 ms old** (median 0), **0 re-reads** needed (the sequence lock never caught a half-written sample). THAW side: 14,646 samples published in 156 s.
+- **Values match:** of 34 GTA reports while the skater was moving, 9 match a reTHAWed position line exactly (to 2 decimals); all 34 lie on reTHAWed's logged path within one 100 ms step (max 42 units at ~700 units/s); the two logs' clocks differ by a constant 62.8 s (GTA's log started first).
+- **States arrive correctly:** GTA saw `[state ?]`, `[menu]`, `[level]`, `[level, paused]`, then `[menu]` again, at the same moments reTHAWed logged them; level IDs `0x99CE4D72` (menus) and `0xBDC6CDE2` (this level).
+- **Unpause now confirmed:** reTHAWed's pause flag turned ON / off three times (36.4/95.5 s, 107.0/111.5 s, 119.8/151.6 s).
+- reTHAWed ran 156.4 s, exit code 0. Reading the skater ~95 times per second: **0 skater read failures**.
+**Still broken / not tested:** ~100 state read failures (access violations, caught) in reTHAWed's first 1.3 s of start-up, none after; harmless but noisy. Not known whether the user ran `convert_test.exe` on Windows (asked).
+**Next:** step 2-2 (skate mode moves CJ): first change to a game; user to confirm before it's written.
+
+## [2026-10-07] Phase 2-1: link v2, reTHAWed publishes the skater; conversion + unit test
+
+**Changed:**
+- `src/common/link.h`: shared block **version 2**, name `Local\MyPassthrough_v2`, 128 bytes. New: `thawSeq` (sequence lock), `thawFlags` (skater valid / state valid / in level / paused), `thawLevelId`, `thawPos[3]`, `thawVel[3]`, `thawSampleTick`, `thawSampleCount`, `gtaSkateMode` (for 2-2). Helpers `PublishSkater` (THAW, the only writer) and `ReadSkaterShared` (GTA; retries up to 8 times if the numbers change while being copied).
+- `src/thaw/main.cpp`: loop now `Sleep(10)` (about every 15 ms): reads state + skater and publishes every pass; position lines still logged every 100 ms; once per second also logs how many samples were published. Still read only inside reTHAWed.
+- `src/gta/main.cpp`: once per second logs the published skater (in level / menu / paused, level ID, position, velocity, sample number, age in ms, samples in the last second). Read only: nothing in GTA changed.
+- New `src/common/convert.h` (THAW → GTA mapping: scale 0.0254 m/unit, GTA x = THAW x, GTA y = THAW z × ySign, GTA z = THAW y; anchor-relative position; heading from velocity) and `src/common/convert_test.cpp`; `CMakeLists.txt` builds it as `convert_test.exe`.
+**Why:** step 2-1 of `docs/DESIGN.md` 8.6.
+**Tested how:** in Claude's cloud workspace: `convert_test.cpp` compiled with g++ (`-Wall -Wextra -Werror`) and run: **20 of 20 checks PASS**. `link.h` compiled against a small stand-in for `windows.h` (4-byte LONG, as on 32-bit Windows): block size is 128 bytes as required; publish → read round trip **9 of 9 checks PASS**, including refusing to read while the writer is mid-write. The plugins themselves: **not compiled, not tested** (no Windows compiler in the cloud).
+**Result:** none in the games yet.
+**Still broken / not tested:** not compiled on Windows. Reading the skater about 65 times per second from our own thread (was 10) is unsynchronised with reTHAWed; failures are caught and counted. GTA's heading formula in `convert.h` (atan2(-dx, dy)) is believed, not confirmed (that's for 2-2).
+**Next:** user builds, runs `build\Release\convert_test.exe`, then GTA (into a game) + the launcher; load a reTHAWed level, skate ~10 s, pause, unpause, back to menu, quit both. Claude compares `gta.log` with `thaw.log`.
+
+## [2026-10-07] Phase 2-0 tested: GTA keeps running while reTHAWed is in front
+
+**Changed:** no code. `README.md`, `docs/DESIGN.md` 8.6 updated.
+**Why:** record the test of `autoPause=0`.
+**Tested how:** user started GTA, loaded into a game, started our launcher, stayed in reTHAWed, came back, quit both. User: "GTA did not pause". Claude read `gta.log`, `thaw.log`, `launcher.log`.
+**Result:** works. GTA was in a game from 288.5 s; reTHAWed connected at 339.3 s and left at 388.4 s (ran 49.7 s, exit code 0). **GTA drew 60 frames and did 60 world updates per second throughout**, including all the time reTHAWed was in front (a few seconds at 54 to 59). reTHAWed's side saw GTA's drawn total rise +59 to +61 every second. **The Widescreen Fix setting is not needed.**
+**Still broken / not tested:** not checked whether GTA reads the keyboard/controller while it isn't in front (matters for phase 2-2).
+**Next:** step 2-1 (link v2: reTHAWed publishes the skater; GTA only logs it).
+
+## [2026-10-07] Phase 2-0: Windowed Mode autoPause turned off
+
+**Changed:** `D:\Games\GTA San Andreas\modloader\WindowedMode\iii.vc.sa.windowedmode.ini`: `autoPause=1` → `autoPause=0`. Only that character changed; the rest of the file is byte-for-byte the same (351 bytes before and after). Approved folder (AGENTS.md); not in the repo. To undo: set it back to 1.
+**Why:** step 2-0 of `docs/DESIGN.md` 8.6: GTA must keep running while reTHAWed is in front.
+**Tested how:** read the file back from the PC after writing: matches, shows `autoPause=0`. Not yet tested in the game.
+**Result:** setting changed.
+**Still broken / not tested:** unknown whether this is enough. GTA may also pause itself when it loses focus (Widescreen Fix has a separate `AllowAltTabbingWithoutPausing` option, currently 0, in a folder not approved).
+**Next:** user test: GTA into a game, then the launcher, stay in reTHAWed ~20 s; Claude checks GTA's drawn frames in `gta.log` / `thaw.log`.
+
+## [2026-10-07] Phase 2 plan: L3 + R3 added as a skate mode toggle; one monitor
+
+**Changed:** `docs/DESIGN.md` 8.6: skate mode toggles with F7 **or clicking both sticks (L3 + R3)**, only while GTA is in front; test and risks updated for a single monitor. No code.
+**Why:** user's request; user has one monitor.
+**Tested how:** nothing to run. Checked plugin-sdk: GTA's controller state has `ShockButtonL` and `ShockButtonR` (`CPad` `NewState`); plugin-sdk's comment: R3 = look behind. In GTA on foot, L3 is crouch.
+**Result:** plan updated.
+**Still broken / not tested:** pressing L3 + R3 may make CJ crouch / look behind for a moment; we'll try hiding the combo from GTA. Unknown whether reTHAWed reacts to the combo while in the background.
+**Next:** user approves; step 2-0.
+
+## [2026-10-07] Phase 2 plan written (CJ follows the skater)
+
+**Changed:** `docs/DESIGN.md`: new section 8.6. No code.
+**Why:** next phase; plan before code; first phase that changes a game.
+**Tested how:** nothing to run. Research in plugin-sdk's source (commit `15f15b60`): `FindPlayerPed`, `SetPosn`, `m_fHeadingCurrent/Goal` (`+0x558/+0x55C`), `m_vecMoveSpeed` (`+0x44`), `CPad::DisablePlayerControls` (`+0x10E`, flag set; plugin-sdk marks bits 1 and 4 unused), `CTimer::m_UserPause/m_CodePause`, `CCutsceneMgr::ms_running`, `TheCamera.m_bWideScreenOn`, `CPlayerInfo::m_nPlayerState`, `CWorld::FindGroundZFor3DCoord`. Hotkeys of installed mods read from their settings files: F5 (limit adjuster), F10/F11 (SkyGFX); Windowed Mode uses Alt+Enter.
+**Result:** three steps: 2-0 GTA keeps running when not in front (settings only), 2-1 link v2 publishes the skater (no game changes), 2-2 F7 skate mode moves CJ.
+**Still broken / not tested:** everything in phase 2. Open: unit size, left/right mirroring, GTA pausing when unfocused, GInput reading the controller while unfocused, whether bit 4 of the control flags is really unused.
+**Next:** user approves the plan; then step 2-0.
+
 ## [2026-10-07] Phase 1-2 attempt 2 tested: menus vs level works
 
 **Changed:** no code. `README.md`, `docs/DESIGN.md` 8.5 updated.

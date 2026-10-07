@@ -80,3 +80,10 @@ target_compile_features(launcher PRIVATE cxx_std_17)
 target_compile_definitions(launcher PRIVATE
     "MP_LOG_DIR=\"${MP_LOG_DIR}\"" "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"" UNICODE _UNICODE)
 add_dependencies(launcher thaw_plugin) # building the launcher also builds the plugin
+
+# --- Unit test for the THAW -> GTA conversion (src/common/convert.h) ---
+# Run: build\Release\convert_test.exe  (prints PASS/FAIL lines, then ALL PASSED)
+add_executable(convert_test src/common/convert_test.cpp)
+set_target_properties(convert_test PROPERTIES
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_compile_features(convert_test PRIVATE cxx_std_17)

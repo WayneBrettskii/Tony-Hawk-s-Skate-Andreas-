@@ -14,6 +14,9 @@
 // writes its own process id, beat and drawn-frame total there, and logs the
 // THAW side's process id and beat.
 //
+// Phase 2-1: once per second also logs the skater the THAW side publishes
+// (shared block version 2). Read only: nothing in GTA is changed.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
@@ -216,6 +219,41 @@ void SetUpLink()
 }
 
 // Log the other side once per second: connected / not connected, and its beat.
+// Phase 2-1: once per second, read the skater the THAW side published and log
+// it. Read only: nothing in GTA is changed.
+void LogThawSkater()
+{
+    static LONG lastCount = -1;
+    if (!g_link || g_link->thawPid == 0) {
+        lastCount = -1;
+        return;
+    }
+    mp::SkaterShared s;
+    int retries = 0;
+    if (!mp::ReadSkaterShared(g_link, s, retries)) {
+        Log("link skater: could not get a stable copy (%d tries)", retries);
+        return;
+    }
+    const LONG now = static_cast<LONG>(GetTickCount64() & 0xFFFFFFFFu);
+    const LONG ageMs = now - s.sampleTick;
+    const LONG perSecond = (lastCount < 0) ? 0 : s.sampleCount - lastCount;
+    lastCount = s.sampleCount;
+
+    const char* where = !(s.flags & mp::kStateValid) ? "state ?"
+                        : (s.flags & mp::kInLevel)  ? "level"
+                                                    : "menu";
+    if (s.flags & mp::kSkaterValid) {
+        Log("link skater: [%s%s] level 0x%08lX | pos %.2f %.2f %.2f | vel %.2f %.2f %.2f | "
+            "sample #%ld, %ld ms old, %ld new in the last second%s",
+            where, (s.flags & mp::kPaused) ? ", paused" : "", s.levelId, s.pos[0], s.pos[1], s.pos[2],
+            s.vel[0], s.vel[1], s.vel[2], s.sampleCount, ageMs, perSecond,
+            retries ? " (had to re-read)" : "");
+    } else {
+        Log("link skater: [%s%s] no skater | sample #%ld, %ld ms old, %ld new in the last second", where,
+            (s.flags & mp::kPaused) ? ", paused" : "", s.sampleCount, ageMs, perSecond);
+    }
+}
+
 void LogPeer(const char* name, LONG pid, LONG beat, mp::PeerWatch& w)
 {
     if (pid == 0) {
@@ -238,7 +276,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough GTA plugin: loaded (phase 0c)");
+    Log("my-passthrough GTA plugin: loaded (phase 2-1)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -309,6 +347,7 @@ DWORD WINAPI MainThread(LPVOID)
             InterlockedExchange(&g_link->gtaBeat, static_cast<LONG>(second));
             InterlockedExchange(&g_link->gtaDrawn, static_cast<LONG>(draw));
             LogPeer("THAW", g_link->thawPid, g_link->thawBeat, thawWatch);
+            LogThawSkater();
         }
 
         // 5 s in: has another mod re-hooked the same places since we did?
