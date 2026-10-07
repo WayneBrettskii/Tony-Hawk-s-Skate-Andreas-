@@ -2,6 +2,48 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Phase 1-2 attempt 2 tested: menus vs level works
+
+**Changed:** no code. `README.md`, `docs/DESIGN.md` 8.5 updated.
+**Why:** record the test of attempt 2.
+**Tested how:** user built (THAW plugin 124,416 bytes), ran the launcher: main menu, loaded a level, skated, paused, back to the main menu, quit. Claude read `thaw.log`, `launcher.log`.
+**Result:** works.
+- All 9 code checks `MATCH` (InFrontend now checked on its first 8 bytes only). Both groups enabled.
+- **InFrontend's jump confirmed redirected by reTHAWed:** `E9 03 C9 3F 60` = jump to `0x60996F70`, **inside `D:\Games\reTHAWed\rthw.dll`**. The original check at `0x00594310` still answers correctly.
+- Timeline: 1.6 s in front end **YES**, level ID `0x99CE4D72` (menus); 11.3 s in front end **no**, level ID `0xD94DB0CB` (the level); 21.1 s paused flag **ON**, skater position frozen from that moment; 29.9 s in front end **YES**, level ID back to `0x99CE4D72`, paused flag off.
+- Position line tags: `[menu]` 2.3 to 11.2 s, `[level]` 11.3 to 29.8 s, `[menu]` 29.9 to 40.6 s.
+- One state read failure at 0.3 s (access violation `0xC0000005`, game still starting up), caught; none after.
+- **While paused, velocity still reads ~534** although the skater doesn't move: velocity is not reset on pause, so later code must use the pause flag.
+**Still broken / not tested:** **unpausing not observed**: the game stayed paused from 21.1 s until the return to the menu at 29.9 s (user apparently quit to menu from the pause menu), so "flag turns off on unpause" is not tested. reTHAWed's own replacement for InFrontend (in `rthw.dll`) was not looked at; not needed so far.
+**Next:** phase 1 done (apart from the unpause check). Plan phase 2: CJ follows the skater.
+
+## [2026-10-07] Phase 1-2 attempt 2: separate check groups; log where InFrontend's jump goes
+
+**Changed:** `src/thaw/skater.h/.cpp`: each code check now belongs to a group (skater or state); the InFrontend check covers only its first 8 bytes (`mov eax,[0x8A3B5C]; mov ecx,[eax+0x20]`); new `ReadInFrontendJump()` reads the 5-byte jump at `0x0059A668`, works out its target and which loaded file contains it. `src/thaw/main.cpp`: checks each group separately (a failure only disables its own group); logs the InFrontend jump once at start; state reading and skater reading run independently. Still calls the original check at `0x00594310`. `docs/DESIGN.md` 8.5: note added.
+**Why:** attempt 1 failed (previous entry).
+**Tested how:** not tested, not compiled.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. If reTHAWed redirected InFrontend for a reason, the original check at `0x00594310` may not answer "menus?" the way reTHAWed does; the test will show it. This is attempt 2 of 2: if it fails, Claude stops and writes `STATUS.md`.
+**Next:** same test as attempt 1 (menu ~5 s, level, skate, pause ~5 s, unpause, quit to menu, quit).
+
+## [2026-10-07] Phase 1-2 attempt 1 FAILED: a code check didn't match in the running game
+
+**Changed:** no code in this entry (fix is the next entry).
+**Why:** record the failed test.
+**Tested how:** user built and ran the menus / level / pause / back-to-menu test. Claude read `thaw.log`, `launcher.log`.
+**Result:** 8 of 9 code checks matched; **`0x0059A660` (InFrontend) DIFFERENT at byte 9: expected `A3`, found `03`**. Byte 9 is inside InFrontend's final jump (to `0x00594310` in the file), so in the running game that jump points somewhere else; most likely reTHAWed's `rthw.dll` redirects `InFrontend` to its own code (not yet confirmed). Because the checks were all-or-nothing, the plugin then read **neither** the state **nor the skater** ("code checks FAILED; not reading the skater"). No harm: nothing was read or written; reTHAWed ran 69.9 s and exited normally (exit code 0); 69 heartbeats. **No data on menus/level/pause from this run.**
+**Lessons:** (1) reTHAWed patches some of THAW's functions in memory, so a byte check against the file can fail in the running game; (2) skater and state checks must not block each other.
+**Next:** attempt 2 (of 2 before writing STATUS.md): separate the two groups of checks; for InFrontend check only the unchanged first 8 bytes and log where its jump goes now (and in which module); keep calling the original check `0x00594310` (which matched).
+
+## [2026-10-07] Phase 1-2: tell reTHAWed's menus from a level (read only)
+
+**Changed:** `docs/DESIGN.md`: new section 8.5 (plan). `src/thaw/skater.h/.cpp`: 4 more code checks (`0x0059A660`, `0x00594310`, `0x0059C230`, `0x0059BD30`; exact bytes copied from the game file); new `ReadGameState()` in its own exception protection: game-flow pointer at `0x008A3B5C`, "in front end" by calling `0x00594310` on the object at game-flow `+0x20`, level ID at game-flow `+0x64`, pause flag byte at `0x007CDD2C`. `src/thaw/main.cpp`: reads it every 100 ms, logs each value when it changes, tags position lines `[menu]` / `[level]` / `[?]`. `README.md` updated.
+**Why:** reTHAWed has a skater in its menus too; phase 2 must only follow the skater in a level.
+**Tested how:** not tested, not compiled. Research: disassembled the script commands `InFrontend`, `GetCurrentLevel`, `GameIsPaused` and the table lookup `0x004D0510` (only reads; if the entry is missing, `0x00594310` would read an invalid address, which our exception protection catches).
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. If any of the now 9 code checks fails, the plugin reads neither skater nor state (all-or-nothing). Unknown whether the pause flag is set by the pause menu.
+**Next:** user builds; launcher; main menu ~5 s; load a level; skate a little; pause ~5 s; unpause; quit to main menu; quit. Claude reads `thaw.log`.
+
 ## [2026-10-07] Phase 1-1 tested: skater position and velocity found and confirmed
 
 **Changed:** no code. `README.md`, `docs/DESIGN.md` (sections 4 and 8.4) updated.

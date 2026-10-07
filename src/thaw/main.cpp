@@ -16,6 +16,9 @@
 // (read only; see skater.h) and logs them; once per second it checks whether the
 // distance moved matches the average speed.
 //
+// Phase 1-2: also reads menus/level/pause state every 100 ms (read only), logs
+// changes, and tags each position line [menu] or [level].
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
@@ -194,13 +197,15 @@ void ReportLink(unsigned long beat)
 
 // ---- Phase 1: the skater (read only; see skater.h) ----
 
-// Check the game code at every address we rely on. All must match.
-bool CheckSkaterCode()
+// Check the game code for one group of addresses. All in the group must match;
+// a failure only disables that group (lesson from phase 1-2 attempt 1).
+bool CheckCodeGroup(int group, const char* name)
 {
     unsigned int count = 0;
     const mp::thaw::CodeCheck* checks = mp::thaw::CodeChecks(count);
     bool allOk = true;
     for (unsigned int i = 0; i < count; ++i) {
+        if (checks[i].group != group) continue;
         unsigned int at = 0;
         unsigned char found = 0;
         if (mp::thaw::RunCodeCheck(checks[i], at, found)) {
@@ -211,9 +216,24 @@ bool CheckSkaterCode()
             allOk = false;
         }
     }
-    Log(allOk ? "skater: code checks passed; reading the skater every 100 ms"
-              : "skater: code checks FAILED; not reading the skater (game version differs?)");
+    Log(allOk ? "%s: code checks passed; reading every 100 ms"
+              : "%s: code checks FAILED; not reading it", name);
     return allOk;
+}
+
+// Where does InFrontend's final jump go in the running game? (file: 0x00594310)
+void LogInFrontendJump()
+{
+    const mp::thaw::JumpInfo j = mp::thaw::ReadInFrontendJump();
+    if (!j.isJump) {
+        Log("InFrontend jump at 0x0059A668: %02X %02X %02X %02X %02X = NOT a jump",
+            j.bytes[0], j.bytes[1], j.bytes[2], j.bytes[3], j.bytes[4]);
+        return;
+    }
+    Log("InFrontend jump at 0x0059A668: %02X %02X %02X %02X %02X = jump to 0x%08lX (%s), inside %ls",
+        j.bytes[0], j.bytes[1], j.bytes[2], j.bytes[3], j.bytes[4], j.target,
+        j.target == 0x00594310 ? "the original check" : "NOT the original 0x00594310",
+        j.module[0] ? j.module : L"(no loaded file)");
 }
 
 // What we remember between samples.
@@ -239,7 +259,54 @@ float Length3(const float v[3])
     return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 
-void SampleSkater()
+// ---- Phase 1-2: menus / level / pause ----
+
+struct StateTrack {
+    bool logged = false;
+    unsigned long gameFlow = 0;
+    int inFrontend = -2;
+    unsigned long levelId = 0;
+    int paused = -2;
+    unsigned long failures = 0;
+};
+StateTrack g_state;
+
+// Read the game state; log anything that changed. Returns the tag for
+// position lines: "[menu]", "[level]" or "[?]".
+const char* SampleGameState()
+{
+    const mp::thaw::GameState s = mp::thaw::ReadGameState();
+    StateTrack& t = g_state;
+    if (!s.readOk) {
+        ++t.failures;
+        if (t.failures == 1 || t.failures % 50 == 0)
+            Log("state: read failed (exception 0x%08lX), %lu so far", s.exceptionCode, t.failures);
+        return "[?]";
+    }
+    if (!t.logged || s.gameFlow != t.gameFlow) {
+        Log("state: game-flow pointer at 0x008A3B5C = 0x%08lX%s", s.gameFlow, s.gameFlow ? "" : " (none)");
+        t.gameFlow = s.gameFlow;
+    }
+    if (!t.logged || s.inFrontend != t.inFrontend) {
+        Log("state: in front end (menus) = %s",
+            s.inFrontend == 1 ? "YES" : s.inFrontend == 0 ? "no" : "unknown");
+        t.inFrontend = s.inFrontend;
+    }
+    if (!t.logged || s.levelId != t.levelId) {
+        Log("state: level ID = 0x%08lX", s.levelId);
+        t.levelId = s.levelId;
+    }
+    if (!t.logged || s.paused != t.paused) {
+        Log("state: paused flag at 0x007CDD2C = %s", s.paused == 1 ? "ON" : "off");
+        t.paused = s.paused;
+    }
+    t.logged = true;
+    if (s.inFrontend == 1) return "[menu]";
+    if (s.inFrontend == 0) return "[level]";
+    return "[?]";
+}
+
+void SampleSkater(const char* tag)
 {
     const mp::thaw::SkaterSample s = mp::thaw::ReadSkater();
     SkaterTrack& t = g_track;
@@ -269,8 +336,8 @@ void SampleSkater()
 
     const ULONGLONG nowTick = GetTickCount64();
     const float speed = Length3(s.vel);
-    Log("skater: pos %.2f %.2f %.2f | vel %.2f %.2f %.2f | speed %.2f", s.pos[0], s.pos[1], s.pos[2],
-        s.vel[0], s.vel[1], s.vel[2], speed);
+    Log("skater %s: pos %.2f %.2f %.2f | vel %.2f %.2f %.2f | speed %.2f", tag, s.pos[0], s.pos[1],
+        s.pos[2], s.vel[0], s.vel[1], s.vel[2], speed);
 
     if (!t.haveStart) {
         for (int i = 0; i < 3; ++i) t.startPos[i] = s.pos[i];
@@ -324,7 +391,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough THAW plugin: loaded (phase 1-1)");
+    Log("my-passthrough THAW plugin: loaded (phase 1-2, attempt 2)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -349,14 +416,17 @@ DWORD WINAPI MainThread(LPVOID)
     LogModules();
 
     SetUpLink();
-    const bool canReadSkater = CheckSkaterCode();
+    const bool canReadSkater = CheckCodeGroup(mp::thaw::kGroupSkater, "skater");
+    const bool canReadState = CheckCodeGroup(mp::thaw::kGroupState, "state (menus/level/pause)");
+    LogInFrontendJump();
 
     // Loop every 100 ms: skater sample each time; heartbeat + link once per second.
     unsigned long beat = 0;
     unsigned int tick = 0;
     while (!g_stop) {
         Sleep(100);
-        if (canReadSkater) SampleSkater();
+        const char* tag = canReadState ? SampleGameState() : "[?]";
+        if (canReadSkater) SampleSkater(tag);
         if (++tick % 10 != 0) continue;
 
         ++beat;

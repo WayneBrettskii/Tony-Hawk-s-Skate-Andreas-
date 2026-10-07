@@ -16,13 +16,15 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 - **Link between the two games** (phase 0c-1, tested 2026-10-07): both sides see each other's once-per-second beat through shared memory.
 - **Reading the skater in reTHAWed** (phase 1-1, tested 2026-10-07, read only): position and velocity, 10 times per second, confirmed by the distance-vs-speed check (ratio 1.00 to 1.02 skating straight). In THAW, Y is up; pushing speed ~500 units/s.
+- **Menus vs level vs paused in reTHAWed** (phase 1-2, tested 2026-10-07, read only): "in menus" YES/no and the level ID change correctly; pause flag turns on when paused.
 
 ## What doesn't work / not tested
 
 - **GTA in exclusive full screen freezes reTHAWed** when you switch back to reTHAWed (not caused by our code; happens without it). Run GTA in a window instead (see Requirements). With GTA in a window our full setup works (tested 2026-10-07, GTA on its main menu; not yet tested with GTA in a loaded game).
 - GTA pauses itself while it is not the front window.
 - No hooks inside reTHAWed yet.
-- THAW's unit size is not confirmed (probably inches). Can't yet tell reTHAWed's menu skater from the in-level skater.
+- THAW's unit size is not confirmed (probably inches).
+- reTHAWed's pause flag turning off when you unpause: not tested yet.
 - Everything else in `docs/DESIGN.md`: not started.
 
 ## Requirements
