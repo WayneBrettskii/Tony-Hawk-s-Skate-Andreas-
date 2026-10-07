@@ -1,0 +1,54 @@
+# WHITELIST .gitignore (see AGENTS.md, rule 2)
+# Step 1: ignore everything.
+# Step 2: allow back in only the file types listed below.
+# Step 3: block folders that must never be tracked, even if they contain allowed types.
+# Later lines win over earlier lines, so the order matters.
+
+# --- Step 1: ignore everything ---
+*
+
+# Let git look inside folders (folders themselves are never tracked, only files)
+!*/
+
+# --- Step 2: allowed files ---
+
+# This file and git settings
+!/.gitignore
+!/.gitattributes
+
+# Project docs: top-level markdown files and anything in docs/
+!/*.md
+!/docs/**/*.md
+
+# Mod source code (only inside src/)
+!/src/**/*.cpp
+!/src/**/*.c
+!/src/**/*.h
+!/src/**/*.hpp
+!/src/**/*.inl
+!/src/**/*.def
+!/src/**/*.rc
+
+# Build setup (Visual Studio / CMake)
+!/CMakeLists.txt
+!/src/**/CMakeLists.txt
+!/cmake/**/*.cmake
+!/*.sln
+!/*.vcxproj
+!/*.vcxproj.filters
+!/*.props
+
+# Our own helper scripts (only inside tools/)
+!/tools/**/*.ps1
+!/tools/**/*.py
+
+# --- Step 3: never track these, no matter what is inside ---
+/extracted/
+/extern/
+/build/
+/out/
+/bin/
+/obj/
+/logs/
+/.vs/
+*.log
