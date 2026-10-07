@@ -2,6 +2,27 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Phase 0b-2 tested: our plugin runs inside reTHAWed
+
+**Changed:** no code. `README.md` and `docs/DESIGN.md` 8.2 updated.
+**Why:** record the test of step 0b-2.
+**Tested how:** user built (launcher 152,064 bytes, THAW plugin 117,248 bytes), switched the controller on, ran `build\Release\my-passthrough-launcher.exe`, used reTHAWed's menus with the controller, quit. Claude read `logs\launcher.log`, `logs\thaw.log`, and reTHAWed's `debug.txt` (compared with the normal launch from 00:30).
+**Result:** works. No antivirus warning reported.
+- Launcher: `rthw.dll found 0.125 s after start`; `inject: LoadLibraryW finished in 0.172 s, result 0x6A540000 (loaded)`; `confirmed: my-passthrough-thaw.dll is loaded in reTHAWed (57 program files now)`; game closed after 25.0 s, exit code 0.
+- THAW plugin: `game exe: D:\Games\reTHAWed\reTHAWed.exe`, size `MATCH`; `module list: 57 program files; rthw.dll PRESENT; this plugin PRESENT`; `heartbeat 1` to `heartbeat 24`. New modules since the launcher's list: our plugin plus `CoreMessaging.dll`, `inputhost.dll`, `uxtheme.dll` (Windows window and input libraries, loaded as the game opened its window).
+- reTHAWed's `debug.txt`: start-up identical to the normal launch, including `Detected controller "PS5 Controller"` and `Added player 1: PS5 Controller`. One difference: the normal launch also logged `Joystick added: Xbox 360 Controller`; this one didn't (probably no second/virtual controller this time; not checked).
+**Still broken / not tested:** no hooks inside THAW yet; no link between the two games yet. Tested on reTHAWed's menus only, not while skating.
+**Next:** user chooses: phase 0c (link: both sides see each other's counter via shared memory) or 0b-3 (find a per-frame spot inside THAW).
+
+## [2026-10-07] Phase 0b-2: THAW plugin, loaded into reTHAWed by the launcher
+
+**Changed:** new `src/thaw/main.cpp` (`my-passthrough-thaw.dll`: logs to `logs\thaw.log`: loaded, exe path/size check, module list with `rthw.dll` and itself marked PRESENT/MISSING, heartbeat once per second; no hooks). `src/launcher/main.cpp`: checks the plugin exists before starting the game; after `rthw.dll` appears, loads the plugin into reTHAWed (memory for the path, copy path, run `LoadLibraryW` on a thread in the game, wait up to 10 s, log result), then confirms the plugin is in the game's module list. `CMakeLists.txt`: `thaw_plugin` target; building the launcher builds the plugin. `README.md` updated.
+**Why:** step 0b-2 of `docs/DESIGN.md` 8.2.
+**Tested how:** not tested, not compiled.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. Windows Defender may react to the launcher loading code into another program. Not yet tested with a controller on through our launcher.
+**Next:** user builds, switches the controller on, runs the launcher, looks around reTHAWed ~30 s, quits. Claude reads `logs\launcher.log`, `logs\thaw.log` and reTHAWed's `debug.txt`.
+
 ## [2026-10-07] Phase 0b-1 tested: our launcher starts reTHAWed normally
 
 **Changed:** no code. `README.md` updated.

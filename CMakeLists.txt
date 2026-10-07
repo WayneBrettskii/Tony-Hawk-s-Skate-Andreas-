@@ -60,6 +60,15 @@ if(GTA_DEPLOY_DIR)
         COMMENT "Copying my-passthrough.asi to ${GTA_DEPLOY_DIR}")
 endif()
 
+# --- reTHAWed plugin: my-passthrough-thaw.dll (loaded into reTHAWed by the launcher) ---
+# Stays in the build folder next to the launcher; nothing goes into the reTHAWed install.
+add_library(thaw_plugin SHARED src/thaw/main.cpp)
+set_target_properties(thaw_plugin PROPERTIES
+    OUTPUT_NAME "my-passthrough-thaw"
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_compile_features(thaw_plugin PRIVATE cxx_std_17)
+target_compile_definitions(thaw_plugin PRIVATE "MP_LOG_DIR=\"${MP_LOG_DIR}\"")
+
 # --- Launcher: my-passthrough-launcher.exe (starts reTHAWed) ---
 # Stays in the build folder; nothing is copied into the reTHAWed install.
 set(RETHAWED_DIR "D:/Games/reTHAWed" CACHE PATH "reTHAWed install folder (read only)")
@@ -70,3 +79,4 @@ set_target_properties(launcher PROPERTIES
 target_compile_features(launcher PRIVATE cxx_std_17)
 target_compile_definitions(launcher PRIVATE
     "MP_LOG_DIR=\"${MP_LOG_DIR}\"" "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"" UNICODE _UNICODE)
+add_dependencies(launcher thaw_plugin) # building the launcher also builds the plugin

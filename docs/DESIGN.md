@@ -160,7 +160,7 @@ Expected (to be confirmed, not known yet):
 | Step | What | Done when |
 |---|---|---|
 | 0b-1 | Build both pieces. **Before** injecting anything: launcher only starts reTHAWed and waits for `rthw.dll`, then logs and stops. | reTHAWed runs normally from our launcher; `launcher.log` shows `rthw.dll` found and how long it took; reTHAWed's own `debug.txt` starts the same way as a normal launch |
-| 0b-2 | Launcher also injects our plugin. | `thaw.log` shows "loaded", `reTHAWed.exe` + MATCH, `rthw.dll` in the module list, rising heartbeat; reTHAWed plays normally |
+| 0b-2 | Launcher also injects our plugin. | **Done 2026-10-07:** plugin loaded 0.3 s after start, `rthw.dll PRESENT; this plugin PRESENT`, 24 heartbeats, normal exit, controller detected (step 0b-1 also done: identical start-up to a normal launch) |
 | 0b-3 (later, own plan) | Find a once-per-frame spot inside THAW to hook (no plugin-sdk here, so this needs reverse engineering). | Planned separately |
 
 **Test procedure (both steps):** user runs `build\Release\my-passthrough-launcher.exe` (from the project folder), plays reTHAWed's menus for ~30 s, quits normally. Claude reads `logs\launcher.log`, `logs\thaw.log` and reTHAWed's `debug.txt` (read-only).

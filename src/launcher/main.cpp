@@ -1,14 +1,18 @@
 // my-passthrough launcher
 //
-// Phase 0b-1: starts reTHAWed and watches it. It does NOT load anything into
-// the game yet. Steps, all written to logs\launcher.log (and the console):
+// Phase 0b-2: starts reTHAWed and loads our THAW plugin into it.
+// Steps, all written to logs\launcher.log (and the console):
 //   1. check D:\Games\reTHAWed\reTHAWed.exe exists and is the expected size
-//      (we never start THAW.exe, the retail exe with SecuROM; see AGENTS.md rule 5)
+//      (we never start THAW.exe, the retail exe with SecuROM; see AGENTS.md rule 5),
+//      and that our plugin my-passthrough-thaw.dll is next to this launcher
 //   2. start reTHAWed.exe from its own folder, like reTHAWed's launcher does
 //      (no updater, no start-up options)
 //   3. wait until reTHAWed's own code (rthw.dll) is loaded in the game, and log
 //      how long that took plus the list of loaded program files
-//   4. wait for the game to close and log how it closed
+//   4. load our plugin into the game: copy its path into the game's memory and
+//      ask the game to run Windows' LoadLibraryW on it ("DLL injection").
+//      This adds our code; it changes no game files and no protection.
+//   5. wait for the game to close and log how it closed
 //
 // It only reads from the reTHAWed folder; it never writes there.
 
@@ -95,11 +99,74 @@ bool HasModule(const std::vector<std::wstring>& names, const wchar_t* wanted)
     return false;
 }
 
+// Full path of our THAW plugin: next to this launcher exe.
+std::wstring PluginPath()
+{
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    std::wstring p = self;
+    const size_t slash = p.find_last_of(L'\\');
+    p = (slash == std::wstring::npos) ? L"" : p.substr(0, slash + 1);
+    return p + L"my-passthrough-thaw.dll";
+}
+
+// Load our plugin into the game. Logs every step; returns true on success.
+bool InjectPlugin(HANDLE process, const std::wstring& dllPath)
+{
+    const SIZE_T bytes = (dllPath.size() + 1) * sizeof(wchar_t);
+
+    // a) room in the game's memory for the path text
+    void* remote = VirtualAllocEx(process, nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!remote) {
+        Log("inject: could not reserve memory in the game (Windows error %lu)", GetLastError());
+        return false;
+    }
+    // b) copy the path there
+    SIZE_T written = 0;
+    if (!WriteProcessMemory(process, remote, dllPath.c_str(), bytes, &written) || written != bytes) {
+        Log("inject: could not copy the plugin path (Windows error %lu)", GetLastError());
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return false;
+    }
+    // c) LoadLibraryW lives in kernel32.dll, which Windows loads at the same address
+    //    in every 32-bit program, so our address for it is valid in the game too.
+    auto loadLibrary = reinterpret_cast<LPTHREAD_START_ROUTINE>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryW"));
+    if (!loadLibrary) {
+        Log("inject: could not find LoadLibraryW (Windows error %lu)", GetLastError());
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return false;
+    }
+    // d) run LoadLibraryW(path) on a new thread inside the game
+    const ULONGLONG t0 = GetTickCount64();
+    HANDLE thread = CreateRemoteThread(process, nullptr, 0, loadLibrary, remote, 0, nullptr);
+    if (!thread) {
+        Log("inject: could not start the loading thread (Windows error %lu)", GetLastError());
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return false;
+    }
+    const DWORD wait = WaitForSingleObject(thread, 10000);
+    if (wait != WAIT_OBJECT_0) {
+        // Still running: leave the memory alone, the game may still be using it.
+        Log("inject: loading did not finish within 10 s (wait result %lu)", wait);
+        CloseHandle(thread);
+        return false;
+    }
+    // e) the thread's exit code is LoadLibraryW's result: 0 means it failed
+    DWORD result = 0;
+    GetExitCodeThread(thread, &result);
+    CloseHandle(thread);
+    VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+    Log("inject: LoadLibraryW finished in %.3f s, result 0x%08lX (%s)",
+        (GetTickCount64() - t0) / 1000.0, result, result ? "loaded" : "FAILED");
+    return result != 0;
+}
+
 int Run()
 {
     const std::wstring gameDir = Widen(MP_RETHAWED_DIR);
     const std::wstring exePath = gameDir + L"\\reTHAWed.exe";
-    Log("my-passthrough launcher: phase 0b-1 (start and watch only, nothing injected)");
+    Log("my-passthrough launcher: phase 0b-2 (start reTHAWed, load our THAW plugin)");
     Log("game folder: %ls", gameDir.c_str());
 
     // 1. Check the exe.
@@ -115,6 +182,14 @@ int Run()
         return 1;
     }
     Log("reTHAWed.exe: %llu bytes: MATCH", size);
+
+    const std::wstring dllPath = PluginPath();
+    if (GetFileAttributesW(dllPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        Log("ERROR: our plugin is missing: %ls (Windows error %lu). Rebuild. Stopping.",
+            dllPath.c_str(), GetLastError());
+        return 1;
+    }
+    Log("our plugin: %ls", dllPath.c_str());
 
     // 2. Start it from its own folder.
     std::wstring cmdLine = L"\"" + exePath + L"\"";
@@ -157,9 +232,21 @@ int Run()
     } else {
         Log("rthw.dll found %.3f s after start; %zu program files loaded:", waitSecs, modules.size());
         for (const auto& m : modules) Log("  module: %ls", m.c_str());
+
+        // 4. Load our plugin, then confirm it shows up in the game's module list.
+        if (InjectPlugin(pi.hProcess, dllPath)) {
+            if (ListModules(pi.dwProcessId, modules) && HasModule(modules, L"my-passthrough-thaw.dll"))
+                Log("confirmed: my-passthrough-thaw.dll is loaded in reTHAWed (%zu program files now)",
+                    modules.size());
+            else
+                Log("WARNING: plugin reported loaded but is not in the module list");
+        } else {
+            Log("ERROR: our plugin was not loaded. reTHAWed keeps running without it.");
+            found = false; // report failure as the launcher's result
+        }
     }
 
-    // 4. Wait for the game to close.
+    // 5. Wait for the game to close.
     Log("waiting for reTHAWed to close...");
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD exitCode = 0;
