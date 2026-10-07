@@ -14,6 +14,17 @@
 //      This adds our code; it changes no game files and no protection.
 //   5. wait for the game to close and log how it closed
 //
+// Controller fix (2026-10-07): before starting reTHAWed, sets the SDL setting
+// SDL_GAMECONTROLLER_IGNORE_DEVICES in this launcher's own environment, which
+// reTHAWed inherits. reTHAWed reads controllers through SDL2, so it then ignores
+// the virtual Xbox 360 controller DualSenseX creates (045E:028E) and uses only
+// the real PS5 controller. Affects only reTHAWed started by this launcher; GTA
+// (GInput, which needs the virtual Xbox controller) and Windows are untouched.
+// Attempt 2: also sets SDL_JOYSTICK_RAWINPUT=0. In SDL 2.26.2 the "raw input"
+// way of reading controllers skips the ignore list, and that is how the virtual
+// controller still got in on attempt 1. The PS5 controller is read another way
+// (SDL's own PS5 support), so it is not affected.
+//
 // It only reads from the reTHAWed folder; it never writes there.
 
 #include <windows.h>
@@ -37,6 +48,17 @@ namespace {
 constexpr ULONGLONG kExpectedExeSize = 3612672;
 constexpr DWORD kRthwWaitMs = 30000;  // give up waiting for rthw.dll after 30 s
 constexpr DWORD kPollMs = 100;
+
+// SDL setting passed to reTHAWed: controllers SDL must not treat as game
+// controllers, as "0xVENDOR/0xPRODUCT". 045E:028E = Xbox 360 controller, which
+// is what DualSenseX's virtual controller (via ViGEmBus) reports.
+constexpr wchar_t kSdlIgnoreVar[] = L"SDL_GAMECONTROLLER_IGNORE_DEVICES";
+constexpr wchar_t kSdlIgnoreValue[] = L"0x045E/0x028E";
+// SDL setting that turns off its "raw input" controller reading (it ignores the
+// list above). The virtual controller is then only seen through XInput, which
+// does honour the list.
+constexpr wchar_t kSdlRawInputVar[] = L"SDL_JOYSTICK_RAWINPUT";
+constexpr wchar_t kSdlRawInputValue[] = L"0";
 
 FILE* g_log = nullptr;
 ULONGLONG g_startTick = 0;
@@ -190,6 +212,18 @@ int Run()
         return 1;
     }
     Log("our plugin: %ls", dllPath.c_str());
+
+    // Controller fix: reTHAWed inherits this launcher's environment.
+    if (SetEnvironmentVariableW(kSdlIgnoreVar, kSdlIgnoreValue))
+        Log("controller fix: %ls=%ls (reTHAWed will ignore Xbox 360 controllers, incl. DualSenseX's virtual one)",
+            kSdlIgnoreVar, kSdlIgnoreValue);
+    else
+        Log("controller fix: could not set %ls (Windows error %lu); reTHAWed starts without it",
+            kSdlIgnoreVar, GetLastError());
+    if (SetEnvironmentVariableW(kSdlRawInputVar, kSdlRawInputValue))
+        Log("controller fix: %ls=%ls (SDL's raw input controller reading off)", kSdlRawInputVar, kSdlRawInputValue);
+    else
+        Log("controller fix: could not set %ls (Windows error %lu)", kSdlRawInputVar, GetLastError());
 
     // 2. Start it from its own folder.
     std::wstring cmdLine = L"\"" + exePath + L"\"";

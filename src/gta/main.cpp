@@ -17,12 +17,18 @@
 // Phase 2-1: once per second also logs the skater the THAW side publishes
 // (shared block version 2). Read only: nothing in GTA is changed.
 //
+// Phase 2-2: skate mode (skatemode.cpp). Toggled with F7 or L3 + R3 while GTA
+// is in front; while on, CJ follows the reTHAWed skater. Off = no changes.
+// Test helper (teleport.cpp): F8 moves CJ to the waypoint on GTA's map.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include <windows.h>
 #include "../common/link.h"
+#include "skatemode.h"
+#include "teleport.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -76,7 +82,9 @@ void RecordFirst(std::atomic<ULONGLONG>& first)
     first.compare_exchange_strong(expected, GetTickCount64());
 }
 
-// Runs inside DllMain, before our thread starts: install the two counting hooks.
+void Log(const char* fmt, ...); // defined below
+
+// Runs inside DllMain, before our thread starts: install the two hooks.
 void AddHooks()
 {
     g_drawBefore = ReadHookBytes(kDrawHookAddr);
@@ -89,6 +97,10 @@ void AddHooks()
     plugin::Events::gameProcessEvent.Add([] {
         RecordFirst(g_firstProcessTick);
         g_processCount.fetch_add(1, std::memory_order_relaxed);
+        // Phase 2-2: skate mode (does nothing unless toggled on with F7 / L3 + R3).
+        mp::gta::SkateModeFrameSafe(g_link, &Log);
+        // Test helper: F8 = move CJ to the map waypoint.
+        mp::gta::TeleportFrameSafe(&Log);
     });
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
@@ -276,7 +288,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough GTA plugin: loaded (phase 2-1)");
+    Log("my-passthrough GTA plugin: loaded (phase 2-2, fix 1: mirror + GTA menu hold)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 

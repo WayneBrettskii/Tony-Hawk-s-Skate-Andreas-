@@ -10,7 +10,8 @@
 // scale 0.0254 assumes 1 THAW unit = 1 inch (fits phase 1 numbers; NOT proven).
 // ySign: swapping two axes mirrors left/right; whether THAW also needs that
 // mirror is unknown, so flip ySign to -1 if a left turn in reTHAWed makes CJ
-// turn right.
+// turn right. First skate test (2026-10-07): it did, so skate mode uses -1
+// (src/gta/skatemode.cpp); the default here stays +1 for the unit test.
 
 #pragma once
 

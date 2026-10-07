@@ -2,6 +2,63 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] First skate mode test (phase 2-2) + fix 1: mirror, GTA menu hold
+
+**Changed:** after the test (results below):
+- `src/gta/skatemode.cpp`: mapping `ySign` +1 → **-1** (left/right mirror). GTA's pause menu or map being open now **holds** skate mode (stays on, CJ not moved), checked before the automatic-off list. New: if our control bit (0x0010) comes back while skate mode is off, it is cleared and logged. Turning on is refused while GTA's menu is open.
+- `src/gta/main.cpp`: version line "phase 2-2, fix 1: mirror + GTA menu hold". `src/common/convert.h`: comment only (default stays +1 so the unit test is unchanged; still 20/20 in the cloud).
+**Why (test results, 15:37–15:45 run, `gta.log`):**
+- **Works:** F8 teleport (waypoint at the airport, CJ moved there and the ground search worked). F7 on/off and L3 + R3 on (logged with reason). While on: CJ followed the skater 1:1 (target = actual every second, GTA moved him 0.000 to 0.020 m between frames, 2 ground clamps during ollies), ~30 m path, heading set every frame.
+- **Mirror:** reTHAWed path (THAW x, z): straight along +z, then +x, then −z (a U-turn). With ySign +1 that is north → east → south in GTA, a **right** U-turn; the test asked for a left turn and the user saw CJ facing the wrong way. With −1 the same velocities give headings −180 → −125 → −32 → −2 degrees (south, turning left through east, to north): a left U-turn (checked in the cloud with the real velocities).
+- **Pause problem:** pausing reTHAWed with Start **also opened GTA's pause menu** (GTA drew 0 frames from 246.3 s to 284 s and set control flag 0x0001), because GTA reads the same controller through DualSenseX even in the background. Our code took 0x0001 for "a script disabled player controls" and turned skate mode off, so CJ stopped before the skater's last 2 m and kept the heading of that moment. When GTA's menu closed (284.1 s), GTA put back the flags saved when it opened, **including our 0x0010**, so CJ's controls stayed off until the user pressed F7 twice (292.8 s / 299.0 s).
+**Tested how:** fix 1 not compiled or run. Convert unit test still passes (cloud).
+**Result:** none yet for fix 1.
+**Still broken / not tested:** fix 1 not tested. Start in reTHAWed still opens GTA's menu (now harmless: skate mode holds; close GTA's menu when back in GTA). All controller presses meant for reTHAWed reach GTA too while skating; our control flag stops CJ walking, but not menus. Proper fix is phase 3 (input from GTA passed to reTHAWed). Heading direction convention (atan2(−dx, dy)) still believed, now consistent with the log. Scale (inches) still not proven. L3 + R3 crouch: not reported.
+**Next:** user rebuilds and repeats the skate test (turn left, then pause with Start); check CJ turns left and skate mode survives the pause.
+
+## [2026-10-07] Controller fix attempt 2: also turn off SDL's raw input reading
+
+**Changed:** `src/launcher/main.cpp`: besides the ignore list from attempt 1, the launcher also sets `SDL_JOYSTICK_RAWINPUT=0` for reTHAWed and logs it.
+**Why:** attempt 1 half worked. reTHAWed's `debug.txt` (15:29 run): at start-up only `Detected controller "PS5 Controller"` (before the fix the Xbox 360 one was detected too), but a bit later `Joystick added: Xbox 360 Controller` and then `Added player 1: PS5 Controller` / `Added player 2: Xbox 360 Controller`, the same as before. Reading SDL 2.26.2's source (`src/joystick`): the XInput, DirectInput, Windows.Gaming.Input and HIDAPI ways of finding controllers all check the ignore list (`SDL_ShouldIgnoreJoystick`), but the raw input way (`windows/SDL_rawinputjoystick.c`) does not, and it is on by default. So the virtual controller got in a second time through raw input. With raw input off, it is only seen through XInput, which drops it. The PS5 controller comes through HIDAPI (SDL's own PS5 support, name "PS5 Controller"), which raw input doesn't affect.
+**Tested how:** user built it, ran DualSenseX (Xbox 360 emulation) and the launcher, used the reTHAWed menus with the PS5 controller, quit (15:35 run). Claude read `launcher.log` and reTHAWed's `debug.txt`.
+**Result:** works. `launcher.log` shows both settings. `debug.txt`: only `Detected controller "PS5 Controller"`, `Joystick added: PS5 Controller`, `Added player 1: PS5 Controller`; no Xbox 360 lines at all. User: "It worked that time".
+**Still broken / not tested:** a player with a real Xbox 360 controller would get no controller in reTHAWed; must become an option before release (DESIGN.md section 11). Not tested in a level, only menus. (Was attempt 2: it did not need STATUS.md.)
+**Next:** F8 teleport test and phase 2-2 skate mode test. Controller option: before release.
+
+## [2026-10-07] Launcher: reTHAWed ignores the virtual Xbox 360 controller (controller fix)
+
+**Changed:** `src/launcher/main.cpp`: before starting reTHAWed, sets `SDL_GAMECONTROLLER_IGNORE_DEVICES=0x045E/0x028E` in the launcher's own environment (reTHAWed inherits it) and logs it. No other change.
+**Why:** user plays with a PS5 controller and uses **DualSenseX** to emulate an Xbox 360 controller for GTA, because GTA's controller mod GInput is XInput (Xbox) only (its `ReadMe.txt`: it "ditches DirectInput in favour of XInput"; only DualShock 3 via SCP is mentioned). reTHAWed reads controllers through SDL2 (2.26.2 per its log) and supports the PS5 controller natively, so with DualSenseX running it saw two controllers (`PS5 Controller` and `Xbox 360 Controller` in the 00:30 `debug.txt`), which causes problems. partymod's input code (which reTHAWed's follows) only adds a controller if `SDL_IsGameController` is true, and SDL's ignore list makes that false for the listed device. 045E:028E is the Xbox 360 controller ID ViGEmBus (used by DualSenseX) reports.
+**Tested how:** not tested, not compiled.
+**Result:** half worked (user: "It did not work"). Built and ran; launcher logged the setting; reTHAWed no longer detected the Xbox 360 controller at start-up, but it was added later anyway and became player 2. See attempt 2 above.
+**Still broken / not tested:** not confirmed that DualSenseX's virtual controller reports exactly 045E:028E, or that SDL applies the ignore list to devices found through XInput. Any real Xbox 360 controller would also be ignored by reTHAWed (when started by our launcher). Expect reTHAWed's `debug.txt` to still say `Joystick added: Xbox 360 Controller` (that line is before the check) but **not** `Detected controller "Xbox 360 Controller"` / `Added player ...: Xbox 360 Controller`. If it fails: attempt 2 would also turn off SDL's XInput reading for reTHAWed (`SDL_XINPUT_ENABLED=0`).
+**Next:** user builds; DualSenseX running; launcher; check reTHAWed's controls; Claude reads `launcher.log` and reTHAWed's `debug.txt`.
+
+## [2026-10-07] Test helper: F8 teleports CJ to the map waypoint
+
+**Changed:** new `src/gta/teleport.h` / `teleport.cpp`: on F8 (GTA in front), reads the waypoint from `FrontEndMenuManager.m_nTargetBlipIndex` → `CRadar::GetActualBlipArrayIndex` → `CRadar::ms_RadarTrace[slot].m_vecPos`, loads the area (`CStreaming::LoadScene`), gets ground height (`CWorld::FindGroundZForCoord`), and moves CJ there with `CEntity::Teleport`, 1 m above the ground. Refuses (and logs why) if: no waypoint, CJ in a vehicle or dead, cutscene, black bars, any control flag set, GTA paused, skate mode on. Exception-protected. `skatemode.h/.cpp`: `SkateModeIsOn()`. `src/gta/main.cpp`: calls it from the world-update hook. `CMakeLists.txt`: adds `teleport.cpp`.
+**Why:** user's request (option 2 of 2; user chose F8): an easy way to put CJ in an open area for the skate mode test, without installing CLEO + a third-party teleport script into GTA's main folder.
+**Tested how:** not tested, not compiled. All plugin-sdk names checked in its source.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. `LoadScene` may freeze GTA for a moment. If the ground there isn't loaded, the height may be wrong (CJ could land high and fall, or inside something); the log line shows the ground height used. Waypoint marker must be placed on the pause-menu map first.
+**Next:** user builds; tests F8 (place waypoint, F8, check log), then the 2-2 skate mode test.
+
+## [2026-10-07] Phase 2-2: skate mode (F7 / L3 + R3) moves CJ to follow the skater
+
+**Changed:**
+- New `src/gta/skatemode.h` / `skatemode.cpp`. Called once per GTA world update (after `CGame::Process`) from the existing hook, wrapped in exception protection (an error turns skate mode off, clears our control bit, and is logged).
+  - **Toggle:** F7 (`GetAsyncKeyState`) or L3 + R3 (`CPad::GetPad(0)->NewState.ShockButtonL/R`), once per press, only while GTA is the foreground window.
+  - **Turn on** only if: CJ exists, not in a vehicle, health > 0, player state "playing", no cutscene, no black bars, no other control flag set, GTA not paused, reTHAWed connected, sample < 1 s old, skater valid, reTHAWed in a level. Otherwise logs why not. On: anchors CJ's position and the skater's position, measures CJ's height above GTA's ground, sets our control bit (bit 4, `0x0010`).
+  - **Each frame while on:** auto-off (with reason) on any of the above failing; **hold** (no movement) while GTA or reTHAWed is paused; otherwise CJ = anchor + mapped skater movement (`convert.h`: 0.0254 m/unit, GTA y = THAW z, y sign +1), nudged ahead by velocity × sample age (max 50 ms), never below GTA ground + the anchor height; speed set to zero; heading from the skater's velocity (if faster than 20 units/s).
+  - **Logs:** every on/off/hold with reason; any change of the control flags value; once per second: frames moved/held, CJ's actual vs target position, how far GTA's physics moved CJ between frames, ground clamps, sample age, heading we set vs the heading CJ's matrix reports (checks GTA's heading convention).
+- `src/gta/main.cpp`: hook calls `SkateModeFrameSafe(g_link, &Log)`; version line "phase 2-2". `CMakeLists.txt`: adds `skatemode.cpp`.
+- Also: user ran `build\Release\convert_test.exe` on Windows: **passed** (user report, 14:41).
+**Why:** step 2-2 of `docs/DESIGN.md` 8.6; first change to a game.
+**Tested how:** not tested, not compiled (no Windows compiler in the cloud). Every plugin-sdk name used was checked in its source first.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. Not done: hiding L3 + R3 from GTA (the combo is seen after GTA has processed the frame, so CJ may crouch / look back for a moment when toggling with the controller). Unknown: unit size, left/right mirroring, GTA's heading convention, whether bit 4 is really unused, whether CJ jitters, whether GInput reads the controller while GTA isn't in front.
+**Next:** user builds and runs the 2-2 test (flat open area in GTA; F7 on/off, L3 + R3 on/off; skate straight, turn left, ollie, pause/unpause in reTHAWed; check CJ in GTA; off; walk).
+
 ## [2026-10-07] Phase 2-1 tested: GTA receives reTHAWed's skater ~95 times per second
 
 **Changed:** no code. `README.md`, `docs/DESIGN.md` 8.6 updated.

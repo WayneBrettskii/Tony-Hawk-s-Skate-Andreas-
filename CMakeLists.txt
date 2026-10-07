@@ -21,7 +21,7 @@ if(NOT EXISTS "${PLUGIN_SDK_LIB}")
 endif()
 
 # --- GTA San Andreas plugin: my-passthrough.asi ---
-add_library(gta_plugin SHARED src/gta/main.cpp)
+add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp)
 
 # Match plugin-sdk's own settings for SA plugins (its tools/premake/premake5.lua):
 # GTA SA 1.0 US, newest C++ standard, multi-byte characters, /sdl- off.

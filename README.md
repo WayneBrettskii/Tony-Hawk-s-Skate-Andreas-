@@ -17,7 +17,10 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Link between the two games** (phase 0c-1, tested 2026-10-07): both sides see each other's once-per-second beat through shared memory.
 - **Reading the skater in reTHAWed** (phase 1-1, tested 2026-10-07, read only): position and velocity, 10 times per second, confirmed by the distance-vs-speed check (ratio 1.00 to 1.02 skating straight). In THAW, Y is up; pushing speed ~500 units/s.
 - **Menus vs level vs paused in reTHAWed** (phase 1-2, tested 2026-10-07, read only): "in menus" YES/no and the level ID change correctly; pause flag turns on and off with pausing.
-- **reTHAWed sends the skater to GTA** (phase 2-1, tested 2026-10-07): ~95 samples per second over the link, 0 to 16 ms old, same values as reTHAWed's own log. THAW → GTA conversion unit test: 20/20 pass (cloud).
+- **reTHAWed sends the skater to GTA** (phase 2-1, tested 2026-10-07): ~95 samples per second over the link, 0 to 16 ms old, same values as reTHAWed's own log. THAW → GTA conversion unit test: 20/20 pass (cloud and Windows).
+- **Skate mode, first test** (2026-10-07, GTA free roam at the airport): F7 or L3 + R3 in GTA turns it on and off; CJ follows the reTHAWed skater's path 1:1 and faces where he's going. Found two bugs (left/right mirrored; pausing reTHAWed turned skate mode off), fixed but not yet retested.
+- **Test helper F8** (tested 2026-10-07): moves CJ to the waypoint marker on the map.
+- **Controller fix** (tested 2026-10-07, menus only): reTHAWed started by our launcher ignores DualSenseX's virtual Xbox 360 controller and uses only the real PS5 controller. Downside for now: a real Xbox 360 controller would be ignored by reTHAWed too; an option for Xbox players is planned before release.
 
 ## What doesn't work / not tested
 
@@ -25,7 +28,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - (Fixed 2026-10-07: GTA now keeps running at 60 fps while reTHAWed is in front, via `autoPause=0` in the Windowed Mode plugin's settings.)
 - No hooks inside reTHAWed yet.
 - THAW's unit size is not confirmed (probably inches).
-- CJ following the skater (phase 2-2): not started.
+- Skate mode (phase 2-2): fix 1 (left/right mirror, holding while GTA's menu is open): written, **not tested**. Pressing Start in reTHAWed also opens GTA's pause menu (both read the controller).
 - Everything else in `docs/DESIGN.md`: not started.
 
 ## Requirements
