@@ -12,12 +12,18 @@
 // writes its own process id and beat there, and logs the GTA side's process id,
 // beat and drawn-frame total.
 //
+// Phase 1-1: every 100 ms, reads the local skater's position and velocity
+// (read only; see skater.h) and logs them; once per second it checks whether the
+// distance moved matches the average speed.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
 #include <windows.h>
 #include "../common/link.h"
+#include "skater.h"
 #include <tlhelp32.h>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -159,13 +165,166 @@ void SetUpLink()
     }
 }
 
+// Once per second: publish our beat, then report the GTA side.
+void ReportLink(unsigned long beat)
+{
+    static mp::PeerWatch gtaWatch;
+    static LONG lastGtaDrawn = 0;
+    if (!g_link) return;
+    InterlockedExchange(&g_link->thawBeat, static_cast<LONG>(beat));
+    const LONG pid = g_link->gtaPid;
+    const LONG gtaBeat = g_link->gtaBeat;
+    const LONG drawn = g_link->gtaDrawn;
+    if (pid == 0) {
+        if (gtaWatch.lastPid != 0) Log("link: GTA not connected");
+        gtaWatch.lastPid = 0;
+        return;
+    }
+    if (pid != gtaWatch.lastPid) {
+        Log("link: GTA connected, process id %ld", pid);
+        gtaWatch.lastPid = pid;
+        gtaWatch.lastBeat = gtaBeat;
+        lastGtaDrawn = drawn;
+    }
+    Log("link: GTA beat %ld (+%ld), GTA drawn total %ld (+%ld)", gtaBeat,
+        gtaBeat - gtaWatch.lastBeat, drawn, drawn - lastGtaDrawn);
+    gtaWatch.lastBeat = gtaBeat;
+    lastGtaDrawn = drawn;
+}
+
+// ---- Phase 1: the skater (read only; see skater.h) ----
+
+// Check the game code at every address we rely on. All must match.
+bool CheckSkaterCode()
+{
+    unsigned int count = 0;
+    const mp::thaw::CodeCheck* checks = mp::thaw::CodeChecks(count);
+    bool allOk = true;
+    for (unsigned int i = 0; i < count; ++i) {
+        unsigned int at = 0;
+        unsigned char found = 0;
+        if (mp::thaw::RunCodeCheck(checks[i], at, found)) {
+            Log("code check 0x%08lX: MATCH (%s)", checks[i].address, checks[i].what);
+        } else {
+            Log("code check 0x%08lX: DIFFERENT at byte %u (expected %02X, found %02X) (%s)",
+                checks[i].address, at, checks[i].bytes[at], found, checks[i].what);
+            allOk = false;
+        }
+    }
+    Log(allOk ? "skater: code checks passed; reading the skater every 100 ms"
+              : "skater: code checks FAILED; not reading the skater (game version differs?)");
+    return allOk;
+}
+
+// What we remember between samples.
+struct SkaterTrack {
+    unsigned long manager = 1;   // 1 = "nothing logged yet" (real values are 0 or an address)
+    unsigned long skater = 1;
+    unsigned long exceptions = 0;
+    // for the once-per-second check
+    bool haveStart = false;
+    float startPos[3] = {};
+    unsigned int gaps = 0;       // samples since startPos
+    ULONGLONG startTick = 0;     // real time of startPos (ms)
+    float speedSum = 0.0f;
+    unsigned int speedSamples = 0;
+    float lastPos[3] = {};
+    ULONGLONG lastTick = 0;      // real time of lastPos (ms)
+    bool haveLast = false;
+};
+SkaterTrack g_track;
+
+float Length3(const float v[3])
+{
+    return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+void SampleSkater()
+{
+    const mp::thaw::SkaterSample s = mp::thaw::ReadSkater();
+    SkaterTrack& t = g_track;
+
+    if (!s.readOk) {
+        ++t.exceptions;
+        if (t.exceptions == 1 || t.exceptions % 50 == 0)
+            Log("skater: read failed (exception 0x%08lX), %lu so far", s.exceptionCode, t.exceptions);
+        t.haveStart = false;
+        t.haveLast = false;
+        return;
+    }
+    if (s.manager != t.manager) {
+        Log("skater: manager pointer at 0x0074FB44 = 0x%08lX%s", s.manager, s.manager ? "" : " (none)");
+        t.manager = s.manager;
+    }
+    if (s.skater != t.skater) {
+        if (s.skater)
+            Log("skater: local skater found at 0x%08lX", s.skater);
+        else
+            Log("skater: no local skater");
+        t.skater = s.skater;
+        t.haveStart = false;
+        t.haveLast = false;
+    }
+    if (!s.skater) return;
+
+    const ULONGLONG nowTick = GetTickCount64();
+    const float speed = Length3(s.vel);
+    Log("skater: pos %.2f %.2f %.2f | vel %.2f %.2f %.2f | speed %.2f", s.pos[0], s.pos[1], s.pos[2],
+        s.vel[0], s.vel[1], s.vel[2], speed);
+
+    if (!t.haveStart) {
+        for (int i = 0; i < 3; ++i) t.startPos[i] = s.pos[i];
+        t.startTick = nowTick;
+        t.gaps = 0;
+        t.speedSum = 0.0f;
+        t.speedSamples = 0;
+        t.haveStart = true;
+    } else {
+        ++t.gaps;
+    }
+    t.speedSum += speed;
+    ++t.speedSamples;
+    for (int i = 0; i < 3; ++i) t.lastPos[i] = s.pos[i];
+    t.lastTick = nowTick;
+    t.haveLast = true;
+}
+
+// Once per second: does the distance moved match the average speed?
+void SkaterSecondCheck()
+{
+    SkaterTrack& t = g_track;
+    if (!t.haveStart || !t.haveLast || t.gaps < 2 || t.speedSamples == 0) return;
+
+    const float d[3] = {t.lastPos[0] - t.startPos[0], t.lastPos[1] - t.startPos[1],
+                        t.lastPos[2] - t.startPos[2]};
+    const float moved = Length3(d);
+    // Real time between the first and last sample of this window.
+    const float seconds = (t.lastTick - t.startTick) / 1000.0f;
+    if (seconds <= 0.0f) return;
+    const float movedPerSecond = moved / seconds;
+    const float avgSpeed = t.speedSum / t.speedSamples;
+    if (avgSpeed > 1.0f)
+        Log("skater check: moved %.2f in %.1f s = %.2f per s; average speed %.2f; ratio %.2f",
+            moved, seconds, movedPerSecond, avgSpeed, movedPerSecond / avgSpeed);
+    else
+        Log("skater check: moved %.2f in %.1f s; average speed %.2f (standing still?)",
+            moved, seconds, avgSpeed);
+
+    // Start the next second from the last sample, so no time is skipped.
+    for (int i = 0; i < 3; ++i) t.startPos[i] = t.lastPos[i];
+    t.startTick = t.lastTick;
+    t.gaps = 0;
+    t.speedSum = 0.0f;
+    t.speedSamples = 0;
+}
+
 DWORD WINAPI MainThread(LPVOID)
 {
     if (!SetUpLogPath()) return 0; // nowhere to log; do nothing at all
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough THAW plugin: loaded (phase 0c)");
+    Log("my-passthrough THAW plugin: loaded (phase 1-1)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -190,37 +349,20 @@ DWORD WINAPI MainThread(LPVOID)
     LogModules();
 
     SetUpLink();
-    mp::PeerWatch gtaWatch;
-    LONG lastGtaDrawn = 0;
+    const bool canReadSkater = CheckSkaterCode();
 
-    // Heartbeat: once per second, until the game closes.
+    // Loop every 100 ms: skater sample each time; heartbeat + link once per second.
     unsigned long beat = 0;
+    unsigned int tick = 0;
     while (!g_stop) {
-        Sleep(1000);
+        Sleep(100);
+        if (canReadSkater) SampleSkater();
+        if (++tick % 10 != 0) continue;
+
         ++beat;
         Log("heartbeat %lu", beat);
-
-        // Link: publish our beat, then report the GTA side.
-        if (!g_link) continue;
-        InterlockedExchange(&g_link->thawBeat, static_cast<LONG>(beat));
-        const LONG pid = g_link->gtaPid;
-        const LONG gtaBeat = g_link->gtaBeat;
-        const LONG drawn = g_link->gtaDrawn;
-        if (pid == 0) {
-            if (gtaWatch.lastPid != 0) Log("link: GTA not connected");
-            gtaWatch.lastPid = 0;
-            continue;
-        }
-        if (pid != gtaWatch.lastPid) {
-            Log("link: GTA connected, process id %ld", pid);
-            gtaWatch.lastPid = pid;
-            gtaWatch.lastBeat = gtaBeat;
-            lastGtaDrawn = drawn;
-        }
-        Log("link: GTA beat %ld (+%ld), GTA drawn total %ld (+%ld)", gtaBeat,
-            gtaBeat - gtaWatch.lastBeat, drawn, drawn - lastGtaDrawn);
-        gtaWatch.lastBeat = gtaBeat;
-        lastGtaDrawn = drawn;
+        if (canReadSkater) SkaterSecondCheck();
+        ReportLink(beat);
     }
     return 0;
 }

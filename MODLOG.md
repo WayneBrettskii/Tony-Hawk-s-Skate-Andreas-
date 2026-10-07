@@ -2,6 +2,53 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Phase 1-1 tested: skater position and velocity found and confirmed
+
+**Changed:** no code. `README.md`, `docs/DESIGN.md` (sections 4 and 8.4) updated.
+**Why:** record the first test of reading the skater.
+**Tested how:** user built, ran our launcher, loaded a level, skated, did several ollies (some while moving, not exactly in the planned order; enough data), quit to menu, quit. Claude read `thaw.log` (389 position samples, 39 once-per-second checks) and `launcher.log`.
+**Result:** works.
+- All 5 code checks `MATCH`. **No read failures.** reTHAWed exited normally (exit code 0) after 41.9 s.
+- Manager pointer at `0x0074FB44`: 0 at 0.1 s, then `0x1A08E740` from 0.3 s. Local skater found at 2.3 s (`0x192589A0`), **while still in the menus**: reTHAWed has a skater in its menus too.
+- **Teleports** (position jumps with zero velocity): 2.4 s, 10.9 s (menu spots, e.g. `84.83 -67.50 21.70`), 18.3 s (level start, `-2336.49 96.38 -2482.72`), and back to the menu spots at 38.4 to 38.8 s after quitting the level.
+- **Self-check while skating straight:** 23.2 s: moved 499.29 per s, average speed 500.87, **ratio 1.00**; 24.2 s: 505.97 vs 497.94, **ratio 1.02**. Lower ratios (0.6 to 0.9) only in seconds with ollies or slowing down, as expected for straight-line distance.
+- **Up axis is y**: each ollie: y rises 65 to 90 units above the ground and falls back, x and z unchanged when in place; vertical velocity starts at about +400 to +430 and drops about 135 per 0.1 s (game gravity about 1,350 units/s²).
+- **Skating direction:** along z (x constant at -2336.49); pushing speed settles at about 500 units/s. Going down a slope at 22.5 to 24.1 s: y 96 → 0 with vertical velocity -50 to -70.
+**Still broken / not tested:** **units not confirmed**: 500 units/s and ~75-unit ollies fit inches (12.7 m/s, 1.9 m) but THAW exaggerates speed and jumps, so this isn't proof. Can't yet tell "menu skater" from "level skater" in code. Sign of the axes (which way is +x / +z relative to the level) not yet related to anything. Read from our own thread, 10 times per second; not tied to THAW's frames (no THAW hook yet).
+**Next:** decide phase 1 is done; next steps could be units/handedness (compare a known THAW object size), a THAW per-frame hook (0b-3), or phase 2 (CJ follows the skater).
+
+## [2026-10-07] Phase 1-1: read and log the skater's position and velocity (read only)
+
+**Changed:** new `src/thaw/skater.h` and `src/thaw/skater.cpp`: 5 code checks (exact bytes at `0x005A9407`, `0x005A9416`, `0x005A98E3`, `0x005A98F6`, `0x004A0160`, copied from the game file); `ReadSkater()` reads the manager at `0x0074FB44`, calls `0x004A0160` for the local skater, reads position `+0x68/6C/70` and velocity `+0xC8/CC/D0`, all inside Windows exception protection. `src/thaw/main.cpp`: runs the code checks once (skater reading only if all match), then every 100 ms logs the sample (or state changes: manager/skater found or gone, read failures); once per second logs moved distance per second (using real elapsed time) vs average speed, and their ratio. Heartbeat and link unchanged (still once per second). `CMakeLists.txt`: adds `skater.cpp`. `README.md` updated.
+**Why:** step 1-1 of `docs/DESIGN.md` 8.4.
+**Tested how:** not tested, not compiled.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. The ratio uses straight-line distance, so it will read low while turning. Calling `0x004A0160` from our own thread is read-only but not synchronised with the game; failures are caught and counted.
+**Next:** user builds; launcher; load a level; stand still ~5 s, skate straight ~5 s, stop, 3 ollies in place; quit. Claude reads `thaw.log`.
+
+## [2026-10-07] Phase 1 research and plan: where reTHAWed keeps the skater
+
+**Changed:** `docs/DESIGN.md`: new section 8.4 (phase 1 plan). No code.
+**Why:** phase 1 needs the skater's position from inside reTHAWed.
+**Tested how:** read-only analysis in Claude's scratch area: cloned PARTYMANX's partymod-thaw (MIT, commit `5700a673`), compared its byte patterns with a copy of `reTHAWed.exe`, searched the exe's script command table, disassembled a few functions with `objdump`. Nothing run, nothing in the game folder changed.
+**Result:**
+- partymod's patcher accepts a 21,442,560-byte `THAW.exe` (same size as the user's retail exe) and produces the patched game; `reTHAWed.exe` matches partymod's expected bytes at **9 of 9** addresses checked, so it has THAW 1.01's code layout.
+- `GetSkaterPosition` → `0x005A98D0`: reads floats at object `+0x68/+0x6C/+0x70` as x/y/z (object = script `+0xC4`).
+- `SkaterSpeedGreaterThan` → `0x005A93F0`: global `0x0074FB44`, call `0x004A0160` (local skater), velocity floats at `+0xC8/+0xCC/+0xD0`. That global + call pair occurs 66 times in the game code.
+- `PrintSkaterPosition` / `SkaterDebugOn` are empty stubs (`mov al,1; ret`) in the released game.
+- partymod uses `0x0072E850` as THAW's "window focused" flag (useful for phase 3).
+**Still broken / not tested:** none of these addresses tested in the running game yet. Not confirmed that the local-skater object has its position at `+0x68`.
+**Next:** user approves the plan; then step 1-1 (read-only logging of skater position and velocity).
+
+## [2026-10-07] Phase 0c confirmed with our full setup (GTA windowed): phase 0 done
+
+**Changed:** no code. `README.md`, `docs/DESIGN.md` updated.
+**Why:** confirm the link with our launcher and plugin and GTA in a window, after the freeze fix.
+**Tested how:** user started GTA (windowed via the Windowed Mode plugin), then our launcher, switched back and forth, quit reTHAWed, then GTA. Claude read `gta.log`, `thaw.log`, `launcher.log`.
+**Result:** works, **no freeze** (user report). Launcher: plugin loaded in 0.172 s, reTHAWed closed after 63.3 s, exit code 0. THAW side: `GTA connected`, GTA beat **+1 per second 61 times** (one +0 at connection). GTA side: `THAW connected` at 29.1 s, THAW beat **+1 per second 62 times**, `THAW not connected` at 92.2 s after reTHAWed closed.
+**Still broken / not tested:** GTA's log has no "first drawn frame" line and GTA's drawn total stayed at 0, so **GTA stayed on its main menu** this run; switching with GTA in a loaded game and in a window is not tested yet. Borderless mode not tested.
+**Next:** plan phase 1 (find the skater's position inside reTHAWed).
+
 ## [2026-10-07] Freeze explained: full-screen GTA; with GTA in a window reTHAWed keeps running
 
 **Changed:** no code. `docs/DESIGN.md` (section 8.3 result, new requirement in section 10), `README.md` (requirements, what works).
