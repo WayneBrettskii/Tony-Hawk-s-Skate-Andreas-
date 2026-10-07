@@ -8,12 +8,12 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 (Only things tested on the real games are listed here.)
 
-- **GTA plugin loads** (phase 0a, tested 2026-10-07): builds with Visual Studio 2026, Mod Loader loads it, it writes `loaded` and a once-per-second heartbeat to `logs\gta.log` in the project folder. Tested on the main menu only.
+- **GTA plugin loads** (phase 0a, tested 2026-10-07): builds with Visual Studio 2026, Mod Loader loads it, it writes its log to `logs\gta.log` in the project folder.
 - **plugin-sdk linked** (phase 0a-2b, tested 2026-10-07): built with `tools\build-plugin-sdk.ps1`; the plugin logs plugin-sdk's game version check: `GTA SA 1.0 US 'HoodLum'`.
+- **Hooks into GTA's loop** (phase 0a-2c, tested 2026-10-07): counts drawn frames and world updates per second. While playing: 60 and 60. Main menu: 0 and 0. Pause menu: 0 drawn, 60 world updates.
 
 ## What doesn't work / not tested
 
-- Per-frame counter (phase 0a-2): not started.
 - Everything else in `docs/DESIGN.md`: not started.
 
 ## Requirements

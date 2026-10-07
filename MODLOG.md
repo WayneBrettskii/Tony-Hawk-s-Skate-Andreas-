@@ -2,6 +2,30 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Phase 0a-2c tested: frame and world-update counters work
+
+**Changed:** no code. `README.md` and `docs/DESIGN.md` 8.1 updated with results.
+**Why:** record the first test of our hooks into GTA's loop.
+**Tested how:** user built, started GTA: main menu, then started/loaded a game and played, then the pause menu, then quit (about 49 s in total). Claude read `logs\gta.log`.
+**Result:** works.
+- Hook bytes: draw hook at `0x53E293` was `call 0x0060F8C0` before, `call 0x69F93E90` after (our plugin). Process hook at `0x53E981` was `call 0x0053BEE0` before, `call 0x69F93EA0` after. Both "before" targets are inside `gta_sa.exe`'s own code, so most likely no other mod had hooked these spots. At 5 s: unchanged, so nothing re-hooked them after us.
+- Seconds 1 to 18 (startup and main menu): drawn **0**, world updates **0**. Neither hook runs on the main menu.
+- From 18.5 s (game started): world updates start at once (35, then 60 per second). Drawn frames start about 2 s later (1, 0, then 51), probably the loading screen.
+- While playing (about seconds 22 to 40): **60 drawn and 60 world updates per second**, a few dips to 55 to 58. 60 is the frame cap (Framerate Vigilante).
+- From second 41 (pause menu): drawn **0**, but world updates **still 60 per second**. GTA keeps calling its world update while paused, but our draw hook does not run.
+- Last second (49): 16 world updates, then the game closed.
+**Still broken / not tested:** not known whether the world actually moves during the paused "world updates" (GTA probably runs them with time stopped). This matters later: skate mode must check GTA's pause state, not just count updates. User has not yet said whether the game felt normal (frame rate, other mods' effects).
+**Next:** phase 0a is complete. Plan phase 0b (our launcher starts reTHAWed with our THAW plugin).
+
+## [2026-10-07] Phase 0a-2c: count GTA's drawn frames and world updates
+
+**Changed:** `src/gta/main.cpp`: on load, adds two plugin-sdk hooks that only count: `drawingEvent` (call at `0x53E293`, after the scene is drawn) and `gameProcessEvent` (call at `0x53E981`, after `CGame::Process`). Logs the 5 bytes at both addresses before and right after hooking, and again at 5 s. Replaced the heartbeat with one line per second: drawn frames and world updates in that second, plus totals; logs when each first happens. `README.md` updated.
+**Why:** step 0a-2c of `docs/DESIGN.md` 8.1: first hook into GTA's own loop.
+**Tested how:** not tested, not compiled. Checked in plugin-sdk's source: its hooks keep whatever call was already at the address and call it (so they chain with other mods), and `AddressList` hooks install for both 1.0 US versions (1001 Compact, 1002 HoodLum).
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. Unknown whether world updates happen on the menus. Unknown whether other installed mods (SilentPatch, Framerate Vigilante, SkyGFX, Widescreen Fix) use the same two addresses; the before/after/5 s byte lines will show it.
+**Next:** user builds and runs the menu / play / pause-menu test; Claude reads `logs\gta.log`.
+
 ## [2026-10-07] Phase 0a-2b tested: plugin-sdk builds and links
 
 **Changed:** no code. `README.md` "What works" updated; `docs/DESIGN.md` 8.1 step 0a-2b now describes the build route actually used.

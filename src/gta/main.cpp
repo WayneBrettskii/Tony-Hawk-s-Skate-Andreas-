@@ -1,18 +1,21 @@
 // my-passthrough: GTA San Andreas plugin (.asi)
 //
-// Phase 0a: proves our code runs inside GTA. It does nothing to the game.
-// It writes a log file to the project's logs folder (logs\gta.log):
+// Phase 0a-2c: counts GTA's frames. It writes a log file to the project's logs
+// folder (logs\gta.log):
 //   - "loaded" plus some facts about where it is running
-//   - one "heartbeat" line per second, with a rising counter
+//   - the bytes at the two places we hook, before and after hooking, and again
+//     5 seconds later (to spot other mods hooking the same places)
+//   - once per second: how many frames GTA drew and how many times it updated
+//     the game world in that second, plus running totals
+//
+// The hooks (via plugin-sdk) only count; they don't change what the game does.
 //
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
-//
-// Phase 0a-2b: linked with plugin-sdk. The only use so far is one log line with
-// the game version plugin-sdk detects (it only reads memory; changes nothing).
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include <windows.h>
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -27,6 +30,59 @@ volatile LONG g_stop = 0;
 
 // The gta_sa.exe 1.0 US file size we found on the user's PC (see MODLOG).
 constexpr ULONGLONG kExpectedExeSize = 14383616;
+
+// Where plugin-sdk hooks GTA SA 1.0 US (from its shared/Events.h):
+//   drawingEvent:     call at 0x53E293, after the scene is drawn (once per frame)
+//   gameProcessEvent: call at 0x53E981, after CGame::Process (world update)
+constexpr uintptr_t kDrawHookAddr = 0x53E293;
+constexpr uintptr_t kProcessHookAddr = 0x53E981;
+
+// Counters, bumped on GTA's main thread, read by our logging thread.
+std::atomic<unsigned long> g_drawCount{0};
+std::atomic<unsigned long> g_processCount{0};
+std::atomic<ULONGLONG> g_firstDrawTick{0};
+std::atomic<ULONGLONG> g_firstProcessTick{0};
+
+// The 5 bytes at a hook address. A "call" instruction is E8 followed by a
+// 4-byte offset; the call goes to (address + 5 + offset).
+struct HookBytes {
+    unsigned char b[5] = {};
+};
+HookBytes g_drawBefore, g_drawAfter, g_processBefore, g_processAfter;
+bool g_hooksAdded = false;
+
+HookBytes ReadHookBytes(uintptr_t addr)
+{
+    HookBytes h;
+    memcpy(h.b, reinterpret_cast<const void*>(addr), sizeof(h.b));
+    return h;
+}
+
+void RecordFirst(std::atomic<ULONGLONG>& first)
+{
+    ULONGLONG expected = 0;
+    first.compare_exchange_strong(expected, GetTickCount64());
+}
+
+// Runs inside DllMain, before our thread starts: install the two counting hooks.
+void AddHooks()
+{
+    g_drawBefore = ReadHookBytes(kDrawHookAddr);
+    g_processBefore = ReadHookBytes(kProcessHookAddr);
+
+    plugin::Events::drawingEvent.Add([] {
+        RecordFirst(g_firstDrawTick);
+        g_drawCount.fetch_add(1, std::memory_order_relaxed);
+    });
+    plugin::Events::gameProcessEvent.Add([] {
+        RecordFirst(g_firstProcessTick);
+        g_processCount.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    g_drawAfter = ReadHookBytes(kDrawHookAddr);
+    g_processAfter = ReadHookBytes(kProcessHookAddr);
+    g_hooksAdded = true;
+}
 
 // Append one line to the log: "[seconds since start] text".
 void Log(const char* fmt, ...)
@@ -110,14 +166,34 @@ bool SetUpLogPath()
     return true;
 }
 
+// Log one hook address: raw bytes, and where the call goes if it is a call.
+void LogHookBytes(const char* label, uintptr_t addr, const HookBytes& h)
+{
+    if (h.b[0] == 0xE8) {
+        int32_t offset;
+        memcpy(&offset, &h.b[1], sizeof(offset));
+        const uintptr_t target = addr + 5 + static_cast<uintptr_t>(offset);
+        Log("%s 0x%06X: %02X %02X %02X %02X %02X = call to 0x%08X", label,
+            static_cast<unsigned>(addr), h.b[0], h.b[1], h.b[2], h.b[3], h.b[4],
+            static_cast<unsigned>(target));
+    } else {
+        Log("%s 0x%06X: %02X %02X %02X %02X %02X = NOT a call instruction", label,
+            static_cast<unsigned>(addr), h.b[0], h.b[1], h.b[2], h.b[3], h.b[4]);
+    }
+}
+
+double SecondsSinceStart(ULONGLONG tick)
+{
+    return (tick - g_startTick) / 1000.0;
+}
+
 DWORD WINAPI MainThread(LPVOID)
 {
-    g_startTick = GetTickCount64();
     if (!SetUpLogPath()) return 0; // nowhere to log; do nothing at all
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough GTA plugin: loaded (phase 0a)");
+    Log("my-passthrough GTA plugin: loaded (phase 0a-2c)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -145,13 +221,46 @@ DWORD WINAPI MainThread(LPVOID)
     Log("plugin-sdk %s: game version %u = %s", PLUGIN_SDK_VERSION_STR, version,
         plugin::GetGameVersionName(static_cast<int>(version)));
 
-    // Heartbeat: once per second. Phase 0a-2 will replace this with a per-frame
-    // counter hooked into GTA's main loop.
-    unsigned long beat = 0;
+    // What the hook places looked like before and right after we hooked them.
+    if (!g_hooksAdded) {
+        Log("hooks: NOT added");
+    } else {
+        LogHookBytes("draw hook    before", kDrawHookAddr, g_drawBefore);
+        LogHookBytes("draw hook    after ", kDrawHookAddr, g_drawAfter);
+        LogHookBytes("process hook before", kProcessHookAddr, g_processBefore);
+        LogHookBytes("process hook after ", kProcessHookAddr, g_processAfter);
+    }
+
+    // Once per second: counts for that second, and running totals.
+    unsigned long lastDraw = 0, lastProcess = 0, second = 0;
+    bool loggedFirstDraw = false, loggedFirstProcess = false;
     while (!g_stop) {
         Sleep(1000);
-        ++beat;
-        Log("heartbeat %lu", beat);
+        ++second;
+
+        const ULONGLONG firstDraw = g_firstDrawTick.load();
+        if (!loggedFirstDraw && firstDraw != 0) {
+            Log("first drawn frame at %.3f s", SecondsSinceStart(firstDraw));
+            loggedFirstDraw = true;
+        }
+        const ULONGLONG firstProcess = g_firstProcessTick.load();
+        if (!loggedFirstProcess && firstProcess != 0) {
+            Log("first world update at %.3f s", SecondsSinceStart(firstProcess));
+            loggedFirstProcess = true;
+        }
+
+        const unsigned long draw = g_drawCount.load();
+        const unsigned long process = g_processCount.load();
+        Log("second %lu: drawn %lu (total %lu), world updates %lu (total %lu)", second,
+            draw - lastDraw, draw, process - lastProcess, process);
+        lastDraw = draw;
+        lastProcess = process;
+
+        // 5 s in: has another mod re-hooked the same places since we did?
+        if (second == 5 && g_hooksAdded) {
+            LogHookBytes("draw hook    at 5 s", kDrawHookAddr, ReadHookBytes(kDrawHookAddr));
+            LogHookBytes("process hook at 5 s", kProcessHookAddr, ReadHookBytes(kProcessHookAddr));
+        }
     }
     return 0;
 }
@@ -162,7 +271,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
         g_self = module;
+        g_startTick = GetTickCount64();
         DisableThreadLibraryCalls(module);
+        // Hooks go in now, as plugin-sdk plugins normally do (they use static
+        // constructors, which also run during DllMain).
+        AddHooks();
         // Do the real work on our own thread: DllMain must stay tiny.
         HANDLE t = CreateThread(nullptr, 0, MainThread, nullptr, 0, nullptr);
         if (t) CloseHandle(t);
