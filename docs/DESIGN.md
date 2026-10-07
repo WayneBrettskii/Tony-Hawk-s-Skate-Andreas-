@@ -79,8 +79,8 @@ Like SkyCraft's empty Minecraft world, the hidden THAW needs a nearly empty leve
 Rule 4 in `AGENTS.md`: we never write to the game folders unless the user names the path.
 
 - **GTA:** our plugin is an `.asi` file. The ASI Loader 1.3 and Mod Loader are already installed. The plugin lives in **`D:\Games\GTA San Andreas\modloader\my-passthrough\`** (approved by the user 2026-10-07; recorded in `AGENTS.md`). Only our files go there; deleting that folder removes the mod.
-- **reTHAWed:** our **launcher** starts `THAW.exe` and loads our plugin into it as it starts (known as "DLL injection"). Nothing is written to the reTHAWed folder. This is not bypassing any protection; reTHAWed has no anti-cheat that we have found.
-- **Unknown:** how reTHAWed itself starts (`reTHAWedLaunch.exe` vs `THAW.exe` with `rthw.dll`). Must be worked out before Phase 0b, by reading, not changing, its files.
+- **reTHAWed:** our **launcher** starts `reTHAWed.exe` and loads our plugin into it (known as "DLL injection"). Nothing is written to the reTHAWed folder. reTHAWed has no anti-cheat that we have found.
+- **How reTHAWed starts (found 2026-10-07 by reading its files):** its settings program `reTHAWedLaunch.exe` (.NET) starts `reTHAWed.exe`. That is the game with the retail SecuROM 7 protection already removed and `rthw.dll` (reTHAWed's code) added to the files it loads at start. The retail `THAW.exe` still has SecuROM; **we never use it.** See the decision under rule 5 in `AGENTS.md`.
 
 ## 7. Offline only
 
@@ -136,6 +136,40 @@ Expected (to be confirmed, not known yet):
 - Other installed mods (SilentPatch, Framerate Vigilante, SkyGFX, Widescreen Fix) may hook the same spots. If the frame rate or those mods' effects change, that's the cause. The log's frame rate numbers will show it.
 
 **License:** plugin-sdk uses the zlib license (checked in its `LICENSE` file): free to use, acknowledgment appreciated; we will credit it in `README.md`. It stays in the gitignored `extern\` folder and is not copied into our repo.
+
+### 8.2 Phase 0b plan: our code running inside reTHAWed (written 2026-10-07)
+
+**Goal:** a small program of ours (the *launcher*) starts reTHAWed, and a small plugin of ours runs inside it and writes a log, the same proof we got for GTA in phase 0a. No hooks, no changes to the game, normal visible window.
+
+**Two new pieces** (both built by our CMake into the `build` folder; nothing goes into `D:\Games\reTHAWed`):
+
+1. **`my-passthrough-thaw.dll`, the THAW plugin.** Like the first GTA plugin: when loaded, it starts its own thread and writes `logs\thaw.log`:
+   - "loaded", the game exe path and size (expect `reTHAWed.exe`, 3,612,672 bytes),
+   - the list of program files loaded in the game at that moment (to confirm `rthw.dll` is there, i.e. reTHAWed is active),
+   - a heartbeat once per second.
+   No plugin-sdk (it's GTA-only). No hooks.
+2. **`my-passthrough-launcher.exe`, the launcher.**
+   1. Checks `D:\Games\reTHAWed\reTHAWed.exe` exists and is the expected size; refuses `THAW.exe`.
+   2. Starts `reTHAWed.exe` with `D:\Games\reTHAWed` as its working folder, the way reTHAWed's own launcher does (it does not run `Updater.exe`).
+   3. Waits until `rthw.dll` shows up inside the game (checks every 100 ms, gives up after 30 s), so reTHAWed has started its own setup first.
+   4. Loads our plugin into the game: it asks the game to run Windows' `LoadLibrary` on our DLL's path (standard "DLL injection"; it adds our code, it doesn't change the game's files or protection).
+   5. Writes its own log, `logs\launcher.log`: each step, timings, and any Windows error numbers.
+
+**Steps** (each built and tested before the next):
+
+| Step | What | Done when |
+|---|---|---|
+| 0b-1 | Build both pieces. **Before** injecting anything: launcher only starts reTHAWed and waits for `rthw.dll`, then logs and stops. | reTHAWed runs normally from our launcher; `launcher.log` shows `rthw.dll` found and how long it took; reTHAWed's own `debug.txt` starts the same way as a normal launch |
+| 0b-2 | Launcher also injects our plugin. | `thaw.log` shows "loaded", `reTHAWed.exe` + MATCH, `rthw.dll` in the module list, rising heartbeat; reTHAWed plays normally |
+| 0b-3 (later, own plan) | Find a once-per-frame spot inside THAW to hook (no plugin-sdk here, so this needs reverse engineering). | Planned separately |
+
+**Test procedure (both steps):** user runs `build\Release\my-passthrough-launcher.exe` (from the project folder), plays reTHAWed's menus for ~30 s, quits normally. Claude reads `logs\launcher.log`, `logs\thaw.log` and reTHAWed's `debug.txt` (read-only).
+
+**Risks:**
+- **Antivirus:** starting a game and loading a DLL into it is also what some malware does, so Windows Defender may warn about or quarantine our launcher. If so we stop and look, rather than switching protection off.
+- **reTHAWed's own launcher may pass settings** to `reTHAWed.exe` that we don't. Step 0b-1 checks this: `debug.txt` from our launch is compared with a normal launch.
+- **Loading too early or too late:** waiting for `rthw.dll` should avoid racing reTHAWed's setup, but it's untested.
+- **Online code** still starts on its own when reTHAWed starts (as in every normal launch). We don't touch it (rule 5).
 
 ## 9. Biggest risks
 

@@ -14,6 +14,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 ## What doesn't work / not tested
 
+- Launcher that starts reTHAWed (phase 0b-1): works (tested 2026-10-07, reTHAWed starts and exits normally). Not yet tested with a controller switched on.
 - Everything else in `docs/DESIGN.md`: not started.
 
 ## Requirements

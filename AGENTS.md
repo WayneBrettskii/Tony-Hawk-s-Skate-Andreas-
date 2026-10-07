@@ -18,6 +18,12 @@ We are creating a mod that implements gameplay mechanics and features from Retha
 5. **Single-player and offline only.** If this touches online play, anti-cheat, or
    DRM, stop and tell me. Offline play with anti-cheat switched off through the
    game's own option is fine. Bypassing anti-cheat is never fine.
+   - *Decision 2026-10-07:* both games run from executables whose copy
+     protection was removed before this project (reTHAWed ships `reTHAWed.exe`
+     without the retail `THAW.exe`'s SecuROM 7; the downgraded GTA exe is the
+     1.0 US "HoodLum" build). The user chose to proceed using them as installed.
+     Our code never removes, bypasses or touches copy protection itself, and
+     never uses the protected `THAW.exe`.
 6. **Never put credentials in the repo or in any file you can read:** no API keys,
    no tokens, no passwords.
 

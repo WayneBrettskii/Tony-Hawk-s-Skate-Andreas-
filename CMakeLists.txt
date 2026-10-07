@@ -59,3 +59,14 @@ if(GTA_DEPLOY_DIR)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:gta_plugin>" "${GTA_DEPLOY_DIR}"
         COMMENT "Copying my-passthrough.asi to ${GTA_DEPLOY_DIR}")
 endif()
+
+# --- Launcher: my-passthrough-launcher.exe (starts reTHAWed) ---
+# Stays in the build folder; nothing is copied into the reTHAWed install.
+set(RETHAWED_DIR "D:/Games/reTHAWed" CACHE PATH "reTHAWed install folder (read only)")
+add_executable(launcher src/launcher/main.cpp)
+set_target_properties(launcher PROPERTIES
+    OUTPUT_NAME "my-passthrough-launcher"
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_compile_features(launcher PRIVATE cxx_std_17)
+target_compile_definitions(launcher PRIVATE
+    "MP_LOG_DIR=\"${MP_LOG_DIR}\"" "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"" UNICODE _UNICODE)

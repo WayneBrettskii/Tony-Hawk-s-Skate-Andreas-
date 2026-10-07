@@ -2,6 +2,48 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Phase 0b-1 tested: our launcher starts reTHAWed normally
+
+**Changed:** no code. `README.md` updated.
+**Why:** record the test of step 0b-1.
+**Tested how:** user built and ran `build\Release\my-passthrough-launcher.exe`, looked at reTHAWed's menus, quit. Claude read `logs\launcher.log`, and compared reTHAWed's `debug.txt` from this launch (15,642 lines) with the one from the user's normal launch at 00:30 (21,792 lines; kept as a baseline in Claude's scratch area).
+**Result:** works.
+- `reTHAWed.exe: 3612672 bytes: MATCH`; process started; `rthw.dll` found **0.109 s** after start (module list unavailable once at the very start, as expected); 53 program files loaded, including `rthw.dll`, `SDL2.dll`, `discord_game_sdk.dll`, `d3d9.dll`, `d3dx9_27.dll`, `binkw32.dll`. Game closed after 15.0 s with exit code 0 (normal exit).
+- `debug.txt`: the first 900 lines (start-up) are identical to the normal launch apart from the date and **controllers**: the normal launch logged `Detected controller "PS5 Controller"`, `Joystick added: PS5 Controller` and `Joystick added: Xbox 360 Controller`; ours logged none. Same window mode, same `Patching resolution: 3840x2160`, same network driver start-up. Everything else that differs is later in the session (the normal launch went further into the game; different song).
+**Still broken / not tested:** no controllers detected: **explained**, the user's controller was switched off during this test (answered 03:18). Not yet tested with a controller on through our launcher; to check during step 0b-2.
+**Next:** step 0b-2 (THAW plugin + loading it into reTHAWed).
+
+## [2026-10-07] Phase 0b-1: launcher that starts reTHAWed (no injection)
+
+**Changed:** new `src/launcher/main.cpp` and a `launcher` target in `CMakeLists.txt` (builds `build\Release\my-passthrough-launcher.exe`; `RETHAWED_DIR` setting, default `D:/Games/reTHAWed`). `README.md` updated.
+**Why:** step 0b-1 of `docs/DESIGN.md` 8.2: check reTHAWed runs normally when we start it, before loading anything into it.
+**Tested how:** not tested, not compiled. Checked reTHAWed's own launcher (`reTHAWedLaunch.exe`) text: it passes no start-up options to `reTHAWed.exe`; it writes settings into `rethawed.ini`, which the game reads itself. So we start `reTHAWed.exe` directly from its folder with no options.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. The launcher refuses to run if `reTHAWed.exe` isn't exactly 3,612,672 bytes. Compare our launch's `debug.txt` with the earlier normal launch (copy from 00:30 today, 21,792 lines).
+**Next:** user builds and runs the launcher, plays reTHAWed's menus ~30 s, quits. Claude reads `logs\launcher.log` and reTHAWed's `debug.txt`.
+
+## [2026-10-07] DRM decision recorded; phase 0b plan written
+
+**Changed:** `AGENTS.md`: under rule 5, recorded the user's decision to proceed with both games' protection-removed executables as installed (our code never touches protection; never use `THAW.exe`). `docs/DESIGN.md`: section 6 now says how reTHAWed starts; new section 8.2, the phase 0b plan (launcher + THAW plugin that only logs). No code.
+**Why:** user chose "carry on as planned" after the DRM finding; plan before code.
+**Tested how:** nothing to run.
+**Result:** plan with steps 0b-1 (launch only, no injection), 0b-2 (inject logging plugin), 0b-3 later (find a per-frame spot in THAW).
+**Still broken / not tested:** all of phase 0b. Open risks: antivirus reaction, settings reTHAWed's launcher may pass, timing of loading our plugin.
+**Next:** user approves the plan; then step 0b-1.
+
+## [2026-10-07] Phase 0b research: STOPPED on a DRM question (AGENTS.md rule 5)
+
+**Changed:** nothing. Research only; no code, no plan written.
+**Why:** before planning phase 0b, find out how reTHAWed starts and how its code gets into the game.
+**Tested how:** copied (read-only) `reTHAWed.exe`, `THAW.exe`, `rthw.dll`, `_d3d9.dll`, `binkw32.dll`, `reTHAWedLaunch.exe` into Claude's cloud workspace and read their structure and text strings with `objdump` and `strings`. Nothing was run, nothing in the game folder was changed.
+**Result:**
+- `THAW.exe` (21,442,560 bytes, Feb 2006) is the retail game and contains **SecuROM 7** copy protection (strings: `SecuROM User Access Service (V7)`, `Please insert the original "%PROJECT%" Disc`, extra protection sections).
+- `reTHAWed.exe` (3,612,672 bytes) is the same game code (Aspyr build paths, game script names) **without** the SecuROM strings, with `rthw.dll` added so it loads reTHAWed's code at start. reTHAWed's launcher (`reTHAWedLaunch.exe`, .NET) starts `reTHAWed.exe`.
+- `binkw32.dll` is the genuine Bink video library (not a loader). `rthw.dll` is reTHAWed's main code (uses SDL2, Discord, networking).
+- Also realised: plugin-sdk reports our GTA exe as 1.0 US **"HoodLum"**, which is the name of the group that released a no-CD version of the 1.0 exe. So the GTA side most likely also runs on an exe with its disc check removed (produced by the downgrader from the user's Steam copy). Should have been flagged when that line first appeared.
+**Still broken / not tested:** nothing built. Decision needed from the user before phase 0b.
+**Next:** user decides how to proceed (see chat).
+
 ## [2026-10-07] Phase 0a-2c tested: frame and world-update counters work
 
 **Changed:** no code. `README.md` and `docs/DESIGN.md` 8.1 updated with results.
