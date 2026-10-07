@@ -8,10 +8,15 @@
 //   - one "heartbeat" line per second, with a rising counter
 // No hooks. Nothing network-related is touched (AGENTS.md rule 5).
 //
+// Phase 0c: also opens the shared block (src/common/link.h). Once per second it
+// writes its own process id and beat there, and logs the GTA side's process id,
+// beat and drawn-frame total.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
 #include <windows.h>
+#include "../common/link.h"
 #include <tlhelp32.h>
 #include <cstdarg>
 #include <cstdio>
@@ -31,6 +36,10 @@ volatile LONG g_stop = 0;
 
 // reTHAWed 5.0.0.1's reTHAWed.exe on the user's PC (see MODLOG, phase 0b research).
 constexpr ULONGLONG kExpectedExeSize = 3612672;
+
+// The shared block with the GTA side (phase 0c); nullptr if it couldn't be opened.
+HANDLE g_linkMapping = nullptr;
+mp::LinkBlock* g_link = nullptr;
 
 // Append one line to the log: "[seconds since start] text".
 void Log(const char* fmt, ...)
@@ -131,13 +140,32 @@ void LogModules()
         sawRthw ? "PRESENT" : "MISSING", sawSelf ? "PRESENT" : "MISSING");
 }
 
+// Open the shared block and put our process id in it.
+void SetUpLink()
+{
+    bool createdHere = false;
+    DWORD error = 0;
+    const mp::LinkOpenResult r = mp::OpenLink(g_linkMapping, g_link, createdHere, error);
+    if (r == mp::LinkOpenResult::Ok) {
+        InterlockedExchange(&g_link->thawPid, static_cast<LONG>(GetCurrentProcessId()));
+        Log("link: shared block %s (%s it)", "ready", createdHere ? "created" : "opened");
+    } else if (r == mp::LinkOpenResult::WrongLayout) {
+        Log("link: %s: magic 0x%08lX version %ld; not using it", mp::LinkOpenResultText(r),
+            g_link->magic, g_link->version);
+        g_link = nullptr;
+    } else {
+        Log("link: %s (Windows error %lu); continuing without the link", mp::LinkOpenResultText(r), error);
+        g_link = nullptr;
+    }
+}
+
 DWORD WINAPI MainThread(LPVOID)
 {
     if (!SetUpLogPath()) return 0; // nowhere to log; do nothing at all
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough THAW plugin: loaded (phase 0b-2)");
+    Log("my-passthrough THAW plugin: loaded (phase 0c)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -161,12 +189,38 @@ DWORD WINAPI MainThread(LPVOID)
     Log("process id: %lu", GetCurrentProcessId());
     LogModules();
 
+    SetUpLink();
+    mp::PeerWatch gtaWatch;
+    LONG lastGtaDrawn = 0;
+
     // Heartbeat: once per second, until the game closes.
     unsigned long beat = 0;
     while (!g_stop) {
         Sleep(1000);
         ++beat;
         Log("heartbeat %lu", beat);
+
+        // Link: publish our beat, then report the GTA side.
+        if (!g_link) continue;
+        InterlockedExchange(&g_link->thawBeat, static_cast<LONG>(beat));
+        const LONG pid = g_link->gtaPid;
+        const LONG gtaBeat = g_link->gtaBeat;
+        const LONG drawn = g_link->gtaDrawn;
+        if (pid == 0) {
+            if (gtaWatch.lastPid != 0) Log("link: GTA not connected");
+            gtaWatch.lastPid = 0;
+            continue;
+        }
+        if (pid != gtaWatch.lastPid) {
+            Log("link: GTA connected, process id %ld", pid);
+            gtaWatch.lastPid = pid;
+            gtaWatch.lastBeat = gtaBeat;
+            lastGtaDrawn = drawn;
+        }
+        Log("link: GTA beat %ld (+%ld), GTA drawn total %ld (+%ld)", gtaBeat,
+            gtaBeat - gtaWatch.lastBeat, drawn, drawn - lastGtaDrawn);
+        gtaWatch.lastBeat = gtaBeat;
+        lastGtaDrawn = drawn;
     }
     return 0;
 }
@@ -184,6 +238,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         if (t) CloseHandle(t);
     } else if (reason == DLL_PROCESS_DETACH) {
         InterlockedExchange(&g_stop, 1);
+        // Tell the other side we're gone (just a memory write; safe here).
+        if (g_link) InterlockedExchange(&g_link->thawPid, 0);
     }
     return TRUE;
 }

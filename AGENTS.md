@@ -74,5 +74,8 @@ We are creating a mod that implements gameplay mechanics and features from Retha
   `docs/DESIGN.md` section 2.
 - Approved write path in a game install: `D:\Games\GTA San Andreas\modloader\my-passthrough\`
   (our plugin files only). Nothing is ever written to `D:\Games\reTHAWed`.
+- Also approved (2026-10-07): `D:\Games\GTA San Andreas\modloader\WindowedMode\` for
+  ThirteenAG's Windowed Mode plugin v2.1 (third-party, not our code), installed so GTA
+  can run in a window / borderless while reTHAWed runs alongside.
 - Language and version: [ C++ with MSVC]
 - Agent: Claude

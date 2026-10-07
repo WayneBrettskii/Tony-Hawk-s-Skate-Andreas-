@@ -171,6 +171,41 @@ Expected (to be confirmed, not known yet):
 - **Loading too early or too late:** waiting for `rthw.dll` should avoid racing reTHAWed's setup, but it's untested.
 - **Online code** still starts on its own when reTHAWed starts (as in every normal launch). We don't touch it (rule 5).
 
+### 8.3 Phase 0c plan: the link between the two games (written 2026-10-07)
+
+**Goal:** the GTA plugin and the THAW plugin share a small block of memory, and each one's log shows the *other* game's heartbeat rising. This proves the two games can exchange data, which every later phase depends on (SkyCraft does the same with `Local\SkyCraft_v1`).
+
+**How it works (plain language):** Windows lets two programs open the same named block of memory (a *shared memory* or *file mapping*; no actual file on disk). Whichever plugin starts first creates it; the second one opens the same block. Each side writes only its own part and reads the other's.
+
+**The shared block, version 1** (one new header file both plugins include: `src/common/link.h`). Fixed-size numbers only, so both sides agree on the layout; a check in the code stops the build if the size ever changes by accident.
+
+| Field | Written by | Meaning |
+|---|---|---|
+| `magic`, `version` | first side to start | "MPT1", 1: confirms both sides use the same layout |
+| `gtaPid`, `thawPid` | each side | process id of each game (0 = not started yet) |
+| `gtaBeat`, `thawBeat` | each side, once per second | a counter that rises while that side's plugin is running |
+| `gtaDrawn` | GTA side, once per second | GTA's total drawn frames (from phase 0a-2c), to see whether GTA keeps drawing while the other window has focus |
+
+- Name: `Local\MyPassthrough_v1` (`Local` = only programs in the user's own Windows session can see it; nothing on the network).
+- Once per second each plugin: bumps its own beat, then logs the other side's process id and beat, and by how much it rose since last time. If the other side isn't there yet, it logs "other side: not connected" (once, until it changes).
+
+**Steps:** a single step, 0c-1 (both plugins + the shared header together, since one side alone can't show anything).
+
+**Test:** user starts GTA normally and waits on its menu or in-game; then runs the launcher to start reTHAWed; switches between the two windows a few times (~30 s total); quits reTHAWed, then GTA. Claude reads `gta.log` and `thaw.log`.
+
+**Done when:** each log shows the other side's process id, and its beat rising about 1 per second while both run; after reTHAWed quits, `gta.log` shows THAW's beat stop rising.
+
+**Also learned from this test (useful later):** whether GTA keeps drawing frames while it doesn't have focus (`gtaDrawn`). Phase 3 needs both games to keep running at once.
+
+**Risks:**
+- Two games running at once uses more memory and CPU; both are 2000s games, so expected to be fine, but untested.
+- GTA may pause itself when it loses focus. That doesn't stop the link test (the beat comes from our own thread), but it will show up in `gtaDrawn`.
+- Both sides could start at the same instant and both try to set up the block; the code uses an atomic "compare and set" on `magic` so only one does.
+
+**Result (2026-10-07):** the link works both ways (each side saw the other's beat rise +1 per second, 133 times in a row). Two findings:
+- **GTA in exclusive full screen freezes reTHAWed** when switching back to reTHAWed (happens without our code too). With GTA in a window (ThirteenAG's Windowed Mode plugin, `mode=1`) reTHAWed kept running. **So GTA must not run in exclusive full screen** (see section 10).
+- GTA pauses itself completely (0 drawn, 0 world updates) while it isn't the front window. Fine for our design, since GTA is the game on screen.
+
 ## 9. Biggest risks
 
 | Risk | Why | Fallback |
@@ -186,3 +221,4 @@ Expected (to be confirmed, not known yet):
 - Visual Studio with "Desktop development with C++" (for 32-bit builds; both games are 32-bit).
 - Git for Windows (installed).
 - plugin-sdk (C++ library for GTA SA plugins); downloaded into a gitignored folder.
+- GTA must run in a window or borderless window, **not exclusive full screen** (exclusive full screen freezes reTHAWed). Done with ThirteenAG's Windowed Mode plugin v2.1 in `modloader\WindowedMode\` (Alt+Enter cycles window styles).

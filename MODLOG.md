@@ -2,6 +2,65 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-07] Freeze explained: full-screen GTA; with GTA in a window reTHAWed keeps running
+
+**Changed:** no code. `docs/DESIGN.md` (section 8.3 result, new requirement in section 10), `README.md` (requirements, what works).
+**Why:** record the windowed-mode test.
+**Tested how:** user started GTA, switched it to windowed with Alt+Enter, started reTHAWed with its own launcher (our THAW plugin not loaded), switched GTA, then back to reTHAWed, a few times. Claude read `logs\gta.log` and the Windowed Mode plugin's saved settings.
+**Result:** **reTHAWed did not freeze.** So the freeze came from GTA running in **exclusive full screen**: when GTA takes the screen, reTHAWed (Direct3D 9) can't recover when switched back to.
+- Windowed Mode plugin saved its settings in its own folder (`modloader\WindowedMode\iii.vc.sa.windowedmode.ini`): `mode=1` (window), 1218×813, `autoPause=1`, `autoResume=1`. Nothing new in GTA's main folder.
+- `gta.log`: our hook spots unchanged at 5 s (the Windowed Mode plugin does not use them). GTA stayed on its main menu this run (0 drawn / 0 world updates, as in earlier main-menu tests). THAW not connected, as expected (reTHAWed started without our plugin).
+**Still broken / not tested:** not yet re-tested with **our** launcher and plugin and GTA in a window together. Borderless mode (`mode=2`) not tested. GTA still pauses itself when not in front (`autoPause=1`).
+**Next:** confirmation run: GTA windowed + our launcher, switch back and forth; then phase 0c is done.
+
+## [2026-10-07] Installed ThirteenAG's Windowed Mode plugin for GTA (third-party)
+
+**Changed:** installed `III.VC.SA.WindowedMode.asi` v2.1 (799,744 bytes) and its `README.md` into `D:\Games\GTA San Andreas\modloader\WindowedMode\` (user approved this path; recorded in `AGENTS.md`). Not our code; not in the repo.
+**Why:** reTHAWed freezes when switching back to it from full-screen GTA (user: froze "when I alt tabbed to gta then back to rethawed"), even without our code. Next test needs GTA in a window / borderless. None of the installed mods can do that (checked the settings files of Widescreen Fix, SilentPatch, SkyGFX, GInput, Framerate Vigilante, limit adjuster).
+**Tested how:** downloaded the official v2.1 release zip from github.com/ThirteenAG/III.VC.SA.WindowedMode (zip SHA-256 `b97d74b6...2505`); checked the plugin is a 32-bit Windows plugin; README lists "Classic GTA San Andreas v1.0 US". After copying, read it back from the PC: SHA-256 `c8d37c75...c85a`, same as the download.
+**Result:** installed. Not yet run.
+**Still broken / not tested:** not known whether it works with our GTA plugin and the other installed mods. It saves its window size/style in a settings file (location not checked yet). Alt+Enter cycles window styles. Widescreen Fix's `AllowAltTabbingWithoutPausing = 0` (only works in windowed mode) left unchanged.
+**Next:** test: GTA in borderless/windowed mode + reTHAWed (its own launcher), switch back and forth, see if reTHAWed still freezes.
+
+## [2026-10-07] Comparison test: reTHAWed freezes without our code too
+
+**Changed:** nothing.
+**Why:** find out whether our plugin caused the reTHAWed freeze in the phase 0c-1 test.
+**Tested how:** user started GTA in full screen (no change), then reTHAWed with **its own launcher** `ReTHAWedLaunch.exe` (so our THAW plugin was not loaded), and switched between the two windows.
+**Result:** **reTHAWed froze again.** So the freeze is not caused by our plugin or our launcher. It happens with GTA (full screen) and reTHAWed running together.
+**Still broken / not tested:** cause still not confirmed. Next suspect: GTA's full-screen mode. Not yet known exactly when reTHAWed freezes (on switching away, or on switching back).
+**Next:** same test with GTA in windowed mode. This is a design question too: reTHAWed must keep running while GTA is in front.
+
+## [2026-10-07] Phase 0c-1 tested: link works both ways; reTHAWed froze (cause unknown)
+
+**Changed:** no code. `README.md` updated.
+**Why:** record the first test with both games running and linked.
+**Tested how:** user built, started GTA (into a game), then our launcher (reTHAWed), switched between the windows, quit reTHAWed, then GTA. User reports: "GTA ran fine but reTHAWed froze". Claude read `gta.log`, `thaw.log`, `launcher.log` and reTHAWed's `debug.txt` (compared with the earlier runs).
+**Result:**
+- **Link: works.** GTA created the shared block, THAW opened it. GTA's log: `THAW connected, process id 28684` at 80.2 s, then THAW's beat rose **+1 every second, 133 times in a row**; `THAW not connected` at 214.3 s after reTHAWed closed. THAW's log: `GTA connected, process id 21748`, GTA's beat **+1 every second** for all 134 s.
+- **GTA stops completely when it is not the front window:** 0 drawn frames and 0 world updates per second whenever reTHAWed had focus (e.g. seconds 34 to 98). When GTA came back to the front it showed the pause-menu pattern (0 drawn, 60 world updates per second), then 60/60 when playing. GTA drew 465 frames in total during the 134 s reTHAWed ran.
+- **reTHAWed froze** at some point while running (user report). Our THAW plugin's own thread kept logging every second without a gap (heartbeat 1 to 134). The launcher saw reTHAWed close normally after 134.9 s with exit code 0, and reTHAWed's `debug.txt` ends with the same shutdown sequence as the earlier normal quit. `debug.txt` has no line about losing focus, a lost graphics device, or an error that the earlier runs don't also have.
+**Still broken / not tested:** the reTHAWed freeze is **not explained**. User's details (03:42 to 03:44): menu didn't respond to keyboard or controller; **no music and nothing moving**, so reTHAWed's game loop itself had stopped (not just input); closed with the X on the taskbar, after which it shut down cleanly (exit code 0); **GTA was in full screen**. Possible cause, not confirmed: GTA's full-screen mode takes over the display and reTHAWed's graphics (Direct3D 9) stop until they can recover, or reTHAWed pauses itself when it isn't the front window. Not yet known whether reTHAWed does the same **without our code**. No fix attempted yet.
+**Next:** comparison test without our code: GTA in full screen, reTHAWed started with its own launcher, switch between them. Matters for the whole design: in phase 3 reTHAWed must keep running while GTA is in front.
+
+## [2026-10-07] Phase 0c-1: shared memory link between the two plugins
+
+**Changed:** new `src/common/link.h` (shared block `Local\MyPassthrough_v1`: magic "MPT1", version 1, `gtaPid`, `thawPid`, `gtaBeat`, `thawBeat`, `gtaDrawn`; 64 bytes, size checked at build time; open-or-create helper). `src/gta/main.cpp`: opens the block, writes its process id, once per second writes its beat and drawn-frame total, logs the THAW side ("connected", beat and rise per second, "not connected"); clears its process id on exit. `src/thaw/main.cpp`: same from the THAW side, also logs GTA's drawn total and its rise. `README.md` updated.
+**Why:** step 0c-1 of `docs/DESIGN.md` 8.3.
+**Tested how:** not tested, not compiled.
+**Result:** none yet.
+**Still broken / not tested:** not compiled or run. Not known whether GTA keeps drawing while reTHAWed has focus (the test will show it in `gtaDrawn`).
+**Next:** user builds; starts GTA, then the launcher; switches windows a few times (~30 s); quits reTHAWed, then GTA. Claude reads `gta.log` and `thaw.log`.
+
+## [2026-10-07] Phase 0c plan written (link between the two games)
+
+**Changed:** `docs/DESIGN.md`: new section 8.3, the phase 0c plan. No code.
+**Why:** user chose phase 0c next (over 0b-3). Plan before code.
+**Tested how:** nothing to run.
+**Result:** one step, 0c-1: a shared memory block `Local\MyPassthrough_v1` (layout in a new `src/common/link.h`) where each plugin writes its process id and a once-per-second beat and reads the other's; GTA also publishes its drawn-frame total.
+**Still broken / not tested:** everything in phase 0c.
+**Next:** user approves the plan; then step 0c-1.
+
 ## [2026-10-07] Phase 0b-2 tested: our plugin runs inside reTHAWed
 
 **Changed:** no code. `README.md` and `docs/DESIGN.md` 8.2 updated.

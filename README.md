@@ -2,7 +2,7 @@
 
 Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden in the background and does the skating; GTA draws everything and keeps its story. Modelled on SkyCraft. How it works: `docs/DESIGN.md`. Change history: `MODLOG.md`.
 
-**Status: phase 0a (very early). Nothing playable yet.**
+**Status: phase 0 (very early): both games run our code and can exchange numbers. Nothing playable yet.**
 
 ## What works
 
@@ -14,14 +14,19 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Launcher starts reTHAWed** (phase 0b-1, tested 2026-10-07): `build\Release\my-passthrough-launcher.exe`; reTHAWed starts and exits normally, controller detected.
 - **Our plugin runs inside reTHAWed** (phase 0b-2, tested 2026-10-07): the launcher loads `my-passthrough-thaw.dll` 0.3 s after start; it writes `logs\thaw.log` with a heartbeat. Tested on the menus only.
 
+- **Link between the two games** (phase 0c-1, tested 2026-10-07): both sides see each other's once-per-second beat through shared memory.
+
 ## What doesn't work / not tested
 
-- No hooks inside reTHAWed yet; no link between the two games yet.
+- **GTA in exclusive full screen freezes reTHAWed** when you switch back to reTHAWed (not caused by our code; happens without it). Run GTA in a window instead (see Requirements). Our full setup (our launcher + GTA in a window) is not re-tested yet.
+- GTA pauses itself while it is not the front window.
+- No hooks inside reTHAWed yet.
 - Everything else in `docs/DESIGN.md`: not started.
 
 ## Requirements
 
 - GTA San Andreas 1.0 US with ASI Loader and Mod Loader.
+- GTA in a window or borderless window, **not exclusive full screen**: [Windowed Mode plugin](https://github.com/ThirteenAG/III.VC.SA.WindowedMode) by ThirteenAG (v2.1) in `modloader\WindowedMode\`; Alt+Enter in GTA cycles window styles.
 - reTHAWed 5.0.0.1.
 - To build: Visual Studio 2026 with "Desktop development with C++".
 

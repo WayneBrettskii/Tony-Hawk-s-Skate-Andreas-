@@ -10,11 +10,16 @@
 //
 // The hooks (via plugin-sdk) only count; they don't change what the game does.
 //
+// Phase 0c: also opens the shared block (src/common/link.h). Once per second it
+// writes its own process id, beat and drawn-frame total there, and logs the
+// THAW side's process id and beat.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include <windows.h>
+#include "../common/link.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -30,6 +35,10 @@ volatile LONG g_stop = 0;
 
 // The gta_sa.exe 1.0 US file size we found on the user's PC (see MODLOG).
 constexpr ULONGLONG kExpectedExeSize = 14383616;
+
+// The shared block with the THAW side (phase 0c); nullptr if it couldn't be opened.
+HANDLE g_linkMapping = nullptr;
+mp::LinkBlock* g_link = nullptr;
 
 // Where plugin-sdk hooks GTA SA 1.0 US (from its shared/Events.h):
 //   drawingEvent:     call at 0x53E293, after the scene is drawn (once per frame)
@@ -187,13 +196,49 @@ double SecondsSinceStart(ULONGLONG tick)
     return (tick - g_startTick) / 1000.0;
 }
 
+// Open the shared block and put our process id in it.
+void SetUpLink()
+{
+    bool createdHere = false;
+    DWORD error = 0;
+    const mp::LinkOpenResult r = mp::OpenLink(g_linkMapping, g_link, createdHere, error);
+    if (r == mp::LinkOpenResult::Ok) {
+        InterlockedExchange(&g_link->gtaPid, static_cast<LONG>(GetCurrentProcessId()));
+        Log("link: shared block %s (%s it)", "ready", createdHere ? "created" : "opened");
+    } else if (r == mp::LinkOpenResult::WrongLayout) {
+        Log("link: %s: magic 0x%08lX version %ld; not using it", mp::LinkOpenResultText(r),
+            g_link->magic, g_link->version);
+        g_link = nullptr;
+    } else {
+        Log("link: %s (Windows error %lu); continuing without the link", mp::LinkOpenResultText(r), error);
+        g_link = nullptr;
+    }
+}
+
+// Log the other side once per second: connected / not connected, and its beat.
+void LogPeer(const char* name, LONG pid, LONG beat, mp::PeerWatch& w)
+{
+    if (pid == 0) {
+        if (w.lastPid != 0) Log("link: %s not connected", name);
+        w.lastPid = 0;
+        return;
+    }
+    if (pid != w.lastPid) {
+        Log("link: %s connected, process id %ld", name, pid);
+        w.lastPid = pid;
+        w.lastBeat = beat;
+    }
+    Log("link: %s beat %ld (+%ld)", name, beat, beat - w.lastBeat);
+    w.lastBeat = beat;
+}
+
 DWORD WINAPI MainThread(LPVOID)
 {
     if (!SetUpLogPath()) return 0; // nowhere to log; do nothing at all
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough GTA plugin: loaded (phase 0a-2c)");
+    Log("my-passthrough GTA plugin: loaded (phase 0c)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -231,6 +276,9 @@ DWORD WINAPI MainThread(LPVOID)
         LogHookBytes("process hook after ", kProcessHookAddr, g_processAfter);
     }
 
+    SetUpLink();
+    mp::PeerWatch thawWatch;
+
     // Once per second: counts for that second, and running totals.
     unsigned long lastDraw = 0, lastProcess = 0, second = 0;
     bool loggedFirstDraw = false, loggedFirstProcess = false;
@@ -255,6 +303,13 @@ DWORD WINAPI MainThread(LPVOID)
             draw - lastDraw, draw, process - lastProcess, process);
         lastDraw = draw;
         lastProcess = process;
+
+        // Link: publish our beat and drawn total, then report the THAW side.
+        if (g_link) {
+            InterlockedExchange(&g_link->gtaBeat, static_cast<LONG>(second));
+            InterlockedExchange(&g_link->gtaDrawn, static_cast<LONG>(draw));
+            LogPeer("THAW", g_link->thawPid, g_link->thawBeat, thawWatch);
+        }
 
         // 5 s in: has another mod re-hooked the same places since we did?
         if (second == 5 && g_hooksAdded) {
@@ -281,6 +336,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         if (t) CloseHandle(t);
     } else if (reason == DLL_PROCESS_DETACH) {
         InterlockedExchange(&g_stop, 1);
+        // Tell the other side we're gone (just a memory write; safe here).
+        if (g_link) InterlockedExchange(&g_link->gtaPid, 0);
     }
     return TRUE;
 }
