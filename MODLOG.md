@@ -2,14 +2,109 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
-## [2026-10-09] Skatepark wall: fence moved to the middle; rails on both edges and on the fence top
+## [2026-10-09] Phase 5-3d fix 2 (second attempt at shimmy / stutter)
+
+**Changed:** `src/thaw/main.cpp`: a sample keeps the time we FIRST saw that reTHAWed frame (same position and speed as last time = same frame; refreshed after 200 ms so standing still isn't "old"); log counts the repeats per second. `src/thaw/pose.h/.cpp`: 20 body points: adds the chest and a point 10 units along the chest's right axis. `src/common/link.h`: version 6 (`_v6`, 452 bytes). `src/gta/body.cpp`: CJ's chest twist follows the skater's chest axis instead of its shoulder joints.
+**Why (two causes found by reasoning, not yet measured):** (1) stutter: reTHAWed runs about 60 frames a second, we read about 65 times, so the same frame is read twice; the second read was stamped "new" and GTA's "move ahead by speed x age" then put CJ up to one frame's travel behind (at 8 m/s about 13 cm) and back: a jitter along the travel direction, worst when fast (take-offs). The board had the same stutter earlier. (2) shimmy: the chest twist copied the line between the skater's shoulder joints, which move with every arm swing in the push animation; reTHAWed's chest itself doesn't twist that much.
+**Tested how:** bone maths in the cloud. Not in the game. Second real attempt at this problem: if it still happens, STATUS.md next (AGENTS.md).
+**Result:** none yet.
+**Next:** user test (both plugins: link version 6).
+
+## [2026-10-09] Phase 5-3d fix 1: steady shoulders, smoother take-offs
+
+**Changed:** `src/gta/skatemode.cpp`: while the body is copied, GTA's animation underneath stays on the standing pose (no switching to pushing / fast / jump). `src/gta/body.cpp`: the chest's twist uses the collar bones (fixed on the chest) instead of the shoulder joints; samples where the skater's bones changed length (read while reTHAWed was half-way through updating them) are skipped, keeping the last good pose (lengths learned while riding; reset when skate mode goes off; 30 odd ones in a row = accept). Log line adds the number skipped.
+**Why:** user test 02:39: shoulder shimmy (GTA's pushing / sprint animations shrug the shoulders, which also moved our twist reference); stutter at take-off (the base animation switched to the jump pose there: 172 switches in one session).
+**Tested how:** bone maths retested in the cloud; user test 02:44.
+**Result:** did NOT help: shimmy and stutter still there. Log: base animation now steady (1 change), 0 half-updated samples skipped, body copied every frame. So neither the base animation nor torn reads were the cause.
+**Next:** fix 2 (entry above).
+
+## [2026-10-09] Phase 5-3d: CJ's body copies the reTHAWed skater's body
+
+**Changed:** `src/thaw/pose.h/.cpp`: also reads 18 body bone positions; `src/thaw/main.cpp` sends them and logs whether all were found. `src/common/link.h`: version 5 (`_v5`, 428 bytes), `thawBody`, flag `kBodyValid`. New `src/gta/body.h/.cpp`: turns CJ's bones right before GTA draws him (hips, spine, neck, arms, legs). `src/gta/skatemode.cpp`: hands the targets over each frame, clears them when skate mode goes off, logs once CJ's skeleton layout and every second how many frames were copied. `src/gta/main.cpp`: installs the hook. `CMakeLists.txt`: builds body.cpp. Plan: DESIGN 8.17.
+**Why:** user wanted skateboarding animations and tricks instead of roller-skating moves.
+**Tested how:** in the cloud on a made-up skeleton; user test 02:39 (after one build fix: `BodyChecksums` used before it was declared, and the first copy to the PC didn't land). gta.log: CJ's skeleton 32 bones, world space; body copied in 57 to 60 frames of 60.
+**Result:** "seemed to work pretty good". Problems: shoulders "shimmy"; body stutters when jumping off a ramp.
+**Next:** fix those (entry above).
+
+## [2026-10-09] Phase 5-3c: CJ turns and tilts with the skater
+
+**Changed:** `src/gta/skatemode.cpp`: new `TiltCj`: CJ's matrix takes the skater's up and facing each frame, turned around his feet (switch `kTiltCj`); set upright again when skate mode goes off; the drift check now compares with where CJ was really put; per-second log adds "CJ turned N (lean up to X deg)". Plan: DESIGN 8.16.
+**Why:** user saw odd movement in bowl airs: the board turned with the skater, CJ stayed upright.
+**Tested how:** user test 02:20; gta.log: CJ turned in every frame, lean up to 90 degrees, no errors.
+**Result:** works: board stays with CJ as he turns, no turning around at rail ends.
+**Still broken:** poses still roller-skating.
+**Next:** CJ's body copies the skater's (5-3d).
+
+## [2026-10-09] Phase R4-2 + 5-3b: GTA's board copies reTHAWed's board; CJ faces where the skater faces
+
+**Changed:** `src/common/link.h`: version 4 (name `_v4`, 212 bytes), adds the skater's orientation and the board bone, flag `kPoseValid`. `src/thaw/main.cpp`: reads them every pass and sends them. `src/gta/skatemode.cpp`: CJ's heading from the skater's facing (velocity as fallback); places the board from the bone (`PlaceBoardFromThaw`); the per-second report counts frames that used them. `src/gta/board.h/.cpp`: `BoardUpdatePose`. Also fixed `docs/DESIGN.md`: the 8.14 edit had dropped the "## 11. Before release" heading and so the 8.15 plan was never written; both are in now. Plan: DESIGN 8.15.
+**Why:** user asked for tricks; the board stuttered; CJ turned around at rail ends.
+**Tested how:** user test 02:08 (both games, East LS); gta.log: board followed reTHAWed's bone in every frame of every second (56 to 60 of 60), facing from reTHAWed used in all of them, no errors.
+**Result:** works: tricks show on the board, board stays with CJ in bowl airs. User saw "weird movements in the air": most likely the board turning with the skater (on vert the skater rotates up to 90 degrees and spins in airs) while CJ stays upright in the roller-skating jump pose. Not yet confirmed (no F9 mark).
+**Still broken:** CJ doesn't turn or tilt with the skater (ramps, vert airs); poses still roller-skating.
+**Next:** CJ's whole body follows the skater's orientation, then the board stance (5-3a).
+
+## [2026-10-09] Phase R4-1: read the skater's facing and skeleton from reTHAWed (log only)
+
+**Changed:** new `src/thaw/pose.h/.cpp`; `src/thaw/main.cpp` logs, 10 times per second while there is a skater: the skater's orientation matrix (object `+0x88`), the board bone (`Bone_Board_Root`) and the pelvis in the skater's own space; the bone list once per skater; every bone's full matrix on F9. 9 code checks first. `CMakeLists.txt`: builds pose.cpp. Plan and the addresses: DESIGN 8.15.
+**Why:** tricks on CJ's board and the board stutter both need reTHAWed's own board angle; also fixes CJ turning around at rail ends later (skater's facing).
+**Tested how:** in the cloud: the 9 code checks compared against the copy of reTHAWed.exe (all match); the checksum code gives the game's numbers ("skeleton" 0x222756D5); compiles with stand-in headers. Not run in the game.
+**Result (user test 01:52): works.** All code checks match; 52 bones, all named; facing follows the velocity; the board bone flips over in kickflips and turns 180 in shove-its. Details in DESIGN 8.15.
+**Still broken:** nothing in this step.
+**Next:** R4-2 + 5-3b.
+
+## [2026-10-09] Phase 5-1: stand-in skateboard under CJ
+
+**Changed:** new `src/gta/board.h/.cpp`: builds a simple board (deck with kicked nose and tail, trucks, wheels; 236 triangles, plain colours) and draws it each frame right after GTA draws the world. `skatemode.cpp`: lifts CJ by the deck height (11.2 cm), places the board under his feet each frame (tilted with the slope on the ground, level in the air), hides it when skate mode goes off. `main.cpp`: installs the drawing hook. `CMakeLists.txt`: builds board.cpp. Plan: DESIGN 8.13.
+**Why:** user asked for a board on CJ; chose "stand-in board first, reTHAWed's board later" (01:25).
+**Tested how:** in the cloud only: the board code compiles with stand-in headers (not the real plugin-sdk, no Windows compiler here) and its shape was drawn to a picture (board_preview.png, not in the repo) on a test slope: right size, tilts nose-up. Not tested in the game. Phase 5-0 (poses) also still not tested.
+**Result (user, 01:42):** works. Board shows under CJ and stays with him, pushing looks faster, jumps fine; the board stutters while following; tricks don't show on the board (expected). Log: board shown, "skate" file loaded (block 122), 112 pose changes in one session, no errors.
+**Still broken:** stutter (probably the slope tilt measured from GTA's ground; to be replaced by reTHAWed's own board angle, DESIGN 8.15); board ignores GTA's lighting (same brightness day and night); wheels don't spin; CJ's roller-skating poses don't match a board stance.
+**Next:** user builds and tests poses and board together.
+
+## [2026-10-09] Phase 5-0: CJ gets skating poses (GTA's roller-skating animations)
+
+**Changed:** new `src/gta/skateanim.h/.cpp`; `src/gta/skatemode.cpp` calls it every frame while skate mode moves CJ (speed along the ground, height above GTA's ground) and stops it when skate mode goes off (also after an error); `CMakeLists.txt` builds it. Plan: DESIGN 8.13.
+**Why:** user asked for skate animations and a board on CJ before re-running T4. GTA has no skateboard model (cut content), so this step only does poses: `skate_idle` / `skate_run` / `skate_sprint` from GTA's `skate` animation file by speed, `JUMP_glide` in the air.
+**Tested how:** user, 01:42, together with phase 5-1.
+**Result:** works: poses switch standing / pushing / fast / in the air as planned.
+**Still broken / not tested:** everything; no board; CJ still turns around at rail ends (8.11).
+**Next:** user builds and tests; then T4 re-run.
+
+## [2026-10-09] Phase 4-4 R2: T3 works, T4 out of hash items; collision merged into 200 m tiles
+
+**Changed:** `tools/gta_to_thaw_map.py`: after vert, wallride and rails are worked out (they need GTA's separate objects), the collision objects are merged into squares of 200 m (one collision object per tile, split if a tile passes 65,535 corners or faces). `--no-merge` keeps the old way. East LS: 2,493 objects -> 35 tiles.
+**Why:** T3 (all of LS, `--box 0 -3000 3000 0`): fine (user, 01:09). T4 (whole map, `--box -3000 -3000 3000 3000`): reTHAWed stopped with "CRITICAL: Out of HashItems (30000 max) in their Compact Pool". `debug.txt`: everything loaded first, including the 61 MB collision (28,220 objects, 2,249,641 triangles, super sectors 236 x 234: "Loading collision... Loaded!"); the pool ran out afterwards. reTHAWed keeps one hash entry per collision object / scene sector (and per node) in a pool of 30,000; 28,220 objects + the game's own entries + 9,001 nodes is too many. T2 (7,800 objects) and T3 fit. The earlier hang with 21,963 nodes may have been the same pool, without the message.
+**Tested how:** in the cloud: East LS merged into 35 tiles: same 164,562 triangles, same flags (65,343 wallride, 250 vert); every BSP tree checked: all 164,562 faces reachable, none in the wrong place. Not in the game.
+**Result:** none yet.
+**Still broken / not tested:** in-game; the whole map should now be about 700 tiles + 9,001 nodes.
+**Next:** user re-runs T4.
+
+## [2026-10-09] Phase 4-4 R2 prep: --box and --no-geometry-nodes
+
+**Changed:** `tools/gta_to_thaw_map.py`: `--box XMIN YMIN XMAX YMAX` converts any GTA area (the centre stays East LS's (1975, -1525), so the GTA alignment in `convert.h` stays right); `--no-geometry-nodes` leaves out the one-LevelGeometry-node-per-object list.
+**Why:** R2 size ladder (DESIGN 8.12): T1 East LS without geometry nodes (does collision still work?), T2 2 x 2 km (482k triangles), T3 all of LS (728k), T4 whole map (2.25M).
+**Tested how:** in the cloud: East LS without geometry nodes: 9,001 nodes (start + 9,000 rail nodes), PAK 6.8 MB. Not in the game.
+**Result (00:50): T2 works.** User built T2 (`--box 1000 -2500 3000 -500 --no-geometry-nodes`): **7,800 collision objects, 541,288 triangles** (more than LSE's 495k), 84,946 BSP nodes, super sectors 89 x 97, 9,001 nodes; it loaded and skated well, and in skate mode the user took CJ all the way to the airport (`thaw.log`: skater from GTA x 1976 to 1015, y down to -2466). GTA ran at 58 to 60 frames a second. This also answers T1: **collision works without the LevelGeometry nodes**.
+**Found on the way:** with the same 9,000 rail node budget over 4 x the area, the longest rails take it all (655 rails kept), so short but good rails (e.g. the bowl coping) can be dropped. Rails need a per-area budget, or zones.
+**Next:** T3 (all of LS, ~728k triangles) and T4 (whole map, 2.25M).
+
+## [2026-10-09] Phase 4-4 R1: whole-map statistics tool (map size research)
+
+**Changed:** `docs/DESIGN.md` new section 8.12 (plan: R1 how much is there, R2 where reTHAWed stops, R3 THAW's zones, then decide). New read-only `tools/gta_world_stats.py`: reads all of San Andreas from the GTA install (same reader as `gta_area_dump.py`; interiors and LOD stand-ins skipped) and writes `extracted\gta_world\world_stats.csv` (per 500 m square: placements, collision objects, triangles, vertical / flat faces, height range) and `summary.txt` (totals, busiest squares, East LS for comparison). No 3D file.
+**Why:** user chose the map size research as the next step (2026-10-09 00:32).
+**Tested how:** in the cloud only with a made-up install (3 placements: counts, squares and the East LS comparison come out right). Not run on the real install yet (`gta3.img` is on the PC only).
+**Result (user ran it, 00:35):** all of San Andreas: 30,842 placements, **28,213 collision objects, 2,249,161 triangles** (831k vertical, 821k flat), in 143 squares of 500 m. East LS test map: 2,486 objects, 164k triangles = **7% of the map**. Busiest squares: East LS 59k triangles (x 2000, y -1500), San Fierro 55k, central LS 52k; median square 9.8k; none over 60k. Picture `world_collision_map.png` (sent, not in the repo). Estimates by box: 2 x 2 km around East LS 482k triangles / 6,955 objects (about LSE's 495k); all of Los Santos (3 x 3 km) 728k / 10,382; south half of the map 1.1M / 14,418.
+**What it means:** the whole map is about 14 x our test map in collision and objects. Two known pressure points: (1) one LevelGeometry node per object would be 28,213 nodes, above where reTHAWed hung (21,963 nodes); LSE has these nodes for only a tenth of its objects, so we test without them; (2) at our current density the whole map would have about 120,000 rail nodes vs. the 9,000 that load: rails will need streaming (zones) or a much stricter choice.
+**Next:** R2 size ladder (below).
+
+## [2026-10-09] Skatepark wall: fence moved to the middle; rails on both edges and on the fence top - WORKS
 
 **Changed:** `tools/gta_extras.py`: the fence now stands in the middle of the low wall (GTA has it near the outer edge), so the wall top is a ledge on both sides; rails along both top edges and along the fence top: 21 rails for the 7 runs (was 7). Faces still all point outwards (480 of 480).
 **Why:** test (user, 00:14): could grind the inner ledge and wallride parts of the fence, but not grind the fence top, and not grind or wallride from outside the park. `thaw.log`: inside grinds ran exactly on the inner rail (0.33 m from the wall centre, at wall-top height, up to 23 m/s); outside, there was no ledge at all (the fence stood flush on the outer edge) and the fence top had no rail. One outside wallride did happen (west wall, north part, at 124 s: sideways along the fence 0.38 m from the centre, 14.4 to 15.6 m high). The skater also hung for half a second in the north-west corner where two runs meet (141 s), then got free.
 **Tested how:** in the cloud: rails per run, face directions. Not in the game.
-**Result:** none yet.
-**Still broken / not tested:** in-game; corners where two runs meet may snag.
-**Next:** user re-runs the tool, replaces the map folder, tests from inside and outside, and the fence top.
+**Result (00:26): works.** User: grinding the fence top and the outer ledges works, and wallrides. Some fence-top grinds turned CJ the opposite way.
+**Still broken / not tested:** CJ turning around: `thaw.log` (00:22 run) has 9 moments out of 870 moving samples where the skater's reported speed points against his movement, all at the ends of the hand-made rails (e.g. the fence-top rail ends at GTA x 1862.9 and 1876.5 on the north side, y -1391.3 at the west entrance): the skater's speed flips for a moment there (he pops off or bounces at the rail end). CJ's facing is taken from the skater's speed, so CJ turns around; when the skater then moves slowly CJ keeps the wrong facing. Fix later on the GTA side: take CJ's facing from the skater's own facing (not his speed), which skate animations will need anyway. Corners where two runs meet may still snag.
 
 **First wall test result (00:14):** inner ledge grinds and some fence wallrides work; see Why above.
 

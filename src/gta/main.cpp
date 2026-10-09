@@ -26,6 +26,8 @@
 // blanks pad 0, so GTA itself ignores the controller.
 // Phase 4-0: F9 logs CJ's position as a "mark" (mark.cpp), for lining up a
 // reTHAWed level with GTA's world.
+// Phase 5: during skate mode CJ gets skating poses (skateanim.cpp) and a
+// stand-in skateboard, drawn right after GTA draws the world (board.cpp).
 //
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
@@ -37,6 +39,8 @@
 #include "teleport.h"
 #include "padlink.h"
 #include "mark.h"
+#include "board.h"
+#include "body.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -114,6 +118,11 @@ void AddHooks()
         // Phase 4-0: F9 = log CJ's position as a landmark "mark".
         mp::gta::MarkFrameSafe(&Log);
     });
+
+    // Phase 5-1: draw the stand-in board (only while skate mode is on).
+    mp::gta::BoardAddHook();
+    // Phase 5-3d: CJ's body copies the skater's (only while skate mode is on).
+    mp::gta::BodyAddHook();
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);

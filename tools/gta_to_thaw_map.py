@@ -472,6 +472,51 @@ def build_bsp(obj, nodes, facelist):
     return root * 8
 
 
+# ---------------------------------------------------------------- merging into tiles
+#
+# reTHAWed keeps a hash entry per collision object / scene sector (and per
+# node) in one pool of 30,000 ("Out of HashItems (30000 max)" with the whole
+# map's 28,220 objects, 2026-10-09 01:09). So for big maps the objects are
+# merged into square tiles: far fewer objects, same triangles and flags.
+# Done after vert / wallride / rails, which need GTA's separate objects.
+
+MERGE_TILE = 200.0   # m; 0 = keep GTA's objects as they are
+MAX_OBJECT = 65535   # corners or faces per collision object (16-bit counts)
+
+
+def merge_tiles(objs, tile_m):
+    if tile_m <= 0:
+        return objs
+    tile = tile_m * K
+    groups = {}
+    for o in objs:
+        cx = (o.mn[0] + o.mx[0]) / 2.0
+        cz = (o.mn[2] + o.mx[2]) / 2.0
+        groups.setdefault((int(math.floor(cx / tile)), int(math.floor(cz / tile))), []).append(o)
+    out = []
+    for (gx, gz), members in sorted(groups.items()):
+        part = 0
+        verts, faces, flags = [], [], []
+        for o in members:
+            if verts and (len(verts) + len(o.verts) > MAX_OBJECT or len(faces) + len(o.faces) > MAX_OBJECT):
+                out.append(_tile_object(gx, gz, part, verts, faces, flags))
+                part += 1
+                verts, faces, flags = [], [], []
+            base = len(verts)
+            verts += o.verts
+            faces += [(a + base, b + base, c + base) for a, b, c in o.faces]
+            flags += o.face_flags
+        if verts:
+            out.append(_tile_object(gx, gz, part, verts, faces, flags))
+    return out
+
+
+def _tile_object(gx, gz, part, verts, faces, flags):
+    o = ColObject("tile_%d_%d_%d" % (gx, gz, part), verts, faces)
+    o.face_flags = flags
+    return o
+
+
 def write_col(objs):
     nv = sum(len(o.verts) for o in objs)
     nf = sum(len(o.faces) for o in objs)
@@ -645,8 +690,11 @@ LSE_EMPTY_SCRIPT_KEYS = (0x5774827A, 0xE5947879, 0x3541FE81, 0x28673697,
                          0x00DC351A, 0xBA114765, 0x7FB679EB, 0x4F2A84F7)
 
 
-def write_level_qb(prefix, objs, spawn_thaw, rails=()):
-    """rails: list of chains, each a list of THAW points (see find_rails)."""
+def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True):
+    """rails: list of chains, each a list of THAW points (see find_rails).
+    geometry_nodes: one LevelGeometry node per collision object (as so far).
+    LSE has them for only 715 of its 7,506 collision objects, so the collision
+    may not need them; the whole map would have 28,213 (phase 4-4)."""
     qb = QB(prefix)
     nodes = [[
         ("vector", "Pos", spawn_thaw),
@@ -658,7 +706,7 @@ def write_level_qb(prefix, objs, spawn_thaw, rails=()):
         ("checksums", "restart_types", [0x41639CE5, 0xD86ACD5F, 0xBAE0E4DA]),
         ("string", "RestartName", "P1: Restart"),
     ]]
-    for o in objs:
+    for o in (objs if geometry_nodes else ()):
         centre = tuple((o.mn[a] + o.mx[a]) / 2.0 for a in range(3))
         nodes.append([
             ("vector", "Pos", centre),
@@ -696,7 +744,7 @@ def write_level_qb(prefix, objs, spawn_thaw, rails=()):
         qb.empty_script(qbkey(prefix + name))
     for name in ("LoadAllParticleTextures", "LoadTerrain", "load_level_anims", "LoadCameras", "LoadObjectAnims"):
         qb.empty_script(qbkey(name))
-    names = [qbkey("Player1")] + [o.key for o in objs] + rail_names  # node names, in node order
+    names = [qbkey("Player1")] + ([o.key for o in objs] if geometry_nodes else []) + rail_names  # node order
     qb.value_array(prefix + "_NodeArray_SortedNames", 0x0D, names)
     qb.value_array(prefix + "_NodeArray_SortedIndices", 0x01, list(range(len(names))))
     return qb.finish(), len(nodes)
@@ -858,14 +906,23 @@ def main():
     ap.add_argument("--out", help="output folder (default <project>/extracted/thaw_maps/<folder>)")
     ap.add_argument("--no-rails", action="store_true", help="leave out the grind rails")
     ap.add_argument("--no-extras", action="store_true", help="leave out the hand-made walls of gta_extras.py")
+    ap.add_argument("--box", nargs=4, type=float, metavar=("XMIN", "YMIN", "XMAX", "YMAX"),
+                    help="GTA area to convert instead of --area (map size tests); same centre as --area")
+    ap.add_argument("--no-merge", action="store_true",
+                    help="keep one collision object per GTA placement (no %.0f m tiles)" % MERGE_TILE)
+    ap.add_argument("--no-geometry-nodes", action="store_true",
+                    help="no LevelGeometry node per collision object (map size tests)")
     ap.add_argument("--rail-budget", type=int, default=RAIL_NODE_BUDGET,
                     help="at most this many rail nodes, longest rails first (default %d)" % RAIL_NODE_BUDGET)
     args = ap.parse_args()
     if not args.gta and not args.from_obj:
         ap.error("give the GTA folder or --from-obj")
 
-    box = gad.AREAS[args.area]
-    centre = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+    area = gad.AREAS[args.area]
+    # The centre stays the area's centre even with --box, so the alignment in
+    # src/common/convert.h (kGtaEastLs) stays right for any box size.
+    centre = ((area[0] + area[2]) / 2.0, (area[1] + area[3]) / 2.0)
+    box = tuple(args.box) if args.box else area
     out = args.out or os.path.join(project, "extracted", "thaw_maps", args.folder)
     os.makedirs(out, exist_ok=True)
     print("output to:   ", out)
@@ -901,10 +958,14 @@ def main():
         len(rails), sum(len(r) for r in rails),
         sum(math.dist(r[k], r[k + 1]) for r in rails for k in range(len(r) - 1)) / K, found, args.rail_budget))
 
+    if not args.no_merge:
+        before = len(objs)
+        objs = merge_tiles(objs, MERGE_TILE)
+        print("merged:       %d objects into %d tiles of %.0f m" % (before, len(objs), MERGE_TILE))
     col, st = write_col(objs)
     spawn = to_thaw(DEFAULT_SPAWN, centre)
     spawn = (spawn[0], spawn[1] + 10.0, spawn[2])  # a little above the ground
-    qb, nnodes = write_level_qb(args.prefix, objs, spawn, rails)
+    qb, nnodes = write_level_qb(args.prefix, objs, spawn, rails, not args.no_geometry_nodes)
     base = "worlds\\worldzones\\%s\\%s" % (args.prefix.lower(), args.prefix.lower())
     named_qb = "worlds\\worldzones\\%s\\%s.qb.wpc" % (args.prefix, args.prefix)
     # Order and parents as in Los Santos East: tex, scene (parent tex),

@@ -1,11 +1,13 @@
 // my-passthrough: the shared memory block both plugins use to talk (phase 0c;
-// version 2 adds the skater, phase 2-1; version 3 adds the controller, phase 3-2).
+// version 2 adds the skater, phase 2-1; version 3 adds the controller, phase 3-2;
+// version 4 adds the skater's facing and the board bone, phase R4-2;
+// version 5 adds the body bone positions, phase 5-3d; version 6: 20 of them).
 //
 // Windows lets two programs open the same named block of memory. Whichever
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v3": only programs in the user's own Windows
+// Name "Local\MyPassthrough_v6": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -20,8 +22,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 3;         // 2: adds the skater (phase 2-1); 3: the controller (phase 3-2)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v3";
+constexpr LONG kLinkVersion = 6;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v6";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -57,6 +59,9 @@ constexpr LONG kSkaterValid = 1;  // a local skater was read
 constexpr LONG kStateValid = 2;   // menus/level/pause were read
 constexpr LONG kInLevel = 4;      // reTHAWed is in a level (not the menus)
 constexpr LONG kPaused = 8;       // reTHAWed is paused
+constexpr LONG kPoseValid = 16;   // thawOrient and thawBoard were read (phase R4-2)
+constexpr LONG kBodyValid = 32;   // thawBody was read (phase 5-3d)
+constexpr int kLinkBodyBones = 20; // order: see kBodyBones in src/thaw/pose.cpp
 
 struct LinkBlock {
     volatile LONG magic;    // kLinkMagic once set up (0 in a brand-new block)
@@ -89,9 +94,20 @@ struct LinkBlock {
     volatile LONG gtaInButtons;     // kBtn* bits
     volatile short gtaInAxes[kAxisCount];
 
-    LONG reserved[6];               // unused; keeps the block 128 bytes
+    LONG reserved[6];               // unused (was padding to 128 bytes in version 3)
+
+    // ---- phase R4-2, written by the THAW plugin under thawSeq ----
+    // The skater's orientation, rows right, up, at (at = facing; up tilts on
+    // ramps and walls), THAW world directions. And the board bone
+    // (Bone_Board_Root) in the skater's own space: rows right, up (towards
+    // the tail), at (out of the deck's top), position (THAW units).
+    volatile float thawOrient[9];
+    volatile float thawBoard[12];
+    // ---- phase 5-3d: body bone positions in the skater's own space (THAW
+    // units), kLinkBodyBones x (x, y, z), same order as the THAW plugin's kBodyBones.
+    volatile float thawBody[kLinkBodyBones * 3];
 };
-static_assert(sizeof(LinkBlock) == 128, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 452, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {
@@ -102,6 +118,9 @@ struct SkaterShared {
     float vel[3] = {};
     LONG sampleTick = 0;
     LONG sampleCount = 0;
+    float orient[9] = {};  // valid with kPoseValid
+    float board[12] = {};  // valid with kPoseValid
+    float body[kLinkBodyBones * 3] = {}; // valid with kBodyValid
 };
 
 // THAW side (the only writer): publish one sample.
@@ -117,6 +136,9 @@ inline void PublishSkater(LinkBlock* b, const SkaterShared& s)
     }
     b->thawSampleTick = s.sampleTick;
     b->thawSampleCount = s.sampleCount;
+    for (int i = 0; i < 9; ++i) b->thawOrient[i] = s.orient[i];
+    for (int i = 0; i < 12; ++i) b->thawBoard[i] = s.board[i];
+    for (int i = 0; i < kLinkBodyBones * 3; ++i) b->thawBody[i] = s.body[i];
     InterlockedExchange(&b->thawSeq, seq + 2); // even: done
 }
 
@@ -137,6 +159,9 @@ inline bool ReadSkaterShared(const LinkBlock* b, SkaterShared& out, int& retries
         }
         out.sampleTick = b->thawSampleTick;
         out.sampleCount = b->thawSampleCount;
+        for (int i = 0; i < 9; ++i) out.orient[i] = b->thawOrient[i];
+        for (int i = 0; i < 12; ++i) out.board[i] = b->thawBoard[i];
+        for (int i = 0; i < kLinkBodyBones * 3; ++i) out.body[i] = b->thawBody[i];
         MemoryBarrier();
         if (b->thawSeq == s1) { out.seq = s1; return true; }
         ++retries;

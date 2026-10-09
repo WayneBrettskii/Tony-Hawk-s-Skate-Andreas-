@@ -6,7 +6,11 @@
 //   - one bit of CPad::DisablePlayerControls (bit 4, marked unused in
 //     plugin-sdk), so CJ ignores the player's buttons. Missions use other bits;
 //     we only ever set and clear our own.
-// Nothing else: no saves, missions, world, traffic or animations.
+//   - CJ's animation: a skating pose while skate mode is on (phase 5-0,
+//     skateanim.cpp; GTA's own roller-skating animations)
+//   - a stand-in skateboard drawn under CJ (phase 5-1, board.cpp); CJ is
+//     lifted by the deck's height so he stands on it
+// Nothing else: no saves, missions, world or traffic.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CCamera.h"
@@ -22,6 +26,9 @@
 #include <windows.h>
 
 #include "skatemode.h"
+#include "skateanim.h"
+#include "board.h"
+#include "body.h"
 #include "padlink.h"
 #include "../common/convert.h"
 
@@ -40,6 +47,13 @@ constexpr LONG kMaxExtrapolateMs = 50;              // move ahead by velocity x 
 // right turn in GTA (first skate test), so THAW needs the mirror.
 const Mapping kMapping{0.0254f, -1.0f};             // scale (m per THAW unit), ySign
 constexpr float kPi = 3.14159265f;
+// Phase 5-3b: the board bone sits this far above the wheels' contact (m)
+// (reTHAWed: 3.7 units above the skater's feet when riding normally).
+constexpr float kBoardBoneHeight = 0.09f;
+constexpr float kMinFacingFlat = 0.3f; // facing must point at least this much sideways (not up a wall)
+// Phase 5-3c: CJ's whole body turns and tilts with the skater (ramps, vert,
+// airs), around his feet. false = CJ stays upright as before.
+constexpr bool kTiltCj = true;
 
 struct State {
     bool on = false;
@@ -57,6 +71,9 @@ struct State {
     // once-per-second report
     ULONGLONG nextReport = 0;
     unsigned frames = 0, moved = 0, held = 0, clamps = 0;
+    unsigned facingFrames = 0, boardFrames = 0; // phase 5-3b: frames that used reTHAWed's facing / board
+    unsigned tiltFrames = 0;                     // phase 5-3c: frames CJ was turned with the skater
+    float maxTiltDeg = 0.0f;                     // phase 5-3c: most CJ leaned this second
     unsigned unreadableRun = 0, unreadableSkipped = 0; // frames skipped: sample kept changing
     float maxDrift = 0.0f;       // how far GTA moved CJ between our frames (m)
     bool haveLastTarget = false;
@@ -146,6 +163,8 @@ bool GroundZ(float x, float y, float z, float& groundZ)
 void ResetStats()
 {
     g.frames = g.moved = g.held = g.clamps = 0;
+    g.facingFrames = g.boardFrames = g.tiltFrames = 0;
+    g.maxTiltDeg = 0.0f;
     g.maxDrift = 0.0f;
 }
 
@@ -156,6 +175,10 @@ void TurnOff(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char*
     g.lastHold = nullptr;
     if (pad) pad->DisablePlayerControls &= static_cast<unsigned short>(~kOurControlBit);
     if (link) InterlockedExchange(&link->gtaSkateMode, 0);
+    SkateAnimStop(ped, log);
+    BoardHide(log);
+    BodyClear();
+    if (ped) ped->SetHeading(g.lastHeading); // phase 5-3c: stand CJ upright again
     if (ped) {
         const CVector& p = ped->GetPosition();
         log("skate mode: OFF (%s) | CJ left at %.2f %.2f %.2f | control flags now 0x%04X", reason, p.x,
@@ -232,11 +255,78 @@ void ReportIfDue(CPlayerPed* ped, LogFn log)
     const float fromMatrix = GtaHeadingFor(f.x, f.y) * 180.0f / kPi;
     log("skate mode: %u frames (%u moved, %u held) | CJ at %.2f %.2f %.2f, target %.2f %.2f %.2f | "
         "GTA moved him up to %.3f m between frames | ground clamps %u | sample %ld ms old | "
-        "heading set %s%.1f deg, CJ faces %.1f deg",
+        "heading set %s%.1f deg, CJ faces %.1f deg | reTHAWed facing used %u, board %u, CJ turned %u (lean up to %.0f deg)",
         g.frames, g.moved, g.held, p.x, p.y, p.z, g.lastTarget.x, g.lastTarget.y, g.lastTarget.z,
         g.maxDrift, g.clamps, g.lastAge, g.headingSet ? "" : "(not yet) ", g.lastHeading * 180.0f / kPi,
-        fromMatrix);
+        fromMatrix, g.facingFrames, g.boardFrames, g.tiltFrames, g.maxTiltDeg);
+    // Phase 5-3d: how often CJ's body was copied from the skater.
+    unsigned bodySkipped = 0;
+    const unsigned bodyFrames = BodyFramesAndReset(&bodySkipped);
+    if (const char* info = BodyTakeInfo()) log("skate body: %s", info);
+    log("skate body: copied from the skater in %u frames, %u half-updated samples skipped", bodyFrames, bodySkipped);
     ResetStats();
+}
+
+// Phase 5-3c: turn CJ's whole body like the skater: his matrix gets the
+// skater's up and facing (mapped to GTA), and he is moved so his feet stay at
+// the skater's feet. `t` is the upright position worked out above. Runs after
+// SetHeading (which would make him upright again); GTA rebuilds his upright
+// matrix next frame, and we turn him again.
+void TiltCj(CPlayerPed* ped, const SkaterShared& s, const Vec3& t)
+{
+    if (!ped->m_matrix) return;
+    const Vec3 a = ThawDeltaToGta(Vec3{s.orient[6], s.orient[7], s.orient[8]}, kMapping); // facing
+    const Vec3 u = ThawDeltaToGta(Vec3{s.orient[3], s.orient[4], s.orient[5]}, kMapping); // up
+    const float ul = std::sqrt(u.x * u.x + u.y * u.y + u.z * u.z);
+    if (ul < 1e-6f) return;
+    const CVector up(u.x / ul, u.y / ul, u.z / ul);
+    // forward: the facing with any up part removed, so the matrix stays square
+    const float d = a.x * up.x + a.y * up.y + a.z * up.z;
+    CVector fwd(a.x - up.x * d, a.y - up.y * d, a.z - up.z * d);
+    const float fl = std::sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z);
+    if (fl < 1e-6f) return;
+    fwd = CVector(fwd.x / fl, fwd.y / fl, fwd.z / fl);
+    const CVector right(fwd.y * up.z - fwd.z * up.y, fwd.z * up.x - fwd.x * up.z, fwd.x * up.y - fwd.y * up.x);
+    const float h = g.feetOffset + kBoardLift; // feet to CJ's position
+    CMatrixLink& m = *ped->m_matrix;
+    m.right = right;
+    m.up = fwd;  // GTA's "up" row is the forward direction
+    m.at = up;   // GTA's "at" row is the up direction
+    m.pos = CVector(t.x, t.y, t.z - h + up.z * h);
+    m.pos.x += up.x * h;
+    m.pos.y += up.y * h;
+    const float lean = std::acos(up.z > 1.0f ? 1.0f : (up.z < -1.0f ? -1.0f : up.z)) * 180.0f / kPi;
+    if (lean > g.maxTiltDeg) g.maxTiltDeg = lean;
+}
+
+// Phase 5-3b: put the board where reTHAWed's board bone is. The bone is given
+// in the skater's own space; the skater's orientation turns it into THAW world
+// directions, which map to GTA like any THAW movement. `t` is CJ's position
+// this frame; his feet are the skater's origin.
+void PlaceBoardFromThaw(const SkaterShared& s, const Vec3& t, float scale, LogFn log)
+{
+    const float* o = s.orient; // rows right, up, at
+    const float* b = s.board;  // rows right, up (to the tail), at (deck normal), position
+    auto toWorld = [o](const float* v) {
+        return Vec3{v[0] * o[0] + v[1] * o[3] + v[2] * o[6], v[0] * o[1] + v[1] * o[4] + v[2] * o[7],
+                    v[0] * o[2] + v[1] * o[5] + v[2] * o[8]};
+    };
+    const Mapping m{scale, kMapping.ySign};
+    auto dir = [&](const float* v, float sign) {
+        Vec3 d = ThawDeltaToGta(toWorld(v), m);
+        const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (len > 1e-6f) { d.x *= sign / len; d.y *= sign / len; d.z *= sign / len; }
+        return d;
+    };
+    const Vec3 right = dir(b + 0, 1.0f);
+    const Vec3 fwd = dir(b + 3, -1.0f); // bone "up" points to the tail
+    const Vec3 up = dir(b + 6, 1.0f);
+    const Vec3 off = ThawDeltaToGta(toWorld(b + 9), m);
+    const float feetZ = t.z - g.feetOffset - kBoardLift;
+    const float origin[3] = {t.x + off.x - up.x * kBoardBoneHeight, t.y + off.y - up.y * kBoardBoneHeight,
+                             feetZ + off.z - up.z * kBoardBoneHeight};
+    const float r[3] = {right.x, right.y, right.z}, f[3] = {fwd.x, fwd.y, fwd.z}, u[3] = {up.x, up.y, up.z};
+    BoardUpdatePose(origin, r, f, u, log);
 }
 
 void SkateModeFrame(LinkBlock* link, LogFn log)
@@ -361,25 +451,65 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     } else {
         t = MapPosition(p, g.thawAnchor, g.gtaAnchor, kMapping);
     }
+    t.z += kBoardLift; // phase 5-1: CJ stands on the board's deck
 
     // Never below GTA's ground (THAW's slopes don't exist in GTA).
     float gz = 0.0f;
-    if (GroundZ(t.x, t.y, t.z, gz) && t.z < gz + g.feetOffset) {
-        t.z = gz + g.feetOffset;
+    const bool haveGround = GroundZ(t.x, t.y, t.z, gz);
+    if (haveGround && t.z < gz + g.feetOffset + kBoardLift) {
+        t.z = gz + g.feetOffset + kBoardLift;
         ++g.clamps;
     }
 
     ped->SetPosn(CVector(t.x, t.y, t.z));
     ped->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
     float heading = 0.0f;
-    if (GtaHeadingFromThawVelocity(Vec3{s.vel[0], s.vel[1], s.vel[2]}, kMapping, kMinHeadingSpeed, heading)) {
+    // Phase 5-3b: face where reTHAWed's skater faces (fixes the turn-around at
+    // rail ends); from the speed only if the facing isn't there or points up a wall.
+    bool faced = false;
+    if (s.flags & kPoseValid) {
+        const Vec3 at = ThawDeltaToGta(Vec3{s.orient[6], s.orient[7], s.orient[8]}, kMapping);
+        const float flat = std::sqrt(at.x * at.x + at.y * at.y);
+        if (flat > kMinFacingFlat * kMapping.scale) {
+            heading = GtaHeadingFor(at.x, at.y);
+            faced = true;
+            ++g.facingFrames;
+        }
+    }
+    if (faced || GtaHeadingFromThawVelocity(Vec3{s.vel[0], s.vel[1], s.vel[2]}, kMapping, kMinHeadingSpeed, heading)) {
         ped->m_fHeadingCurrent = heading;
         ped->m_fHeadingGoal = heading;
         ped->SetHeading(heading);
         g.lastHeading = heading;
         g.headingSet = true;
     }
-    g.lastTarget = t;
+    if (kTiltCj && (s.flags & kPoseValid)) {
+        TiltCj(ped, s, t);
+        ++g.tiltFrames;
+    }
+    // Phase 5-0: skating pose from speed along the ground and height above it.
+    const float scale = g.align ? g.align->scale : kMapping.scale;
+    const float speed = std::sqrt(s.vel[0] * s.vel[0] + s.vel[2] * s.vel[2]) * scale; // THAW: y is up
+    const float height = haveGround ? t.z - g.feetOffset - kBoardLift - gz : 0.0f;
+    // Phase 5-3d: while CJ's body copies the skater's, keep GTA's animation
+    // underneath steady (standing pose): switching poses made the shoulders
+    // shimmy and the body jump at take-off (first test).
+    if ((s.flags & kBodyValid) && (s.flags & kPoseValid)) SkateAnimUpdate(ped, 0.0f, 0.0f, log);
+    else SkateAnimUpdate(ped, speed, height, log);
+    // Phase 5-1: the board, wheels at CJ's feet minus the deck height.
+    // Phase 5-3b: if reTHAWed's board bone came along, place it exactly as that.
+    if (s.flags & kPoseValid) {
+        PlaceBoardFromThaw(s, t, scale, log);
+        ++g.boardFrames;
+    } else {
+        BoardUpdate(ped, t.x, t.y, t.z - g.feetOffset - kBoardLift, haveGround && height < 0.3f, log);
+    }
+    // Phase 5-3d: CJ's body copies the skater's (applied when GTA draws him).
+    if ((s.flags & kBodyValid) && (s.flags & kPoseValid))
+        BodySetTarget(s.body, s.orient, scale, kMapping.ySign, t.x, t.y, t.z - g.feetOffset - kBoardLift);
+    else
+        BodyClear();
+    g.lastTarget = ToVec(ped->GetPosition()); // where CJ really is (turned or not)
     g.haveLastTarget = true;
     ++g.moved;
     ReportIfDue(ped, log);
@@ -401,6 +531,8 @@ void SkateModeFrameSafe(LinkBlock* link, LogFn log)
             CPad* pad = CPad::GetPad(0);
             if (pad) pad->DisablePlayerControls &= static_cast<unsigned short>(~kOurControlBit);
             if (link) InterlockedExchange(&link->gtaSkateMode, 0);
+            SkateAnimStop(FindPlayerPed(), log);
+            BoardHide(log);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
         log("skate mode: ERROR (exception 0x%08lX) - turned off, controls restored", code);

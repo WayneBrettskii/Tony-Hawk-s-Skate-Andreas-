@@ -33,7 +33,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - No hooks inside reTHAWed yet.
 - THAW's unit size is not confirmed (probably inches).
 - Pressing Start in reTHAWed also opens GTA's pause menu (both games read the controller). Skate mode holds while it's open, so CJ misses anything skated until you close it. To be fixed in phase 3.
-- CJ has no skating animation yet (he slides).
+- CJ's skating poses are GTA's roller-skating animations (phase 5-0, not tested yet). CJ rides a simple stand-in skateboard drawn by the plugin (phase 5-1, not tested yet); reTHAWed's own board is planned.
 - CJ hits invisible walls: the walls of the hidden reTHAWed level. Planned: an empty flat custom park as the hidden level, later GTA's own world fed into reTHAWed.
 - F7 sometimes needs an extra Alt+Tab into GTA before it works (found 2026-10-07, not understood yet).
 - Everything else in `docs/DESIGN.md`: not started.
@@ -42,7 +42,8 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 - `tools\thaw_level_dump.py` (Python 3): looks inside a reTHAWed map and writes its collision and rails as 3D files (`.obj`) to `extracted\<level>\` (gitignored; read only, nothing changes in the game). Example: `python tools\thaw_level_dump.py "D:\Games\reTHAWed\data\mod\UserMods\Maps\Los Santos East" --gta lse`
 - `tools\gta_area_dump.py` (Python 3): writes GTA SA's own collision for one area as a 3D file to `extracted\gta_<area>\` (read only). Example: `python tools\gta_area_dump.py "D:\Games\GTA San Andreas"`
-- `tools\gta_extras.py`: hand-made list of walls / fences GTA draws but has no collision for (used by `gta_to_thaw_map.py`; first: the East LS skatepark wall and fence, not tested yet).
+- `tools\gta_world_stats.py` (Python 3, read only): collision statistics for all of San Andreas per 500 m square, into `extracted\gta_world\` (for the map size research). Example: `python tools\gta_world_stats.py "D:\Games\GTA San Andreas"`
+- `tools\gta_extras.py`: hand-made list of walls / fences GTA draws but has no collision for (used by `gta_to_thaw_map.py`; first: the East LS skatepark wall and fence, with rails on both ledges and the fence top: tested 2026-10-09, works).
 - `tools\gta_to_thaw_map.py` (Python 3): makes a reTHAWed map from GTA's collision of an area, in `extracted\thaw_maps\` (invisible: collision only, no rails yet; vert in the East LS skatepark: bowl and both half pipes; wallride on every vertical wall; grind rails on kerbs, ledges and the bowl's coping, at most 9,000 rail nodes; grinds and wallrides tested 2026-10-09: work). **Tested 2026-10-08: loads and skates; the bowl skates like Los Santos East's, the half pipes skate well.** Copy the map folder into `D:\Games\reTHAWed\data\mod\UserMods\Maps\` to play it. Example: `python tools\gta_to_thaw_map.py "D:\Games\GTA San Andreas"`
 
 ## Requirements

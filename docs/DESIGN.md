@@ -445,6 +445,134 @@ This only **reads** game memory. It writes nothing into the game and hooks nothi
 
 **Depends on:** the map covering more than East LS (whole-map size and streaming research, 4-2e), for spots elsewhere in San Andreas.
 
+### 8.12 Phase 4-4 plan: how big can a map be? (written 2026-10-09, user OK'd starting)
+
+**Goal:** know whether all of San Andreas can be one reTHAWed map, or how to split it, before scaling ramps / rails / extras.
+
+**What we already know:**
+- East LS (0.85 x 1.05 km incl. margin): 2,486 collision objects, 164k triangles, 7.4 MB level PAK; loads.
+- 21,963 nodes (19,476 rail nodes, 4.2 MB level script) made reTHAWed hang while loading; 11,494 nodes load. LSE: 12,524 nodes, 495k triangles, 106 MB PAK (with visuals), loads.
+- THAW itself streams its open world in **zones**: on loading a level the log lists many zone PAKs (`Z_HOBH`, `Z_HODT`, ...) and `zone_init` / `FinishPendingZoneLoads` lines. If user maps can be zones too, San Andreas could stream in pieces without loading screens.
+- Coordinates: whole SA is about 6 x 6 km = 236,000 THAW units across; floats keep about 1 cm precision there. The collision header's super-sector grid would be about 240 x 240.
+
+**Steps (one at a time):**
+1. **R1 - how much is there?** New read-only tool `tools/gta_world_stats.py`: reads the whole map from the GTA install (same reader as `gta_area_dump.py`, interiors and far-away stand-ins skipped) and writes, per 500 m square: placements, collision objects, triangles, vertical faces; plus totals and a picture. Run by the user (needs `gta3.img`). Tells us the size of the whole job and how uneven it is (city vs countryside).
+2. **R2 - where does reTHAWed stop?** `gta_to_thaw_map.py --box` builds bigger and bigger squares around East LS (same centre, so the GTA alignment stays valid): e.g. 1, 2, 4, 9, 16 km^2. The user loads each, notes load time / hang / crash and frame rate; rails on and off, to separate the node limit from the collision size. Gives the real limits in numbers.
+3. **R3 - zones.** Read how reTHAWed's own world is cut into zones and streamed (zone PAK names, the scripts that load / unload them, what triggers a load), and whether a user map can have several zones. Read only, no game files changed.
+4. **Decide:** one map, several maps switched behind the scenes, or zones; then write the plan for the whole map.
+
+**R1 result (2026-10-09):** whole map 28,213 collision objects, 2.25M triangles (East LS test map: 7% of that); busiest 500 m square 59k triangles. See MODLOG.
+
+**R2 ladder (each: build, copy, load in reTHAWed via the launcher, note: loads? how long? frame rate? collision works?):**
+- T1: East LS, `--no-geometry-nodes` (164k triangles, 9,001 nodes): does collision still work without the LevelGeometry nodes?
+- T2: `--box 1000 -2500 3000 -500 --no-geometry-nodes` (2 x 2 km, ~482k triangles, ~7,000 objects; LSE-sized).
+- T3: `--box 0 -3000 3000 0 --no-geometry-nodes` (all of LS, ~728k triangles).
+- T4: `--box -3000 -3000 3000 3000 --no-geometry-nodes` (whole map, 2.25M triangles).
+
+**R2 results so far (2026-10-09):** T2 (541k triangles, 7,800 objects) and T3 (all of LS) load and skate. T4 loaded all collision (61 MB, 2.25M triangles) but hit **"Out of HashItems (30000 max)"**: one hash entry per collision object / sector / node, 30,000 in all. Fix: merge collision objects into 200 m tiles (whole map: about 700 objects). Known limits now: hash pool 30,000 (objects + nodes + the game's own); rail nodes tested up to 9,000.
+
+### 8.11 Open items noted along the way (2026-10-09)
+
+- **CJ's facing from the skater's facing, not his speed.** At rail ends the skater's speed flips for a moment and CJ turns around (see MODLOG 2026-10-09). Needs finding the skater's orientation in reTHAWed's memory (like phase 1 did for position); also needed for skate animations on CJ.
+- **Skate animations on CJ**: first step planned in 8.13 (phase 5-0).
+- **reTHAWed's own source code** (user offered the repository link, 2026-10-09; the link did not come through yet): could show where limits such as the 30,000 hash items or rail node counts are set. Reading it to learn is fine; changing reTHAWed itself means writing to its install or building our own copy, which needs the user's explicit OK (AGENTS.md) and a look at its licence first. Not started.
+
+### 8.13 Phase 5-0 plan: CJ skating poses (written 2026-10-09, user asked for it)
+
+**Found:** GTA SA has no skateboard. Its object list (`default.ide`) has `#340, skateboard` commented out: cut content, no model in the game files. It does have roller-skating animations for its roller-skating pedestrians: animation file `skate` in `anim.img` with `skate_idle`, `skate_run`, `skate_sprint`.
+
+**Step 5-0 (this step):** while skate mode is on, CJ plays a pose picked each frame from the skater:
+- in the air (feet more than 0.8 m above GTA's ground) -> `JUMP_glide` (GTA's own falling pose)
+- slower than 1 m/s -> `skate_idle`; up to 7 m/s -> `skate_run`; faster -> `skate_sprint`
+- ground poses held at least 250 ms (no flicker); blends at GTA's usual speed
+- the `skate` file is loaded by GTA when skate mode starts and released when it stops; skate mode off = CJ's animation fades out, his normal ones return
+- code: `src/gta/skateanim.cpp` (one task in CJ's task slot, `CTaskSimpleRunNamedAnim`), called from `skatemode.cpp`
+It is roller-skating motion, not skateboarding, and does not show tricks.
+
+**Step 5-1 (user chose 2026-10-09: stand-in board first, reTHAWed's board later):** a simple board built by our own code, no model file:
+- shape in `src/gta/board.cpp`: 80 x 21 cm deck with kicked nose and tail (black grip on top, red underside), two trucks, four 5.4 cm wheels; 472 corners, 236 triangles; plain colours, shaded once by face direction (no textures, no GTA lighting: it will look the same at night)
+- drawn by the plugin itself with RenderWare's immediate mode (`RwIm3DTransform`), hooked right after GTA draws the world (plugin-sdk `renderEffectsEvent`), so walls and CJ's legs still hide it correctly. Nothing added to GTA's files, no model ID used, no modloader files needed
+- placed each frame by skate mode: wheels at CJ's feet, pointing where CJ faces; on the ground it tilts with the slope (ground height 30 cm ahead and behind, steps over 35 cm ignored, eased in); in the air it levels out
+- CJ is lifted by the deck height (11.2 cm) so he stands on it
+- skate mode off = board gone
+Why not a GTA model file: that would need a model ID, a model file writer and streaming; drawing it ourselves is simpler, and the same drawing code can later show the reTHAWed board's shape (5-2) once we can read it.
+
+**Later steps (not started):**
+- 5-2 reTHAWed's own board: a converter reads the board model from the user's reTHAWed install at run time (nothing copied into the repository), the plugin draws that shape instead of the stand-in. Needs THAW's model format worked out first.
+- 5-3 tricks and grinds: needs reading which trick/state the skater is in from reTHAWed's memory (like phase 1 did for position), then picking GTA poses or our own animations.
+- CJ's facing from the skater's facing (8.11).
+
+### 8.14 Phase 5-3 plan: skateboarding poses and tricks on CJ (written 2026-10-09, order OK'd by the user 01:34)
+
+**Asked (user, 01:32):** skateboarding animations and tricks instead of the roller-skating moves, now that there is a stand-in board.
+
+**What we have to work with:** GTA SA has no skateboarding animations at all (cut content, like the board). So every pose is new work. Two sources:
+- **reTHAWed knows exactly what the skater is doing** (which trick, grinding, manual, in the air, where the board is pointing and how it is flipping). Our THAW plugin already reads the skater's position and speed from memory (phase 1, using partymod-thaw's open, MIT-licensed findings); the skater's facing, the board's rotation and the trick state are most likely in the same object or close to it. Reading them is research, like phase 1.
+- **CJ's skeleton can be bent by our code** each frame (spine, hips, legs, arms, head), the way GTA itself turns CJ's head and torso to aim or look at things. No animation files needed.
+
+**Steps (one at a time, each tested):**
+- **R4 research: the skater's state in reTHAWed** (read only, like phase 1). Find and log: the skater's facing (also fixes CJ turning around at rail ends, 8.11), the board's own rotation (flips, shove-its), and the state: on the ground / in the air / grinding / manual / lip trick / bailed, plus the trick's name if it is readable. THAW plugin sends what it finds through the shared link.
+- **5-3a board stance:** CJ stands sideways on the board, knees bent, arms out a little; crouches more when pushing fast and when landing; leans into turns. Bones bent in code over a neutral standing pose. Replaces the roller-skating animations (5-0 stays as a fallback).
+- **5-3b board tricks:** the stand-in board copies the reTHAWed board's rotation, so kickflips, heelflips and shove-its show exactly as you do them. Needs R4.
+- **5-3c body for each state:** tuck in the air, grind and slide stances, manual and nose manual lean, grab poses, bail (ragdoll-like fall or GTA's own fall animation). Needs R4.
+- **Later, the full crossover idea:** copy the reTHAWed skater's whole skeleton pose onto CJ each frame (bone by bone), so every trick animation reTHAWed has plays on CJ. Big step; only after R4 shows the skeleton can be read and the bones can be matched.
+
+**Order proposed:** test 5-0/5-1 first (already built), then R4 and 5-3a (they don't depend on each other), then 5-3b, then 5-3c.
+
+**Risks:** R4 may take a few tries (memory layout unknown beyond position and speed). Bending CJ's bones needs the right moment in GTA's frame (after animations, before drawing); found by research in GTA's code, not guessed.
+
+### 8.15 Phase R4: read the skater's facing, skeleton and board from reTHAWed (written 2026-10-09)
+
+**Test of 5-0/5-1 (user, 01:42):** poses change with speed and air (log: 112 changes, "skate" file loaded as block 122), board shows and follows CJ but stutters; tricks don't show (expected). The stutter is most likely the slope tilt: GTA's ground under the board is measured straight down, which on vert, kerbs and rails jumps around. The real fix is the same as for tricks: take the board's angle from reTHAWed.
+
+**What research found (read-only analysis of a copy of `reTHAWed.exe`, nothing run):**
+- Script command `GetBonePosition` (table entry at 0x00730C70, code 0x0047DA90): finds an object, takes its component with checksum 0x222756D5 = "skeleton" (component lookup 0x0042E8C0: sorted (checksum, component) pairs at object `+0x60`, count at `+0x64`; fallback list at `+0x11C`, next `+0x10`, checksum `+0x4`), then calls 0x0046A9A0 for the bone.
+- 0x0046A9A0: bone position from the skeleton (component `+0x18`), times the model's scale, turned by the **object's orientation matrix at `+0x88`** (4 x 4 floats, rows) and moved by the position at `+0x68`. So the skater object = `+0x68` position, `+0x88` orientation, `+0xC8` velocity.
+- Skeleton (0x004EFF10): bone count `+0x14`; bone list `+0x18` (0x1C bytes each, first value = the bone name's checksum); current bone matrices `+0x04` (64 bytes each); bind-pose inverse matrices at `[[+0x08] +0x04] +0x28`. Bone matrix in the skater's own space = inverse(bind inverse) x current (row-vector order, as the game does).
+- Checksums: THPS's CRC32 of the lower-case name (checked: "skeleton", "model", "id", "bone" match the game's numbers). Bone names from the thps-tools scripts (only names used).
+
+**Step R4-1 (read only, log only):** code checks; 10 times a second the skater's orientation, `Bone_Board_Root` and `Bone_Pelvis`; bone list once per skater; all bones on F9. Test with reTHAWed only.
+
+**R4-1 result (user test 01:52): works on the first attempt.** All 9 code checks match; 52 bones, every one named by our list (board #47, pelvis #1); the menu pose looks like a person holding a board. In the level: orientation rows are unit length; the "at" row points along the velocity while skating straight (0.96 to 1.00); the "up" row tilts up to 90 degrees on the bowl's walls (orientation includes ramps and walls). Board bone while riding: 3.7 units above the skater's feet; its "at" axis comes out of the deck (= skater up), its "up" axis points to the tail. In flips the deck normal turns over (138 to 166 degrees seen); after a pop shove-it the bone is turned 180 degrees about the deck normal. (10 samples per second catch only parts of a flip.)
+
+**Step R4-2 + 5-3b (one step, written 2026-10-09):**
+- link version 4 (`Local\MyPassthrough_v4`, 212 bytes): the THAW plugin reads facing and board every pass (about 65 times a second) and sends the facing (3 rows) and the board bone (4 rows) with each skater sample, flag `kPoseValid`.
+- GTA board placed from the bone each frame: skater orientation x bone = THAW world direction, mapped to GTA like any THAW movement (scale, y mirror). The bone sits 9 cm above the wheels' contact; CJ's feet = the skater's origin. The old slope guess stays only as fallback when the bone is missing.
+- CJ's heading from the skater's facing ("at" row) when it points enough sideways (not straight up a wall); from the speed otherwise.
+- Not changed: CJ stays upright (no tilt on ramps yet) and keeps the roller-skating poses.
+
+**If it doesn't work:** two real attempts, then `STATUS.md`.
+
+**R4-2 + 5-3b result (user test 02:08): works.** Tricks show on the board; board follows reTHAWed's board bone in every frame. Odd look in bowl airs: the board turns with the skater while CJ stays upright.
+
+### 8.16 Phase 5-3c plan: CJ turns and tilts with the skater (written 2026-10-09, user OK'd 02:10)
+
+**Why:** on vert and in airs reTHAWed's skater leans and rotates (up axis up to 90 degrees off); the board copies that, CJ didn't.
+
+**Step (one):** each frame, after GTA's heading is set, CJ's matrix gets the skater's up (from the facing's "up" row) and forward (the "at" row, made square to up), both mapped to GTA like any THAW direction; right = forward x up. His position is moved so his feet stay where the skater's feet are (feet + up x his height above the feet). GTA makes him upright again on its next update and we turn him again; when skate mode goes off he is set upright (`SetHeading`). Switch: `kTiltCj` in skatemode.cpp. The per-second log line says how many frames he was turned and the biggest lean.
+
+**Risks:** GTA might not like a tilted ped (shadow, collision, camera); if so, the switch turns it off.
+
+**5-3c result (user test 02:20): works.** Board stays with CJ as he turns; no more turning around at rail ends; log: CJ turned every frame, leaning up to 90 degrees on the bowl walls, no errors.
+
+### 8.17 Phase 5-3d plan: CJ's body copies the skater's body (written 2026-10-09, replaces the hand-made stance of 5-3a)
+
+**Why this instead of a hand-made stance:** R4-1 showed the whole skater skeleton is readable every frame. Copying it gives the sideways stance, pushing, crouching, grabs, grinds, manuals and bails exactly as reTHAWed plays them, instead of a few poses made by hand.
+
+**THAW side:** 18 bone positions in the skater's own space (Pelvis, Stomach_Upper, Neck, Head; Bicep, Forearm, Wrist left and right; Thigh, Knee, Ankle, Toe left and right) read every pass and sent; link version 5 (`_v5`, 428 bytes), flag `kBodyValid`.
+
+**GTA side (`src/gta/body.cpp`):** skate mode turns them into GTA world spots each frame (skater orientation x position x level scale, from the skater's origin = where the board's wheels touch). Right before GTA draws CJ (plugin-sdk `pedRenderEvent`, after GTA's own animation and `CPed::PreRenderAfterTest` updated his bone matrices; checked in gta_sa.exe: the bone update 0x532B20 is called from 0x5E6664 inside PreRenderAfterTest, not from the drawing), his bone matrices are changed, parents before children:
+- hips (bone 1) moved to the skater's pelvis and turned so pelvis-to-neck and left-to-right hip match;
+- spine (bone 3) turned to match stomach-to-neck and the shoulder line; neck (5) to match neck-to-head;
+- upper arm, forearm (22, 23 / 32, 33), thigh, shin, ankle (41-43 / 51-53) each turned so it points at the next joint like the skater's.
+Children follow their parents (local matrices kept). Bone parents come from RenderWare's push/pop flags; works whether GTA keeps the matrices in world space or CJ's own (checked at run time, logged once). If anything comes out not-a-number, GTA's pose is left alone. Left and right swap automatically if the level's mirror would put the skater's left side on CJ's right. Switch: `kCopyBody` in body.cpp.
+- Tested in the cloud on a made-up skeleton with a real standing pose from the R4-1 log: every limb within 0.03 degrees of the skater's, hips exactly on the target, feet 2 cm from the ground spot.
+- Not covered: twist of arms and legs around their own length (knees may point a little off), hands, fingers, face. CJ's proportions differ from the skater's, so feet may not sit exactly on the deck.
+
+**5-3d first test (user 02:39):** works "pretty good"; shoulder shimmy and stutter at take-off. Fix 1: base animation held on the standing pose while copying; chest twist from the collar bones; half-updated samples (bone lengths off by more than 15%) skipped.
+
+**Fix 1 result (02:44): no change.** Fix 2: sample time = when that reTHAWed frame was first seen (repeat reads made GTA's look-ahead jitter CJ along his path); chest twist from the skater's chest axis (link v6, 20 body points: + chest and a point on its right axis).
+
 ## 11. Before release (to do later)
 
 - **Controller fix must become an option** (asked by the user 2026-10-07). Right now the launcher always tells reTHAWed to ignore Xbox 360 controllers (045E:028E) and turns off SDL's raw input reading. That is right for a PS5 controller + DualSenseX, but a player with a **real Xbox 360 controller** would have no controller in reTHAWed at all. Plan: a settings file next to the launcher (for example `my-passthrough.ini`, `[Controller] Mode=`), with at least:

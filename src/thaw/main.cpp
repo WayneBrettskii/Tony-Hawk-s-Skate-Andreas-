@@ -35,6 +35,12 @@
 // Phase 4-0: F9 (with reTHAWed in front) logs the skater's position as a
 // "mark", for lining up a reTHAWed level with GTA's world. Read only.
 //
+// Phase R4-1: also reads the skater's facing and skeleton (pose.cpp, read
+// only) and logs them: facing + board + pelvis 10 times per second, the bone
+// list once per skater, every bone on F9.
+// Phase R4-2: reads them every pass and sends the facing and the board bone to
+// GTA through the link (version 4).
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
@@ -43,6 +49,7 @@
 #include "skater.h"
 #include "focus.h"
 #include "input.h"
+#include "pose.h"
 #include <tlhelp32.h>
 #include <cmath>
 #include <cstdarg>
@@ -57,6 +64,7 @@
 namespace {
 
 HMODULE g_self = nullptr;
+unsigned long g_repeatSamples = 0; // 5-3d fix 2: same reTHAWed frame read again
 wchar_t g_logPath[MAX_PATH] = {};
 ULONGLONG g_startTick = 0;
 volatile LONG g_stop = 0;
@@ -481,7 +489,72 @@ bool ReTHAWedInFrontNow()
     return pid == GetCurrentProcessId();
 }
 
-void TickMark(const mp::thaw::GameState& state, bool stateOk, const mp::thaw::SkaterSample& s, bool skaterOk)
+// Phase R4-1 helpers ------------------------------------------------------
+
+const char* BoneLabel(unsigned long name)
+{
+    const char* n = mp::thaw::BoneName(name);
+    return n ? n : "?";
+}
+
+void LogBoneMatrix(const char* label, const mp::thaw::BoneMatrix& b)
+{
+    const float* m = b.m;
+    Log("  %s: pos %.1f %.1f %.1f | right %.2f %.2f %.2f | up %.2f %.2f %.2f | at %.2f %.2f %.2f", label, m[12],
+        m[13], m[14], m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+}
+
+// Every bone, full matrix: once per skater (positions only) and on F9 (all).
+void LogAllBones(unsigned long skater, bool full, const char* why)
+{
+    static mp::thaw::BoneMatrix bones[256];
+    const int n = mp::thaw::ReadAllBones(skater, bones, 256);
+    if (n < 0) {
+        Log("pose bones (%s): read failed", why);
+        return;
+    }
+    Log("pose bones (%s): %d bones%s", why, n, n ? "" : " (no skeleton found)");
+    for (int i = 0; i < n; ++i) {
+        const float* m = bones[i].m;
+        if (full) {
+            char label[96];
+            snprintf(label, sizeof(label), "#%d 0x%08lX %s", i, bones[i].name, BoneLabel(bones[i].name));
+            LogBoneMatrix(label, bones[i]);
+        } else {
+            Log("  #%d 0x%08lX %s: pos %.1f %.1f %.1f", i, bones[i].name, BoneLabel(bones[i].name), m[12], m[13],
+                m[14]);
+        }
+    }
+}
+
+// Every pass while there is a skater (phase R4-2: also sent to GTA); logs 10
+// times per second.
+void SamplePose(unsigned long skater, const char* tag, bool logLine, mp::thaw::PoseSample& p)
+{
+    static unsigned long lastSkater = 0;
+    static unsigned long failures = 0;
+    p = mp::thaw::ReadPose(skater);
+    if (!p.readOk) {
+        if (++failures == 1 || failures % 50 == 0)
+            Log("pose: read failed (exception 0x%08lX), %lu so far", p.exceptionCode, failures);
+        return;
+    }
+    if (skater != lastSkater) {
+        lastSkater = skater;
+        Log("pose: skater 0x%08lX, skeleton 0x%08lX, %d bones, board bone #%d, pelvis bone #%d, body bones for GTA %s",
+            skater, p.skeleton, p.boneCount, p.boardIndex, p.pelvisIndex, p.haveBody ? "all found" : "MISSING");
+        if (p.boneCount) LogAllBones(skater, false, "new skater");
+    }
+    if (!logLine) return;
+    const float* o = p.orient;
+    Log("pose %s: facing right %.2f %.2f %.2f | up %.2f %.2f %.2f | at %.2f %.2f %.2f | pos row %.1f %.1f %.1f %.1f",
+        tag, o[0], o[1], o[2], o[4], o[5], o[6], o[8], o[9], o[10], o[12], o[13], o[14], o[15]);
+    if (p.boardIndex >= 0) LogBoneMatrix("board", p.board);
+    if (p.pelvisIndex >= 0) LogBoneMatrix("pelvis", p.pelvis);
+}
+
+void TickMark(const mp::thaw::GameState& state, bool stateOk, const mp::thaw::SkaterSample& s, bool skaterOk,
+              bool poseOk)
 {
     static bool wasDown = false;
     static int count = 0;
@@ -497,6 +570,7 @@ void TickMark(const mp::thaw::GameState& state, bool stateOk, const mp::thaw::Sk
     Log("mark #%d (F9): skater at %.2f %.2f %.2f | speed %.1f | level 0x%08lX%s", count, s.pos[0], s.pos[1],
         s.pos[2], Length3(s.vel), stateOk && state.readOk ? state.levelId : 0UL,
         stateOk && state.readOk && state.paused == 1 ? " | PAUSED" : "");
+    if (poseOk) LogAllBones(s.skater, true, "F9");
 }
 
 DWORD WINAPI MainThread(LPVOID)
@@ -533,6 +607,7 @@ DWORD WINAPI MainThread(LPVOID)
     const bool canReadSkater = CheckCodeGroup(mp::thaw::kGroupSkater, "skater");
     const bool canReadState = CheckCodeGroup(mp::thaw::kGroupState, "state (menus/level/pause)");
     LogInFrontendJump();
+    const bool canReadPose = canReadSkater && mp::thaw::PoseCodeChecksPass(&Log);
 
     // Loop as fast as Sleep(10) allows (about every 15 ms on Windows):
     //   every pass:     read state + skater, publish to the link (phase 2-1)
@@ -556,7 +631,9 @@ DWORD WINAPI MainThread(LPVOID)
         const char* tag = canReadState ? SampleGameState(state) : "[?]";
         mp::thaw::SkaterSample sample;
         if (canReadSkater) SampleSkater(tag, logLine, sample);
-        TickMark(state, canReadState, sample, canReadSkater);
+        TickMark(state, canReadState, sample, canReadSkater, canReadPose);
+        mp::thaw::PoseSample pose;
+        if (canReadPose && sample.readOk && sample.skater) SamplePose(sample.skater, tag, logLine, pose);
 
         if (g_link) {
             mp::SkaterShared shared;
@@ -566,6 +643,20 @@ DWORD WINAPI MainThread(LPVOID)
                     shared.pos[i] = sample.pos[i];
                     shared.vel[i] = sample.vel[i];
                 }
+                // Phase R4-2: facing (3 rows) and the board bone (4 rows).
+                if (pose.readOk && pose.boardIndex >= 0) {
+                    shared.flags |= mp::kPoseValid;
+                    for (int r = 0; r < 3; ++r)
+                        for (int c = 0; c < 3; ++c) shared.orient[r * 3 + c] = pose.orient[r * 4 + c];
+                    for (int r = 0; r < 4; ++r)
+                        for (int c = 0; c < 3; ++c) shared.board[r * 3 + c] = pose.board.m[r * 4 + c];
+                }
+                // Phase 5-3d: body bone positions for CJ.
+                if (pose.readOk && pose.haveBody) {
+                    static_assert(mp::kLinkBodyBones == mp::thaw::kBodyBoneCount, "body bone lists differ");
+                    shared.flags |= mp::kBodyValid;
+                    for (int i = 0; i < mp::kLinkBodyBones * 3; ++i) shared.body[i] = pose.body[i];
+                }
             }
             if (canReadState && state.readOk) {
                 shared.flags |= mp::kStateValid;
@@ -573,7 +664,24 @@ DWORD WINAPI MainThread(LPVOID)
                 if (state.paused == 1) shared.flags |= mp::kPaused;
                 shared.levelId = static_cast<LONG>(state.levelId);
             }
-            shared.sampleTick = static_cast<LONG>(now & 0xFFFFFFFFu);
+            // 5-3d fix 2: reTHAWed draws about 60 frames a second, we read
+            // about 65 times: the same frame is often read twice. Keep the time
+            // we FIRST saw this frame, so GTA's "move ahead by speed x age"
+            // doesn't push CJ forward and then snap him back (stutter).
+            {
+                static float lastPos[3] = {}, lastVel[3] = {};
+                static ULONGLONG firstSeen = 0;
+                const bool same = memcmp(lastPos, shared.pos, sizeof(lastPos)) == 0 &&
+                                  memcmp(lastVel, shared.vel, sizeof(lastVel)) == 0;
+                if (!same || now - firstSeen > 200) {
+                    firstSeen = now;
+                    memcpy(lastPos, shared.pos, sizeof(lastPos));
+                    memcpy(lastVel, shared.vel, sizeof(lastVel));
+                } else {
+                    ++g_repeatSamples;
+                }
+                shared.sampleTick = static_cast<LONG>(firstSeen & 0xFFFFFFFFu);
+            }
             shared.sampleCount = ++published;
             mp::PublishSkater(g_link, shared);
         }
@@ -589,7 +697,9 @@ DWORD WINAPI MainThread(LPVOID)
         ReportGtaInput();
         mp::thaw::InputSecond(&Log);
         ReportLink(beat);
-        if (g_link) Log("link: published %ld skater samples so far", published);
+        if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second)",
+                        published, g_repeatSamples);
+        g_repeatSamples = 0;
     }
     return 0;
 }
