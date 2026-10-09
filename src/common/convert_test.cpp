@@ -77,6 +77,35 @@ int main()
     CheckTrue("falling straight down gives no heading",
               !mp::GtaHeadingFromThawVelocity(Vec3{0.0f, -400.0f, 0.0f}, m, 20.0f, h));
 
+    // Phase 4-0: Los Santos East, the three landmarks marked in both games.
+    {
+        const mp::Vec3 thaw[3] = {{7694.87f, -515.66f, 2136.50f}, {9748.89f, -370.69f, 1063.16f},
+                                  {3640.20f, -513.87f, 14186.43f}};
+        const mp::Vec3 gtaFeet[3] = {{1976.103f, -1449.686f, 12.484f}, {2024.917f, -1423.471f, 15.992f},
+                                     {1877.469f, -1741.686f, 12.522f}};
+        const char* names[3] = {"LSE landmark 1 (skatepark corner)", "LSE landmark 2 (hospital steps)",
+                                "LSE landmark 3 (night club doors)"};
+        const mp::LevelAlignment* a = mp::FindLevelAlignment(0x0274F7DEul);
+        Check("LSE: level ID found", a ? 1.0f : 0.0f, 1.0f);
+        for (int k = 0; a && k < 3; ++k) {
+            const mp::Vec3 g = mp::MapAbsolute(thaw[k], *a);
+            const float dx = g.x - gtaFeet[k].x, dy = g.y - gtaFeet[k].y;
+            Check(names[k], std::sqrt(dx * dx + dy * dy), 0.0f, 0.6f);   // within 0.6 m sideways
+            Check(names[k], g.z, gtaFeet[k].z, 0.05f);                    // within 5 cm in height
+        }
+        Check("other level: no alignment", mp::FindLevelAlignment(0x12345678ul) ? 1.0f : 0.0f, 0.0f);
+        // Our own map (tools/gta_to_thaw_map.py): its start point, written at THAW
+        // (43.3071, 502.1263, -2964.5686), is GTA (1976.1, -1449.7, 12.5) + 10 units up.
+        const mp::LevelAlignment* own = mp::FindLevelAlignment(0x9F014B98ul);
+        Check("own map: level ID found", own ? 1.0f : 0.0f, 1.0f);
+        if (own) {
+            const mp::Vec3 g = mp::MapAbsolute(mp::Vec3{43.3071f, 502.1263f - 10.0f, -2964.5686f}, *own);
+            Check("own map: start point x", g.x, 1976.1f, 0.01f);
+            Check("own map: start point y", g.y, -1449.7f, 0.01f);
+            Check("own map: start point z", g.z, 12.5f, 0.01f);
+        }
+    }
+
     if (g_failures == 0) {
         std::printf("ALL PASSED\n");
         return 0;

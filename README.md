@@ -18,7 +18,11 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Reading the skater in reTHAWed** (phase 1-1, tested 2026-10-07, read only): position and velocity, 10 times per second, confirmed by the distance-vs-speed check (ratio 1.00 to 1.02 skating straight). In THAW, Y is up; pushing speed ~500 units/s.
 - **Menus vs level vs paused in reTHAWed** (phase 1-2, tested 2026-10-07, read only): "in menus" YES/no and the level ID change correctly; pause flag turns on and off with pausing.
 - **reTHAWed sends the skater to GTA** (phase 2-1, tested 2026-10-07): ~95 samples per second over the link, 0 to 16 ms old, same values as reTHAWed's own log. THAW → GTA conversion unit test: 20/20 pass (cloud and Windows).
-- **Skate mode, first test** (2026-10-07, GTA free roam at the airport): F7 or L3 + R3 in GTA turns it on and off; CJ follows the reTHAWed skater's path 1:1 and faces where he's going. Found two bugs (left/right mirrored; pausing reTHAWed turned skate mode off), fixed but not yet retested.
+- **Skate mode** (phase 2-2, tested 2026-10-07, GTA free roam at the airport): F7 or L3 + R3 in GTA turns it on and off; CJ follows the reTHAWed skater's path 1:1 and faces where he's going (left turns are left turns). Pausing stays on hold instead of switching off. You can't watch it live yet: you see the result when you switch back to GTA.
+- **reTHAWed keeps running behind GTA** (phase 3-1, tested 2026-10-07): our plugin hides "lost focus" from reTHAWed's window, so it no longer pauses itself when GTA is in front. Side effect for now: your controller also reaches reTHAWed while you're in GTA.
+- **Controller from GTA to reTHAWed** (phase 3-2, tested 2026-10-07): every button, stick and trigger GTA reads arrives in reTHAWed within 0–32 ms. Logged only; reTHAWed doesn't use it yet.
+- **Skate live from GTA** (phase 3, tested 2026-10-07): with skate mode on and reTHAWed behind GTA, your controller drives the hidden skater and CJ follows live. GTA ignores the controller meanwhile: Start pauses only reTHAWed (skate mode waits), L3 + R3 still toggles.
+- **Skating on GTA's real streets in East Los Santos** (phase 4-1, tested 2026-10-08): with the "Los Santos East" reTHAWed map (thpsgoat.com mod 598) loaded, skate mode puts CJ at the matching GTA spot, so the skater's ramps, rails and walls are GTA's. Lined up to about half a metre. Only that area so far.
 - **Test helper F8** (tested 2026-10-07): moves CJ to the waypoint marker on the map.
 - **Controller fix** (tested 2026-10-07, menus only): reTHAWed started by our launcher ignores DualSenseX's virtual Xbox 360 controller and uses only the real PS5 controller. Downside for now: a real Xbox 360 controller would be ignored by reTHAWed too; an option for Xbox players is planned before release.
 
@@ -28,8 +32,18 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - (Fixed 2026-10-07: GTA now keeps running at 60 fps while reTHAWed is in front, via `autoPause=0` in the Windowed Mode plugin's settings.)
 - No hooks inside reTHAWed yet.
 - THAW's unit size is not confirmed (probably inches).
-- Skate mode (phase 2-2): fix 1 (left/right mirror, holding while GTA's menu is open): written, **not tested**. Pressing Start in reTHAWed also opens GTA's pause menu (both read the controller).
+- Pressing Start in reTHAWed also opens GTA's pause menu (both games read the controller). Skate mode holds while it's open, so CJ misses anything skated until you close it. To be fixed in phase 3.
+- CJ has no skating animation yet (he slides).
+- CJ hits invisible walls: the walls of the hidden reTHAWed level. Planned: an empty flat custom park as the hidden level, later GTA's own world fed into reTHAWed.
+- F7 sometimes needs an extra Alt+Tab into GTA before it works (found 2026-10-07, not understood yet).
 - Everything else in `docs/DESIGN.md`: not started.
+
+## Tools
+
+- `tools\thaw_level_dump.py` (Python 3): looks inside a reTHAWed map and writes its collision and rails as 3D files (`.obj`) to `extracted\<level>\` (gitignored; read only, nothing changes in the game). Example: `python tools\thaw_level_dump.py "D:\Games\reTHAWed\data\mod\UserMods\Maps\Los Santos East" --gta lse`
+- `tools\gta_area_dump.py` (Python 3): writes GTA SA's own collision for one area as a 3D file to `extracted\gta_<area>\` (read only). Example: `python tools\gta_area_dump.py "D:\Games\GTA San Andreas"`
+- `tools\gta_extras.py`: hand-made list of walls / fences GTA draws but has no collision for (used by `gta_to_thaw_map.py`; first: the East LS skatepark wall and fence, not tested yet).
+- `tools\gta_to_thaw_map.py` (Python 3): makes a reTHAWed map from GTA's collision of an area, in `extracted\thaw_maps\` (invisible: collision only, no rails yet; vert in the East LS skatepark: bowl and both half pipes; wallride on every vertical wall; grind rails on kerbs, ledges and the bowl's coping, at most 9,000 rail nodes; grinds and wallrides tested 2026-10-09: work). **Tested 2026-10-08: loads and skates; the bowl skates like Los Santos East's, the half pipes skate well.** Copy the map folder into `D:\Games\reTHAWed\data\mod\UserMods\Maps\` to play it. Example: `python tools\gta_to_thaw_map.py "D:\Games\GTA San Andreas"`
 
 ## Requirements
 

@@ -1,11 +1,11 @@
 // my-passthrough: the shared memory block both plugins use to talk (phase 0c;
-// version 2 adds the skater, phase 2-1).
+// version 2 adds the skater, phase 2-1; version 3 adds the controller, phase 3-2).
 //
 // Windows lets two programs open the same named block of memory. Whichever
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v2": only programs in the user's own Windows
+// Name "Local\MyPassthrough_v3": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -20,9 +20,37 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 2;         // 2: adds the skater (phase 2-1)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v2";
+constexpr LONG kLinkVersion = 3;         // 2: adds the skater (phase 2-1); 3: the controller (phase 3-2)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v3";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
+
+// gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
+// these). The sticks and L2/R2 are in gtaInAxes.
+constexpr LONG kBtnCross = 1 << 0;
+constexpr LONG kBtnCircle = 1 << 1;
+constexpr LONG kBtnSquare = 1 << 2;
+constexpr LONG kBtnTriangle = 1 << 3;
+constexpr LONG kBtnL1 = 1 << 4;
+constexpr LONG kBtnR1 = 1 << 5;
+constexpr LONG kBtnL3 = 1 << 6;
+constexpr LONG kBtnR3 = 1 << 7;
+constexpr LONG kBtnStart = 1 << 8;
+constexpr LONG kBtnSelect = 1 << 9;
+constexpr LONG kBtnUp = 1 << 10;
+constexpr LONG kBtnDown = 1 << 11;
+constexpr LONG kBtnLeft = 1 << 12;
+constexpr LONG kBtnRight = 1 << 13;
+constexpr int kButtonCount = 14;
+inline const char* ButtonName(int bit)
+{
+    static const char* const names[kButtonCount] = {"Cross", "Circle", "Square", "Triangle", "L1",
+        "R1", "L3", "R3", "Start", "Select", "Up", "Down", "Left", "Right"};
+    return (bit >= 0 && bit < kButtonCount) ? names[bit] : "?";
+}
+
+// gtaInAxes order: GTA's values as GTA itself sees them (sticks about -128..128,
+// L2/R2 0..255). Converted for reTHAWed on the THAW side (phase 3-3).
+enum InputAxis { kAxisLX = 0, kAxisLY, kAxisRX, kAxisRY, kAxisL2, kAxisR2, kAxisCount };
 
 // thawFlags bits
 constexpr LONG kSkaterValid = 1;  // a local skater was read
@@ -52,7 +80,16 @@ struct LinkBlock {
     volatile LONG thawSampleCount;  // +1 per published sample
 
     volatile LONG gtaSkateMode;     // GTA: 1 while skate mode is on (phase 2-2)
-    LONG reserved[13];              // unused; keeps the block 128 bytes
+
+    // ---- the controller, written by the GTA plugin (phase 3-2) ----
+    // Pad 0 as GTA read it this frame. gtaInSeq is a sequence lock like thawSeq.
+    volatile LONG gtaInSeq;
+    volatile LONG gtaInTick;        // GetTickCount64() when read, low 32 bits (ms)
+    volatile LONG gtaInCount;       // +1 per published frame
+    volatile LONG gtaInButtons;     // kBtn* bits
+    volatile short gtaInAxes[kAxisCount];
+
+    LONG reserved[6];               // unused; keeps the block 128 bytes
 };
 static_assert(sizeof(LinkBlock) == 128, "LinkBlock layout changed: bump kLinkVersion");
 
@@ -103,6 +140,44 @@ inline bool ReadSkaterShared(const LinkBlock* b, SkaterShared& out, int& retries
         MemoryBarrier();
         if (b->thawSeq == s1) { out.seq = s1; return true; }
         ++retries;
+    }
+    return false;
+}
+
+// One controller frame, as copied out of the block.
+struct InputShared {
+    LONG seq = 0;
+    LONG tick = 0;
+    LONG count = 0;
+    LONG buttons = 0;
+    short axes[kAxisCount] = {};
+};
+
+// GTA side (the only writer): publish one controller frame.
+inline void PublishInput(LinkBlock* b, const InputShared& in)
+{
+    const LONG seq = b->gtaInSeq;
+    InterlockedExchange(&b->gtaInSeq, seq + 1); // odd: writing
+    b->gtaInTick = in.tick;
+    b->gtaInCount = in.count;
+    b->gtaInButtons = in.buttons;
+    for (int i = 0; i < kAxisCount; ++i) b->gtaInAxes[i] = in.axes[i];
+    InterlockedExchange(&b->gtaInSeq, seq + 2); // even: done
+}
+
+// THAW side: copy the latest controller frame (false if it kept changing).
+inline bool ReadInputShared(const LinkBlock* b, InputShared& out)
+{
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const LONG s1 = b->gtaInSeq;
+        if (s1 & 1) { YieldProcessor(); continue; }
+        MemoryBarrier();
+        out.tick = b->gtaInTick;
+        out.count = b->gtaInCount;
+        out.buttons = b->gtaInButtons;
+        for (int i = 0; i < kAxisCount; ++i) out.axes[i] = b->gtaInAxes[i];
+        MemoryBarrier();
+        if (b->gtaInSeq == s1) { out.seq = s1; return true; }
     }
     return false;
 }

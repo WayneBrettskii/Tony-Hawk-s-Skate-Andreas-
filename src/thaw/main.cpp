@@ -23,12 +23,26 @@
 // shared block (version 2) for the GTA side. The log still gets one position
 // line per 100 ms. Still read only inside reTHAWed.
 //
+// Phase 3-1: first change to reTHAWed: wraps its window procedure so it never
+// hears that it lost focus (it paused itself behind GTA). See focus.h.
+//
+// Phase 3-2: reads the controller state the GTA side publishes (link v3) and
+// logs it: every change of the buttons at once, sticks once per second. Read only.
+//
+// Phase 3-3: reTHAWed takes its controller input from GTA while it is behind GTA
+// and skate mode is on (input.cpp: two of rthw.dll's import entries replaced).
+//
+// Phase 4-0: F9 (with reTHAWed in front) logs the skater's position as a
+// "mark", for lining up a reTHAWed level with GTA's world. Read only.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
 #include <windows.h>
 #include "../common/link.h"
 #include "skater.h"
+#include "focus.h"
+#include "input.h"
 #include <tlhelp32.h>
 #include <cmath>
 #include <cstdarg>
@@ -392,13 +406,106 @@ void SkaterSecondCheck()
     t.speedSamples = 0;
 }
 
+// ---- Phase 3-2: the controller from GTA (read only) ----
+
+struct InputTrack {
+    bool have = false;
+    LONG lastButtons = 0;
+    LONG lastCount = 0;      // at the last per-second report
+    LONG maxAge = 0;         // largest age seen this second (ms)
+    unsigned failures = 0;
+    mp::InputShared last;
+};
+InputTrack g_input;
+
+void ButtonList(char* out, size_t size, LONG buttons)
+{
+    out[0] = '\0';
+    size_t used = 0;
+    for (int i = 0; i < mp::kButtonCount; ++i) {
+        if (!(buttons & (1 << i))) continue;
+        const char* name = mp::ButtonName(i);
+        const size_t len = strlen(name);
+        if (used + len + 2 >= size) break;
+        if (used) out[used++] = ' ';
+        memcpy(out + used, name, len);
+        used += len;
+        out[used] = '\0';
+    }
+    if (!used && size > 4) memcpy(out, "none", 5);
+}
+
+// Every pass: read the latest controller frame; log button changes at once.
+void TrackGtaInput(ULONGLONG now)
+{
+    if (!g_link) return;
+    mp::InputShared in;
+    if (!mp::ReadInputShared(g_link, in)) {
+        if (++g_input.failures == 1) Log("input from GTA: could not read (kept changing)");
+        return;
+    }
+    if (in.count == 0) return; // GTA hasn't published yet
+    const LONG age = static_cast<LONG>(now & 0xFFFFFFFFu) - in.tick;
+    if (age > g_input.maxAge) g_input.maxAge = age;
+    if (!g_input.have || in.buttons != g_input.lastButtons) {
+        char names[160];
+        ButtonList(names, sizeof(names), in.buttons);
+        Log("input from GTA: buttons %s (frame %ld, %ld ms old)", names, in.count, age);
+        g_input.lastButtons = in.buttons;
+    }
+    if (!g_input.have) g_input.lastCount = in.count;
+    g_input.have = true;
+    g_input.last = in;
+}
+
+// Once per second: how many frames arrived, how old, and where the sticks are.
+void ReportGtaInput()
+{
+    if (!g_link || !g_input.have) return;
+    const mp::InputShared& in = g_input.last;
+    Log("input from GTA: %ld frames in the last second, up to %ld ms old | LX %d LY %d RX %d RY %d L2 %d R2 %d",
+        in.count - g_input.lastCount, g_input.maxAge, in.axes[mp::kAxisLX], in.axes[mp::kAxisLY],
+        in.axes[mp::kAxisRX], in.axes[mp::kAxisRY], in.axes[mp::kAxisL2], in.axes[mp::kAxisR2]);
+    g_input.lastCount = in.count;
+    g_input.maxAge = 0;
+}
+
+// ---- Phase 4-0: F9 = log the skater's position as a "mark" ----
+
+bool ReTHAWedInFrontNow()
+{
+    HWND w = GetForegroundWindow();
+    if (!w) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    return pid == GetCurrentProcessId();
+}
+
+void TickMark(const mp::thaw::GameState& state, bool stateOk, const mp::thaw::SkaterSample& s, bool skaterOk)
+{
+    static bool wasDown = false;
+    static int count = 0;
+    const bool down = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+    const bool pressed = down && !wasDown;
+    wasDown = down;
+    if (!pressed || !ReTHAWedInFrontNow()) return;
+    ++count;
+    if (!skaterOk || !s.readOk || !s.skater) {
+        Log("mark #%d (F9): no skater to read", count);
+        return;
+    }
+    Log("mark #%d (F9): skater at %.2f %.2f %.2f | speed %.1f | level 0x%08lX%s", count, s.pos[0], s.pos[1],
+        s.pos[2], Length3(s.vel), stateOk && state.readOk ? state.levelId : 0UL,
+        stateOk && state.readOk && state.paused == 1 ? " | PAUSED" : "");
+}
+
 DWORD WINAPI MainThread(LPVOID)
 {
     if (!SetUpLogPath()) return 0; // nowhere to log; do nothing at all
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough THAW plugin: loaded (phase 2-1)");
+    Log("my-passthrough THAW plugin: loaded (phase 4-0: F9 marks)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -441,10 +548,15 @@ DWORD WINAPI MainThread(LPVOID)
         const bool logLine = now >= nextLog;
         if (logLine) nextLog = now + 100;
 
+        mp::thaw::FocusKeeperTick(&Log);
+        TrackGtaInput(now);
+        mp::thaw::InputTick(g_link, &Log);
+
         mp::thaw::GameState state;
         const char* tag = canReadState ? SampleGameState(state) : "[?]";
         mp::thaw::SkaterSample sample;
         if (canReadSkater) SampleSkater(tag, logLine, sample);
+        TickMark(state, canReadState, sample, canReadSkater);
 
         if (g_link) {
             mp::SkaterShared shared;
@@ -473,6 +585,9 @@ DWORD WINAPI MainThread(LPVOID)
         ++beat;
         Log("heartbeat %lu", beat);
         if (canReadSkater) SkaterSecondCheck();
+        mp::thaw::FocusKeeperSecond(&Log);
+        ReportGtaInput();
+        mp::thaw::InputSecond(&Log);
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far", published);
     }

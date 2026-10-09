@@ -21,6 +21,12 @@
 // is in front; while on, CJ follows the reTHAWed skater. Off = no changes.
 // Test helper (teleport.cpp): F8 moves CJ to the waypoint on GTA's map.
 //
+// Phase 3-2: copies the controller (pad 0) into the shared block every world
+// update, for the THAW side (padlink.cpp). Phase 3-4: during skate mode it then
+// blanks pad 0, so GTA itself ignores the controller.
+// Phase 4-0: F9 logs CJ's position as a "mark" (mark.cpp), for lining up a
+// reTHAWed level with GTA's world.
+//
 // Uses only Windows' own file functions (no C runtime file I/O), so logging is
 // safe even while the game is starting up or shutting down.
 
@@ -29,6 +35,8 @@
 #include "../common/link.h"
 #include "skatemode.h"
 #include "teleport.h"
+#include "padlink.h"
+#include "mark.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -101,6 +109,10 @@ void AddHooks()
         mp::gta::SkateModeFrameSafe(g_link, &Log);
         // Test helper: F8 = move CJ to the map waypoint.
         mp::gta::TeleportFrameSafe(&Log);
+        // Phase 3-2: controller into the link (installs its hook the first time).
+        mp::gta::PadLinkFrame(g_link, &Log);
+        // Phase 4-0: F9 = log CJ's position as a landmark "mark".
+        mp::gta::MarkFrameSafe(&Log);
     });
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
@@ -288,7 +300,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough GTA plugin: loaded (phase 2-2, fix 1: mirror + GTA menu hold)");
+    Log("my-passthrough GTA plugin: loaded (phase 4-0: F9 marks)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 
@@ -361,6 +373,7 @@ DWORD WINAPI MainThread(LPVOID)
             LogPeer("THAW", g_link->thawPid, g_link->thawBeat, thawWatch);
             LogThawSkater();
         }
+        mp::gta::PadLinkSecond(&Log);
 
         // 5 s in: has another mod re-hooked the same places since we did?
         if (second == 5 && g_hooksAdded) {

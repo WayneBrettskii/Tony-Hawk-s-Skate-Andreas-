@@ -21,7 +21,7 @@ if(NOT EXISTS "${PLUGIN_SDK_LIB}")
 endif()
 
 # --- GTA San Andreas plugin: my-passthrough.asi ---
-add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp)
+add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp)
 
 # Match plugin-sdk's own settings for SA plugins (its tools/premake/premake5.lua):
 # GTA SA 1.0 US, newest C++ standard, multi-byte characters, /sdl- off.
@@ -62,7 +62,7 @@ endif()
 
 # --- reTHAWed plugin: my-passthrough-thaw.dll (loaded into reTHAWed by the launcher) ---
 # Stays in the build folder next to the launcher; nothing goes into the reTHAWed install.
-add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp)
+add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp)
 set_target_properties(thaw_plugin PROPERTIES
     OUTPUT_NAME "my-passthrough-thaw"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

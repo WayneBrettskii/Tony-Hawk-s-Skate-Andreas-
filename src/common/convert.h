@@ -43,6 +43,46 @@ inline Vec3 MapPosition(const Vec3& thawPos, const Vec3& thawAnchor, const Vec3&
     return Vec3{gtaAnchor.x + g.x, gtaAnchor.y + g.y, gtaAnchor.z + g.z};
 }
 
+// ---- Phase 4: reTHAWed levels that are copies of part of GTA's world ----
+// For such a level, the skater's position maps straight to a place in GTA
+// (no anchor): GTA feet position = offset + scale * (x, ySign * z, y).
+struct LevelAlignment {
+    unsigned long levelId;  // reTHAWed's level checksum (thawLevelId in the link)
+    const char* name;
+    float scale;            // GTA metres per level unit
+    float ySign;            // -1: same mirror as the anchor mapping
+    Vec3 offset;            // GTA position of the level's origin (feet height)
+};
+
+// Los Santos East (thpsgoat.com mod 598). Worked out 2026-10-08 from 3 landmarks
+// marked in both games (skatepark right corner, hospital steps, night club
+// doors): 41.27 level units per metre, no rotation (0.04 degrees), errors 0.1 to
+// 0.5 m sideways and under 1 cm in height.
+constexpr LevelAlignment kLosSantosEast{0x0274F7DEul, "Los Santos East", 0.02422967f, -1.0f,
+                                        Vec3{1789.2105f, -1397.8612f, 24.9750f}};
+
+// Our own map made from GTA's collision by tools/gta_to_thaw_map.py (phase 4-2d):
+// prefix MPGTALSE, level ID = checksum of "load_MPGTALSE". Built in inches
+// (39.3701 units per metre) around the Los Santos East area's centre
+// (1975, -1525), heights from GTA's 0: exact by construction.
+constexpr LevelAlignment kGtaEastLs{0x9F014B98ul, "GTA East LS (my-passthrough)", 0.0254f, -1.0f,
+                                    Vec3{1975.0f, -1525.0f, 0.0f}};
+
+// The aligned level for this level ID, or nullptr.
+inline const LevelAlignment* FindLevelAlignment(unsigned long levelId)
+{
+    if (levelId == kLosSantosEast.levelId) return &kLosSantosEast;
+    if (levelId == kGtaEastLs.levelId) return &kGtaEastLs;
+    return nullptr;
+}
+
+// GTA position of the feet for a skater position in an aligned level.
+inline Vec3 MapAbsolute(const Vec3& thawPos, const LevelAlignment& a)
+{
+    return Vec3{a.offset.x + thawPos.x * a.scale, a.offset.y + thawPos.z * a.scale * a.ySign,
+                a.offset.z + thawPos.y * a.scale};
+}
+
 // GTA heading (radians) for facing along the GTA-space direction (dx, dy).
 // GTA's convention (believed, from GTA's CPlaceable::GetHeading): heading 0
 // faces +Y (north), and heading = atan2(-dx, dy). To be confirmed in the game

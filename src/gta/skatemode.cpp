@@ -15,12 +15,14 @@
 #include "CPad.h"
 #include "CPlayerInfo.h"
 #include "CPlayerPed.h"
+#include "CStreaming.h"
 #include "CTimer.h"
 #include "CWorld.h"
 #include "common.h"
 #include <windows.h>
 
 #include "skatemode.h"
+#include "padlink.h"
 #include "../common/convert.h"
 
 #include <cmath>
@@ -41,6 +43,10 @@ constexpr float kPi = 3.14159265f;
 
 struct State {
     bool on = false;
+    // Phase 4-1: set while reTHAWed is in a level that is a copy of GTA's world
+    // (Los Santos East): CJ goes straight to the matching GTA spot, no anchor.
+    const LevelAlignment* align = nullptr;
+    LONG levelId = 0;            // reTHAWed's level when skate mode went on
     Vec3 thawAnchor;
     Vec3 gtaAnchor;
     float feetOffset = 1.0f;     // CJ's position height above the ground at the anchor
@@ -51,6 +57,7 @@ struct State {
     // once-per-second report
     ULONGLONG nextReport = 0;
     unsigned frames = 0, moved = 0, held = 0, clamps = 0;
+    unsigned unreadableRun = 0, unreadableSkipped = 0; // frames skipped: sample kept changing
     float maxDrift = 0.0f;       // how far GTA moved CJ between our frames (m)
     bool haveLastTarget = false;
     Vec3 lastTarget;
@@ -77,6 +84,23 @@ bool GtaIsForeground()
     return pid == GetCurrentProcessId();
 }
 
+// A toggle press while GTA isn't the front window: say which window is
+// (found 2026-10-07: F7 sometimes did nothing until an extra Alt+Tab).
+void LogFrontWindow(LogFn log, const char* how)
+{
+    HWND w = GetForegroundWindow();
+    DWORD pid = 0;
+    char cls[96] = {}, title[96] = {};
+    if (w) {
+        GetWindowThreadProcessId(w, &pid);
+        GetClassNameA(w, cls, sizeof(cls));
+        GetWindowTextA(w, title, sizeof(title));
+    }
+    log("skate mode: %s pressed but GTA isn't the front window; ignored (front window: 0x%08lX, process %lu%s, class \"%s\", title \"%s\")",
+        how, static_cast<unsigned long>(reinterpret_cast<ULONG_PTR>(w)), pid,
+        pid == GetCurrentProcessId() ? " = GTA" : "", cls, title);
+}
+
 // Why CJ can't be in skate mode right now (nullptr = he can).
 const char* GtaBlocker(CPlayerPed* ped, CPad* pad)
 {
@@ -91,12 +115,18 @@ const char* GtaBlocker(CPlayerPed* ped, CPad* pad)
     return nullptr;
 }
 
+// Reason text for "the sample kept changing while we read it" (the THAW side
+// writes ~95 times a second; rarely 8 tries in a row all land mid-write).
+// Found 2026-10-08: this once turned skate mode off. Now it only skips the frame.
+const char* const kUnreadable = "skater sample unreadable";
+constexpr unsigned kMaxUnreadableFrames = 60; // ~1 s in a row = really broken
+
 // Latest skater sample; false + reason if skate mode can't use it.
 bool ReadSample(LinkBlock* link, SkaterShared& s, LONG& ageMs, const char*& why)
 {
     if (!link || link->thawPid == 0) { why = "reTHAWed not connected"; return false; }
     int retries = 0;
-    if (!ReadSkaterShared(link, s, retries)) { why = "skater sample unreadable"; return false; }
+    if (!ReadSkaterShared(link, s, retries)) { why = kUnreadable; return false; }
     ageMs = static_cast<LONG>(GetTickCount64() & 0xFFFFFFFFu) - s.sampleTick;
     if (ageMs > kStaleMs) { why = "skater samples stopped (link lost)"; return false; }
     if (!(s.flags & kSkaterValid)) { why = "no skater in reTHAWed"; return false; }
@@ -162,17 +192,33 @@ void TurnOn(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* 
     } else {
         g.feetOffset = 1.0f;
     }
+    g.levelId = s.levelId;
+    g.align = FindLevelAlignment(static_cast<unsigned long>(s.levelId));
+    if (g.align) {
+        // Phase 4-1: CJ goes to the GTA spot matching the skater (loading that area first).
+        Vec3 t = MapAbsolute(g.thawAnchor, *g.align);
+        t.z += g.feetOffset;
+        CVector to(t.x, t.y, t.z);
+        const Vec3 from = g.gtaAnchor;
+        CStreaming::LoadScene(&to);
+        ped->Teleport(to, false);
+        log("skate mode: %s level: CJ moved %.1f m to the skater's spot (%.2f %.2f %.2f -> %.2f %.2f %.2f)",
+            g.align->name, Distance(from, t), from.x, from.y, from.z, t.x, t.y, t.z);
+    }
     pad->DisablePlayerControls |= kOurControlBit;
     InterlockedExchange(&link->gtaSkateMode, 1);
     g.on = true;
+    g.unreadableRun = 0;
     g.haveLastTarget = false;
     g.lastHold = nullptr;
     ResetStats();
     g.nextReport = GetTickCount64() + 1000;
-    log("skate mode: ON (%s) | CJ anchor %.2f %.2f %.2f | skater anchor %.2f %.2f %.2f | "
-        "CJ height above ground %.2f m | scale %.4f m/unit, y sign %+.0f | control flags 0x%04X",
-        how, g.gtaAnchor.x, g.gtaAnchor.y, g.gtaAnchor.z, g.thawAnchor.x, g.thawAnchor.y, g.thawAnchor.z,
-        g.feetOffset, kMapping.scale, kMapping.ySign, pad->DisablePlayerControls);
+    log("skate mode: ON (%s) | %s | CJ anchor %.2f %.2f %.2f | skater anchor %.2f %.2f %.2f | "
+        "CJ height above ground %.2f m | scale %.4f m/unit, y sign %+.0f | level 0x%08lX | control flags 0x%04X",
+        how, g.align ? "ABSOLUTE (level lined up with GTA)" : "relative (from where CJ stands)",
+        g.gtaAnchor.x, g.gtaAnchor.y, g.gtaAnchor.z, g.thawAnchor.x, g.thawAnchor.y, g.thawAnchor.z,
+        g.feetOffset, g.align ? g.align->scale : kMapping.scale, kMapping.ySign,
+        static_cast<unsigned long>(s.levelId), pad->DisablePlayerControls);
 }
 
 void ReportIfDue(CPlayerPed* ped, LogFn log)
@@ -209,10 +255,17 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     // Toggle: F7 or L3 + R3, counted once per press, only with GTA in front.
     const bool foreground = GtaIsForeground();
     const bool keyDown = (GetAsyncKeyState(kToggleKey) & 0x8000) != 0;
-    const bool comboDown = pad->NewState.ShockButtonL != 0 && pad->NewState.ShockButtonR != 0;
+    // Phase 3-4: during skate mode GTA's pad is blanked, so read L3 + R3 from the
+    // controller frame copied just before blanking (padlink.cpp) when we have it.
+    LONG raw = 0;
+    const bool comboDown = PadLinkRawButtons(raw)
+        ? ((raw & kBtnL3) != 0 && (raw & kBtnR3) != 0)
+        : (pad->NewState.ShockButtonL != 0 && pad->NewState.ShockButtonR != 0);
     const char* how = nullptr;
     if (foreground && keyDown && !g.keyWasDown) how = "F7";
     if (foreground && comboDown && !g.comboWasDown) how = "L3 + R3";
+    if (!foreground && ((keyDown && !g.keyWasDown) || (comboDown && !g.comboWasDown)))
+        LogFrontWindow(log, keyDown && !g.keyWasDown ? "F7" : "L3 + R3");
     g.keyWasDown = keyDown;
     g.comboWasDown = comboDown;
     if (how) {
@@ -258,7 +311,18 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     LONG age = 0;
     const char* why = nullptr;
     if (!ReadSample(link, s, age, why)) {
+        if (why == kUnreadable && ++g.unreadableRun <= kMaxUnreadableFrames) {
+            ++g.unreadableSkipped; // try again next frame; CJ stays put this frame
+            if (g.unreadableSkipped == 1 || g.unreadableSkipped % 100 == 0)
+                log("skate mode: skipped %u frame(s) so far: skater sample kept changing while read", g.unreadableSkipped);
+            return;
+        }
         TurnOff(ped, pad, link, log, why);
+        return;
+    }
+    g.unreadableRun = 0;
+    if (s.levelId != g.levelId) {
+        TurnOff(ped, pad, link, log, "reTHAWed changed level");
         return;
     }
     pad->DisablePlayerControls |= kOurControlBit; // keep ours set
@@ -290,7 +354,13 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     const LONG ex = age < 0 ? 0 : (age > kMaxExtrapolateMs ? kMaxExtrapolateMs : age);
     const Vec3 p{s.pos[0] + s.vel[0] * ex / 1000.0f, s.pos[1] + s.vel[1] * ex / 1000.0f,
                  s.pos[2] + s.vel[2] * ex / 1000.0f};
-    Vec3 t = MapPosition(p, g.thawAnchor, g.gtaAnchor, kMapping);
+    Vec3 t;
+    if (g.align) {
+        t = MapAbsolute(p, *g.align); // phase 4-1: the matching GTA spot
+        t.z += g.feetOffset;
+    } else {
+        t = MapPosition(p, g.thawAnchor, g.gtaAnchor, kMapping);
+    }
 
     // Never below GTA's ground (THAW's slopes don't exist in GTA).
     float gz = 0.0f;
