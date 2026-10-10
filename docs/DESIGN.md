@@ -573,7 +573,154 @@ Children follow their parents (local matrices kept). Bone parents come from Rend
 
 **Fix 1 result (02:44): no change.** Fix 2: sample time = when that reTHAWed frame was first seen (repeat reads made GTA's look-ahead jitter CJ along his path); chest twist from the skater's chest axis (link v6, 20 body points: + chest and a point on its right axis).
 
+### 8.18 Phase 5-3e: frame recorder (written 2026-10-09, user OK'd 10:22; see STATUS.md)
+
+**Why:** two fixes for the shimmy / stutter failed; measure instead of guessing.
+
+**Step:** new `src/gta/recorder.h/.cpp`. While skate mode is on, F9 (GTA in front; the F9 mark is still logged too) records the next 180 GTA frames (3 s) into memory, then writes `logs/gta_frames_N.csv` (N counts up per session). One row per frame: time (high-resolution clock), GTA frame number, reTHAWed sample number, its age and the look-ahead used, the skater's position and speed, where skate mode wanted CJ and where he ended up, his up direction, the board, the body targets (hips, chest direction, right upper arm), and when GTA drew CJ with the copied body plus the hips as drawn. Read only.
+
+**Test:** skate mode on; push along flat ground, press F9, keep pushing 3 s; then F9 again and jump off a ramp. Claude reads the files.
+
+**Noticed while writing it:** the sample age comes from `GetTickCount64` on both sides, which only moves in steps of about 15.6 ms; the look-ahead (speed x age) then jumps in steps of up to 12 cm at 8 m/s. The recording will show whether that is the stutter.
+
+**8.18 result (10:31):** the recording showed the look-ahead causing the stutter (0 / 16 ms ages give 0.07 / 0.68 m steps while the skater moves 0.39 m evenly). Fix 3: look-ahead off; neck no longer aimed (it tipped the face up); neck, head and face held in the first frame's pose so GTA's look-at and talking don't show.
+
+**Fix 3 result (10:40):** better; still stutter (recordings: a third of GTA frames get no new reTHAWed frame), head still looks up / mouth moves (the neck is bone 4, not locked).
+
+### 8.19 Phase 5-3f: blending (written 2026-10-09)
+- THAW plugin notes when each reTHAWed frame appears (position change, checked about every 1 ms, high-resolution clock), reads it 4 ms later, sends the time (link v7).
+- GTA keeps the last 8 frames and shows the skater 40 ms late, blended between the two frames around that time: even motion even when frames arrive unevenly; costs 40 ms of delay.
+- Head: calm pose for neck (4), head (5), jaw / brows (6-8), taken after 20 frames; GTA's look-at and talking tasks stopped every frame while skate mode is on.
+- F10: body copy on / off, to compare.
+
+**5-3f/g results (10:51, 11:00):** F10 proves the copy is visible; reTHAWed runs at 60; blending works; remaining jerks come from the skater's orientation changing in steps on curved ramps (flat faces) and from GTA's animation rolling the arms. 5-3h: orientation smoothed (40 ms); every bone starts from a calm pose captured at the 20th frame, then is turned to the skater.
+
+**5-3i result (11:39):** CJ looks much more natural. Both games at 30 = no stutter.
+
+### 8.20 Phase 5-3j: even 60 fps for GTA (written 2026-10-09)
+GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src/gta/pacer.cpp`) holds each frame to exactly 1/60 s on the high-resolution clock, only while GTA's own Frame Limiter is off (so they don't fight). reTHAWed's frames reach GTA blended (8.19), so reTHAWed's own rate matters less. If 60 still stutters, the next look is reTHAWed's animation setting (it only offers 30 or its default).
+
+### 8.21 Research while the user was away (2026-10-09 11:45, read only, nothing run or changed)
+
+**reTHAWed's frame rate** (from `rthw.dll`, reTHAWed's own code):
+- reTHAWed's game runs on a fixed 1/60 s step: the patch for the `[Debug] UnlockFPSValue` setting in `rethawed.ini` rewrites exactly those numbers to 1/120 s and 120 ("Attempting to Cap Framerate to 120..."). Without it the game stays at 60. So "unlimited" in its menu does not make the skater move more than 60 times a second; our logs agree (60 new frames a second while skating).
+- The animation frame-rate option is a separate script command, `RT_SetEmulatedAnimationFPS`: it lowers how often the skeleton animation updates (e.g. 30, the console look). It doesn't change the game's 60.
+- Conclusion: the remaining 60 fps stutter is GTA's uneven frame spacing (14 / 19.5 ms), which the pacer (8.20) addresses. reTHAWed can stay on its defaults.
+
+**The "Out of HashItems" limit (whole-map test T4) is a reTHAWed setting:**
+- reTHAWed hooks the game's pool creation (`Mem::CCompactPool`). For each pool it first reads `rethawed.ini`, section `[Memory]`, key = the pool's name; if that is set it uses it, otherwise its own table. Its table (in rthw.dll) has, among others: `HashItem` 30000, `CComponent` 360000, `CStruct` 100000, `CVector` 30000, `Out set RailPoint` 20000, `Out set RailString` 5000, `CAP Rail CComponent` 50000. (The original game had HashItem 10000.)
+- So the user can raise the limit in reTHAWed's own settings file, e.g. under `[Memory]`: `HashItem=100000` (12 bytes each: about 1.2 MB). No patching needed; our code doesn't touch reTHAWed's files (the user edits their own ini).
+- The rail limit is very likely the same thing: `Out set RailPoint` = 20000; our map with 19,476 rail nodes hung while loading (8.12). `Out set RailPoint=60000` (and maybe `Out set RailString`) would allow far more rails than our 9000 budget.
+- Not tested. Next whole-map test: T4 with the 200 m tiles AND `HashItem=100000`; then a rail test with a bigger `--rail-budget` and a bigger `Out set RailPoint`.
+
+**5-3k result (user 14:43): skating smooth now.** (User also met an invisible wall on the LSE map: that map's own collision, not ours; the final map will be our own.)
+
+### 8.22 Phase 6 plan (draft, written 2026-10-09 14:50, not approved yet): reTHAWed's HUD and body flips on the GTA side
+
+**Asked (user 14:43):** manual balance meter, grind balance meter, trick score, special meter, and body flips (they don't show in GTA).
+
+**Body flips:** CJ copies the skater's bone positions, so flips should come along; they don't. Needs a frame recording of a flip (F9) to see what the data does (does reTHAWed turn the whole skater object, the root bone, or only the skeleton; does a check of ours throw the samples away).
+
+**HUD, two ways:**
+- A. Copy reTHAWed's own HUD picture into GTA (exact look). Needs reTHAWed's 2D drawing caught in a separate picture and shared with GTA every frame: heavy, a lot of unknown ground.
+- B. (recommended) Read the numbers from reTHAWed and draw our own HUD in GTA (GTA's font, simple bars in reTHAWed's colours). Each element is one memory-reading step (like the skeleton was).
+
+**Research so far (read only, reTHAWed.exe):** the score object = skater `+0x2B0` -> `+0x18`. Script command `SkaterGetScoreInfo` (0x005A7690) returns `scorepot` = int at score `+0x14` x float at score `+0x60` (base points x multiplier), `totalscore` from 0x00569850, and a third value at score `+0x20`. Balance and special: not found yet (they are member functions known only by checksum; next: the HUD's own update code).
+
+**Order proposed:** 1. body flips (recording first); 2. trick score + multiplier + trick names; 3. special meter; 4. balance meters (manual, grind). Each: log test in reTHAWed first, then drawing in GTA.
+
+**User chose A (14:52): copy reTHAWed's own HUD picture.** Plan:
+- H1 (research, log only): reTHAWed's Direct3D 9 device is at 0x00852044 (stored at 0x0052CDC0; reTHAWed draws through DXVK, its `_d3d9.dll`). The THAW plugin wraps 17 of the device's functions (Present, SetRenderTarget, Clear, SetTransform, SetViewport, draws, vertex formats, shaders, a few render states) and, on F11, writes every call of one whole frame to `logs/thaw_frame_N.txt`. Goal: find where the 3D world ends and the HUD begins (e.g. a switch to 2D vertex formats, an orthographic projection, z-test off).
+- H2: at that point, send the HUD's drawing into a picture of our own as well (transparent background), still drawing reTHAWed normally.
+- H3: copy that picture to GTA each frame (shared memory; size and rate to be measured).
+- H4: GTA draws it over its screen after its own HUD.
+- Body flips: wait for a recording of one (F9).
+
+
+### 8.23 Phase 6 H2: catch reTHAWed's HUD in a see-through picture (user OK 18:03)
+
+**H1 result (4 frame logs, 2026-10-09 18:00):** every frame ends the same way: 3D world on a full-size target (3840x2160 here), glow passes on small targets (1920x1080, 960x540, 240x135), back to the full-size target for one full-screen glow quad, then **all of the HUD**: 51-62 `DrawIndexedPrimitiveUP` calls with 28-byte screen-space vertices (FVF 0x144: position already in pixels, colour, one texture). Then one switch to a second full-size target (a final copy) and EndScene. In all 4 frames, `DrawIndexedPrimitiveUP` appears **only** in the HUD part.
+
+**Rule:** the HUD starts at the frame's first `DrawIndexedPrimitiveUP` while a full-size target is set, and ends at the game's next `SetRenderTarget`, `EndScene` or `Present`.
+
+**What H2 does (`src/thaw/hud.cpp`, using drawlog's wrapped device functions):**
+- At the HUD start: remember the game's target and viewport, switch to our own full-size A8R8G8B8 picture, clear it to fully see-through. The HUD draws land there instead of on reTHAWed's screen.
+- While it lasts, alpha is kept as "coverage" (separate alpha blend: ONE / INV_SRC_ALPHA), so the picture has proper see-through edges; colours come out pre-multiplied (to be drawn in GTA with ONE / INV_SRC_ALPHA). The game's own values for those 3 states are put back afterwards.
+- At the HUD end: put the game's target, viewport and states back.
+- Only while reTHAWed is in a level and **not** the front window (so its menus, and its screen when the user looks at it, stay normal). Touchpad + D-pad Left switches it off/on (temporary, for comparing).
+- Before the device is reset (window or resolution change) our picture is released, so the reset can't fail because of us.
+- **Test picture:** the frame logged by touchpad + D-pad Up / F11 also saves the HUD picture, half size, as `logs/thaw_hud_N.tga` (32-bit with see-through). Every 10 s thaw.log says how many frames had a HUD caught.
+
+**Result (19:33): H2 works.** The game draws its HUD with colour write mask 0x7 (no alpha); we force 0xF while catching. Pictures show the whole HUD (score, special bar, trick names, multiplier, manual balance meter, messages) on a see-through background.
+
+**Not in H2:** nothing goes to GTA yet (H3: share the picture; H4: GTA draws it). reTHAWed's hidden window shows no HUD while H2 is on (it is behind GTA anyway).
+
+**Risks:** the rule may not fit other screens (e.g. trick names, pause or end-of-run screens); the test picture shows that. DXVK may not like a picture switch in the middle of its last pass (would show as a black/garbled HUD or no change).
+
+### 8.25 Phase 6 H3 + H4: reTHAWed's HUD picture shown in GTA (user OK 19:35)
+
+**H3, sharing (reTHAWed side, `src/thaw/hud.cpp`, new `src/common/hudlink.h`):**
+- A second shared memory block, `Local\MyPassthrough_Hud_v1` (~18 MB): a small header + 2 picture slots of up to 1920x1200 (BGRA, colours pre-multiplied by alpha).
+- Each frame, right after the HUD was caught: the GPU shrinks our full-size picture to fit 1920x1200 (here 3840x2160 -> 1920x1080, smooth filter) and starts copying it to memory. The copy is picked up **one frame later** (so reTHAWed doesn't wait for its graphics card), then written into the slot GTA isn't reading, with a counter that tells GTA if a slot changed while it was reading (same idea as the link's seqlock). The header says which slot is newest, its size, a frame number and a time stamp.
+- Cost per frame: ~8 MB copied by the processor. thaw.log reports the time per frame every 10 s.
+
+**H4, drawing (GTA side, new `src/gta/hudshow.cpp`):**
+- Right after GTA draws its own HUD (plugin-sdk `drawHudEvent`, call at 0x53E4FF), only while skate mode is on and the newest picture is under 250 ms old.
+- When the frame number changed: copy the newest slot into a RenderWare texture (RwRasterCreate 8888, RwRasterLock write). Then draw it over the whole screen with RenderWare's 2D drawing (RwIm2D, blend ONE / INV_SRC_ALPHA because the colours are pre-multiplied, no depth test), and put RenderWare's states back.
+- gta.log every 10 s: frames shown, new pictures, half-written pictures skipped, upload time.
+
+**Delay:** about 1-2 frames behind reTHAWed (fine for a HUD). **GTA's own HUD** stays for now (radar, money); hiding it while skating can come later. **Not in H3/H4:** the special-mode screen effect (8.24).
+
+### 8.26 Body flips: reTHAWed's "display rotation" (user 20:00)
+
+**Found (8 GTA recordings, 20:00):** in the air the skater's facing (`+0x88`) and all body bones stay completely steady during backflips, front flips and rolls. So the flip is not in the data we read.
+
+**Where it is (read from reTHAWed.exe 5.0.0.1):** script command `RotateDisplay` (checksum 0xA4C25C2F) belongs to the **model component** (checksum 0x286A8D26, "model"); handler 0x004552B0. It doesn't move the skeleton; it queues a display-only rotation that is applied to the whole drawn model (body and board) when it is drawn:
+- 3 queues in the model component, for the x, y, z axes, at +0x38, +0xCC, +0x160 (0x94 bytes each): 6 slots of 0x18 bytes, then a byte "anything active" at queue +0x90.
+- Slot: +0x00 duration (ms, float), +0x04 start time (ms, int), +0x08 start angle, +0x0C total angle (degrees), +0x10 easing (0 = linear, n > 0 = sin^(2^(n-1)) of t x 90°, n < 0 = 1 - cos), +0x14 flags (1 active, 2 hold the end angle, 4 real clock instead of game clock). Angle of a slot (0x004534A0): start + total x easing(elapsed / duration); after the end: start + total if "hold", else 0.
+- Clocks: real ms = (dword at 0x008AAD00) x 1000 / (float at 0x007346B4) (0x0062C350); game ms = (real - dword at 0x00742C14) x (float at 0x00719EA0), plus dword at 0x00742C10 for the slots (0x00436180, 0x004534D0).
+- Axis angle = sum of its active slots (0x004543C0). The drawn matrix (0x00454940): L = Rx · Ry · Rz (DirectX row-vector rotations, degrees), turned around the pivot at model +0x28 (x, y, z), then x the skater's matrix. A byte at model +0x1F4 additionally turns the model 180° (not used yet; logged).
+
+**Plan (THAW side only, read only):** `pose.cpp` computes L and the pivot each sample (after its own code checks of the addresses above). Before the body bones and the board are published, each skater-space point q becomes (q - pivot) · L + pivot, and the board's axes are turned by L. GTA needs no change: CJ's body and the board follow the data. thaw.log once per second: frames with a display rotation, largest angles, the +0x1F4 flag.
+
+### 8.27 Radio in skate mode: reTHAWed's soundtrack as its own station (user OK 20:29)
+
+**Asked:** while skating, a station selector (like GTA V's radio wheel) with reTHAWed's playlist as one station and GTA's stations as the others.
+
+**Idea (no music files copied; AGENTS.md rules 1 and 4):**
+- "reTHAWed" station = reTHAWed keeps playing its own soundtrack (as now: its sound already plays while it is hidden). The other stations = GTA's own radio, played on foot (normally GTA only plays radio in a vehicle); reTHAWed's music is then muted while its skating sounds keep playing. "Off" = neither.
+- Selector (user 20:24: GTA V-style wheel; must work on PlayStation and Xbox controllers): **hold Back** (Create / Share on PlayStation, View on Xbox) about 0.4 s -> the wheel opens; the right stick points at a station; letting go picks it; the choice is remembered. Works the same on every controller because GTA sees all of them as an Xbox pad, and every button reaches reTHAWed through our link.
+- Back opens a menu in reTHAWed (user 20:28). So: while Back is down we hold it back from reTHAWed; a **tap** (released before 0.4 s) is then passed on to reTHAWed as a short press (its menu opens on release instead of on press); a **hold** never reaches reTHAWed. While the wheel is open the right stick is held back from reTHAWed too (no camera turn). GTA ignores the controller in skate mode anyway.
+
+**Research needed first (log-only steps, like H1):**
+1. reTHAWed: how to mute / pause only its music, and skip a track (its own music commands, e.g. the music volume setting or a pause command), without touching its sound effects. Muting the whole reTHAWed window would also mute the board sounds.
+2. GTA: how to start a radio station without a vehicle (GTA's radio track manager, as the radio in clubs/houses does), and stop it.
+3. Showing the current reTHAWed song name (reTHAWed's HUD may already show it; it would come through our HUD copy).
+
+**Research results (read from the cloud copies, 20:35):**
+1. reTHAWed: script commands with names in the exe (table at 0x0072F468...). `PauseMusic` -> 0x004B4DE0 (cdecl, 1 = pause, 0 = resume; keeps the song position; sets the byte at 0x00763B72 = "music paused", also read by `MusicIsPaused` 0x004B4E70). `SetMusicVolume` -> 0x004B4F10 (volume 0-100 stored at 0x0071C598). `SkipMusicTrack` -> 0x004B5180. Sound effects are separate (not touched by these).
+2. GTA (plugin-sdk): `AudioEngine.StartRadio(station, bass)` 0x507DC0 and `StopRadio(nullptr, false)` 0x506F70 (the ones interiors use); `AERadioTrackManager.GetRadioStationName(id)` 0x4E9E10 gives the names in the game's language. Station ids 1-11 (Playback FM ... WCTR), 12 = user tracks (to verify by logging).
+
+**Step R1 (this build): station switch, no wheel yet.**
+- GTA, `src/gta/radio.cpp`: the Back hold/tap filter sits in the pad copy (padlink): Back is kept from reTHAWed; a tap is sent on release as 4 frames of Back; a hold of 0.4 s steps to the next station: reTHAWed soundtrack -> GTA's stations -> Off -> ... The name shows at the top of the screen for 2.5 s (GTA's font). While skate mode is on: GTA station = StartRadio(id) and reTHAWed's music paused; reTHAWed = GTA radio stopped and its music playing; Off = both quiet. Skate mode off: GTA radio stopped and reTHAWed's music **paused** (user 20:35: reTHAWed's music only plays in skate mode while GTA runs). GTA closed (no word for 5 s): reTHAWed's music back to normal.
+- Link `reserved[1]` = wanted reTHAWed music (0 leave alone, 1 play, 2 pause), `reserved[2]` = GTA's tick (older than 5 s = GTA gone = 0).
+- reTHAWed, `src/thaw/music.cpp`: on its own game thread (inside our controller hook, at most every 30 ms) calls PauseMusic(1) / (0); only resumes music it paused itself. Code checks first.
+
+**R1 test (user 20:45):** Back hold steps stations, names right (log: 1 Playback FM ... 11 WCTR, 12 user tracks, 13 radio off); reTHAWed station plays, reTHAWed music pauses/resumes. GTA stations did not play and GTA stuttered: GTA's interior-radio code (CAEAmbienceTrackManager 0x4D6E60, read from gta_sa.exe) stops any radio every frame while CJ is outside a club/house (StopRadio calls at 0x4D71D2, 0x4D71FD, 0x4D7221), and our restart every 3 s loaded the station each time (hitch). **Fix 1:** those 3 calls go to our function, which skips the stop only while our skate-mode GTA station plays (calls checked first: E8 -> 0x506F70); at most one restart per station.
+
+**R2 (next, after fix 1 works): GTA V-style wheel with station icons** (user 20:45). Icons are not shipped with the mod or put in the repo (game / Rockstar artwork, AGENTS.md rule 1); the mod reads PNG files the user puts in `GTA San Andreas\modloader\my-passthrough\radio\` (names: `rethawed.png`, `1.png` ... `11.png`, maybe `off.png`), decoded with Windows' own image reader (WIC) into GTA textures. A missing icon = the station name in its slot.
+
+**Then:** R3 remember the choice, maybe skip track (SkipMusicTrack) and user tracks.
+
+### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
+
+**Asked:** the slow motion already works in GTA (CJ follows the skater, who moves slower), but it should also look like reTHAWed's: its screen effect. Not planned yet. To find first: how reTHAWed knows Focus is on (a flag or time scale we can read), and what its effect draws (probably a full-screen pass near the end of the frame; the H1 frame log taken during Focus will show it). Then choose: copy the effect's look in GTA with our own full-screen pass, or catch reTHAWed's. Sound (if Focus changes it) to check too.
+
+**First look (8 frame logs, 19:12, some in special mode):** every frame has the same targets and the same glow passes at the end; the busier frames only draw more 3D world. So the special-mode look is not an extra pass. Likely the same glow passes with other values (shader constants, e.g. tint or glow strength), which the frame log doesn't record. Next research step: also log `SetPixelShaderConstantF` during the glow passes, and log whether special / Focus is on, then compare a normal and a special frame.
+
 ## 11. Before release (to do later)
+
+- **Remove the temporary controller shortcuts** (PS5 touchpad + D-pad Down = frame recorder, touchpad + D-pad Up = draw log; `src/thaw/touchpad.*`, link `reserved[0]`; added 2026-10-09).
 
 - **Controller fix must become an option** (asked by the user 2026-10-07). Right now the launcher always tells reTHAWed to ignore Xbox 360 controllers (045E:028E) and turns off SDL's raw input reading. That is right for a PS5 controller + DualSenseX, but a player with a **real Xbox 360 controller** would have no controller in reTHAWed at all. Plan: a settings file next to the launcher (for example `my-passthrough.ini`, `[Controller] Mode=`), with at least:
   - `ps-with-dualsensex`: today's behaviour (reTHAWed uses the real PlayStation controller, ignores the virtual Xbox 360 one).

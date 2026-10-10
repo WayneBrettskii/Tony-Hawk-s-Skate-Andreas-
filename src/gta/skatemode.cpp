@@ -16,6 +16,9 @@
 #include "CCamera.h"
 #include "CCutsceneMgr.h"
 #include "CMenuManager.h"
+#include "CPedIntelligence.h"
+#include "CTaskManager.h"
+#include "CTask.h"
 #include "CPad.h"
 #include "CPlayerInfo.h"
 #include "CPlayerPed.h"
@@ -29,6 +32,7 @@
 #include "skateanim.h"
 #include "board.h"
 #include "body.h"
+#include "recorder.h"
 #include "padlink.h"
 #include "../common/convert.h"
 
@@ -42,7 +46,25 @@ constexpr int kToggleKey = VK_F7;
 constexpr unsigned short kOurControlBit = 1u << 4; // plugin-sdk calls it "unk3, unused"
 constexpr float kMinHeadingSpeed = 20.0f;          // THAW units/s; slower = keep facing
 constexpr LONG kStaleMs = 1000;                     // no new skater sample for 1 s = link lost
-constexpr LONG kMaxExtrapolateMs = 50;              // move ahead by velocity x age, at most 50 ms
+// 5-3e: was 50. The frame recorder showed this look-ahead WAS the stutter: the
+// sample age is only known in steps of about 16 ms (0 or 16), so CJ was put
+// ahead by 0 or a whole frame's travel in turn (steps of 0.07 m, then 0.68 m,
+// while the skater moved 0.39 m every frame). Without it CJ moves as evenly as
+// the skater (one reTHAWed frame per GTA frame), about 8 ms later on average.
+constexpr LONG kMaxExtrapolateMs = 0;
+// 5-3f: show reTHAWed this many ms late and blend between the two frames
+// around that moment (the recordings: a third of GTA's frames got no new
+// reTHAWed frame, the next got two: uneven steps). One missed frame is covered.
+constexpr long long kBlendDelayMs = 40;
+constexpr int kHistory = 8;  // reTHAWed frames kept for blending
+constexpr int kBodyToggleKey = VK_F10;
+// 5-3g: the skater's orientation from reTHAWed changes in steps (on curved
+// ramps it jumps from one flat face of the ramp to the next: the recording of
+// a bowl run showed CJ's up direction jumping 0.58 -> 0.64 -> 0.85 while the
+// position moved evenly). Each step jerked CJ's tilt, the board and the whole
+// copied body (arms up to 90 degrees in one frame). It is smoothed with this
+// time constant (ms): steps blur over about 2-3 frames; fast spins lag a little.
+constexpr float kOrientSmoothMs = 40.0f;
 // ySign -1 (changed 2026-10-07): with +1, a left turn in reTHAWed came out as a
 // right turn in GTA (first skate test), so THAW needs the mirror.
 const Mapping kMapping{0.0254f, -1.0f};             // scale (m per THAW unit), ySign
@@ -73,6 +95,8 @@ struct State {
     unsigned frames = 0, moved = 0, held = 0, clamps = 0;
     unsigned facingFrames = 0, boardFrames = 0; // phase 5-3b: frames that used reTHAWed's facing / board
     unsigned tiltFrames = 0;                     // phase 5-3c: frames CJ was turned with the skater
+    unsigned blendFrames = 0, tasksStopped = 0;  // 5-3f: frames shown blended; look-at / talking stopped
+    bool toggleWasDown = false;                  // 5-3f: F10
     float maxTiltDeg = 0.0f;                     // phase 5-3c: most CJ leaned this second
     unsigned unreadableRun = 0, unreadableSkipped = 0; // frames skipped: sample kept changing
     float maxDrift = 0.0f;       // how far GTA moved CJ between our frames (m)
@@ -163,10 +187,12 @@ bool GroundZ(float x, float y, float z, float& groundZ)
 void ResetStats()
 {
     g.frames = g.moved = g.held = g.clamps = 0;
-    g.facingFrames = g.boardFrames = g.tiltFrames = 0;
+    g.facingFrames = g.boardFrames = g.tiltFrames = g.blendFrames = g.tasksStopped = 0;
     g.maxTiltDeg = 0.0f;
     g.maxDrift = 0.0f;
 }
+
+void HistClear(); // 5-3f, below
 
 void TurnOff(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* reason)
 {
@@ -178,6 +204,7 @@ void TurnOff(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char*
     SkateAnimStop(ped, log);
     BoardHide(log);
     BodyClear();
+    HistClear();
     if (ped) ped->SetHeading(g.lastHeading); // phase 5-3c: stand CJ upright again
     if (ped) {
         const CVector& p = ped->GetPosition();
@@ -263,8 +290,158 @@ void ReportIfDue(CPlayerPed* ped, LogFn log)
     unsigned bodySkipped = 0;
     const unsigned bodyFrames = BodyFramesAndReset(&bodySkipped);
     if (const char* info = BodyTakeInfo()) log("skate body: %s", info);
-    log("skate body: copied from the skater in %u frames, %u half-updated samples skipped", bodyFrames, bodySkipped);
+    log("skate body: copied from the skater in %u frames, %u half-updated samples skipped | blended %u frames | look-at / talking stopped %u times",
+        bodyFrames, bodySkipped, g.blendFrames, g.tasksStopped);
     ResetStats();
+}
+
+// ---- 5-3f: blending between reTHAWed frames ----
+struct Hist {
+    SkaterShared s;
+    long long qpc = 0;
+};
+Hist g_hist[kHistory];
+int g_histCount = 0;
+
+void Norm3(float* v); // below
+bool g_haveSmooth = false;     // 5-3g: smoothed orientation
+float g_smooth[9] = {};
+long long g_smoothQpc = 0;
+
+// 5-3k: an even frame clock. Each frame it moves on by the average frame
+// time (measured), and is only nudged a little towards the real time, so the
+// moments at which we show reTHAWed are evenly spaced. Restarts after a hitch.
+long long g_clock = 0, g_clockLast = 0;
+double g_avgFrame = 0.0;
+
+long long FrameClock(long long now, long long freq)
+{
+    if (g_clock == 0) {
+        g_clock = g_clockLast = now;
+        g_avgFrame = freq / 60.0;
+        return now;
+    }
+    const double real = static_cast<double>(now - g_clockLast);
+    g_clockLast = now;
+    if (real > 0.0 && real < freq / 10.0) g_avgFrame += (real - g_avgFrame) * 0.02; // average frame time
+    long long next = g_clock + static_cast<long long>(g_avgFrame);
+    const double err = static_cast<double>(now - next);
+    if (err > 3.0 * g_avgFrame || err < -3.0 * g_avgFrame) next = now; // hitch: start again
+    else next += static_cast<long long>(err * 0.05);                    // drift towards real time slowly
+    g_clock = next;
+    return next;
+}
+
+void HistClear()
+{
+    g_histCount = 0;
+    g_haveSmooth = false;
+    g_clock = 0;
+}
+
+// 5-3g: blur the steps in the skater's orientation (see kOrientSmoothMs).
+void SmoothOrient(float* orient, long long nowQpc, long long qpcFreq)
+{
+    if (!g_haveSmooth) {
+        for (int k = 0; k < 9; ++k) g_smooth[k] = orient[k];
+        g_haveSmooth = true;
+    } else {
+        const float dtMs = static_cast<float>(static_cast<double>(nowQpc - g_smoothQpc) * 1000.0 / qpcFreq);
+        const float a = dtMs <= 0.0f ? 0.0f : 1.0f - std::exp(-dtMs / kOrientSmoothMs);
+        for (int k = 3; k < 9; ++k) g_smooth[k] += (orient[k] - g_smooth[k]) * a; // up and facing
+        float* u = g_smooth + 3;
+        float* f = g_smooth + 6;
+        Norm3(u);
+        const float d = f[0] * u[0] + f[1] * u[1] + f[2] * u[2];
+        for (int k = 0; k < 3; ++k) f[k] -= u[k] * d;
+        Norm3(f);
+        g_smooth[0] = u[1] * f[2] - u[2] * f[1]; // right = up x facing (as reTHAWed's rows)
+        g_smooth[1] = u[2] * f[0] - u[0] * f[2];
+        g_smooth[2] = u[0] * f[1] - u[1] * f[0];
+        for (int k = 0; k < 9; ++k) orient[k] = g_smooth[k];
+    }
+    g_smoothQpc = nowQpc;
+}
+
+void HistPush(const SkaterShared& s)
+{
+    if (s.frameQpc == 0) return;
+    if (g_histCount > 0 && g_hist[g_histCount - 1].qpc == s.frameQpc) {
+        g_hist[g_histCount - 1].s = s; // same frame, maybe read later: keep the newer read
+        return;
+    }
+    if (g_histCount > 0 && s.frameQpc < g_hist[g_histCount - 1].qpc) return; // older: ignore
+    if (g_histCount == kHistory) {
+        for (int i = 1; i < kHistory; ++i) g_hist[i - 1] = g_hist[i];
+        --g_histCount;
+    }
+    g_hist[g_histCount].s = s;
+    g_hist[g_histCount].qpc = s.frameQpc;
+    ++g_histCount;
+}
+
+float Lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+void Norm3(float* v)
+{
+    const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (l > 1e-6f) { v[0] /= l; v[1] /= l; v[2] /= l; }
+}
+
+// The skater as it was at `when` (QueryPerformanceCounter time): blended from
+// the two frames around it. Returns the blend in percent (0-100), or -1 if
+// the newest (or oldest) frame was used as it is.
+float HistBlend(long long when, SkaterShared& out)
+{
+    if (g_histCount == 0) return -1.0f;
+    if (when >= g_hist[g_histCount - 1].qpc) { out = g_hist[g_histCount - 1].s; return -1.0f; }
+    if (when <= g_hist[0].qpc) { out = g_hist[0].s; return -1.0f; }
+    int i = 0;
+    while (i + 1 < g_histCount && g_hist[i + 1].qpc <= when) ++i;
+    const SkaterShared& a = g_hist[i].s;
+    const SkaterShared& b = g_hist[i + 1].s;
+    const float t = static_cast<float>(when - g_hist[i].qpc) / static_cast<float>(g_hist[i + 1].qpc - g_hist[i].qpc);
+    out = b; // flags, level, sample numbers from the newer one
+    for (int k = 0; k < 3; ++k) {
+        out.pos[k] = Lerp(a.pos[k], b.pos[k], t);
+        out.vel[k] = Lerp(a.vel[k], b.vel[k], t);
+    }
+    if ((a.flags & kPoseValid) && (b.flags & kPoseValid)) {
+        for (int k = 0; k < 9; ++k) out.orient[k] = Lerp(a.orient[k], b.orient[k], t);
+        // square it up again: up, then facing at right angles to it, right = up x facing
+        float* r = out.orient;
+        float* u = out.orient + 3;
+        float* f = out.orient + 6;
+        Norm3(u);
+        const float d = f[0] * u[0] + f[1] * u[1] + f[2] * u[2];
+        for (int k = 0; k < 3; ++k) f[k] -= u[k] * d;
+        Norm3(f);
+        r[0] = u[1] * f[2] - u[2] * f[1];
+        r[1] = u[2] * f[0] - u[0] * f[2];
+        r[2] = u[0] * f[1] - u[1] * f[0];
+        for (int k = 0; k < 12; ++k) out.board[k] = Lerp(a.board[k], b.board[k], t);
+        Norm3(out.board + 0);
+        Norm3(out.board + 3);
+        Norm3(out.board + 6);
+    }
+    if ((a.flags & kBodyValid) && (b.flags & kBodyValid))
+        for (int k = 0; k < kLinkBodyBones * 3; ++k) out.body[k] = Lerp(a.body[k], b.body[k], t);
+    return t * 100.0f;
+}
+
+// 5-3f: GTA's own head turning (look-at) and talking face run as "secondary
+// tasks" on CJ; while skate mode is on they are stopped every frame.
+void StopLookAndTalk(CPlayerPed* ped)
+{
+    if (!ped->m_pIntelligence) return;
+    CTaskManager& tm = ped->m_pIntelligence->m_TaskMgr;
+    for (int slot : {static_cast<int>(TASK_SECONDARY_IK), static_cast<int>(TASK_SECONDARY_FACIAL_COMPLEX)}) {
+        CTask* t = tm.GetTaskSecondary(slot);
+        if (!t) continue;
+        t->MakeAbortable(ped, ABORT_PRIORITY_IMMEDIATE, nullptr);
+        tm.SetTaskSecondary(nullptr, slot);
+        ++g.tasksStopped;
+    }
 }
 
 // Phase 5-3c: turn CJ's whole body like the skater: his matrix gets the
@@ -417,6 +594,33 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     }
     pad->DisablePlayerControls |= kOurControlBit; // keep ours set
     ++g.frames;
+    // 5-3f: keep this reTHAWed frame and show the skater kBlendDelayMs ago,
+    // blended between frames (position, facing, board, body).
+    HistPush(s);
+    float blendPct = -1.0f;
+    {
+        LARGE_INTEGER qf, qn;
+        QueryPerformanceFrequency(&qf);
+        QueryPerformanceCounter(&qn);
+        // 5-3k: show reTHAWed at EVENLY spaced moments, one frame apart, not
+        // at the moment this update happens to run: those come 13.5 / 19.5 ms
+        // apart in turn even with the pacer (recording 14:35), while the
+        // picture reaches the screen at an even rate.
+        const long long when = FrameClock(qn.QuadPart, qf.QuadPart);
+        SkaterShared b;
+        blendPct = HistBlend(when - qf.QuadPart * kBlendDelayMs / 1000, b);
+        if (g_histCount > 0) s = b;
+        if (blendPct >= 0.0f) ++g.blendFrames;
+        if (s.flags & kPoseValid) SmoothOrient(s.orient, when, qf.QuadPart);
+    }
+    // 5-3f: F10 = copy CJ's body from the skater on / off (to compare).
+    {
+        const bool down = (GetAsyncKeyState(kBodyToggleKey) & 0x8000) != 0;
+        if (down && !g.toggleWasDown && GtaIsForeground())
+            log("skate body: F10 - copying the skater's body %s", BodyToggle() ? "ON" : "OFF (GTA's animation only)");
+        g.toggleWasDown = down;
+    }
+    StopLookAndTalk(ped);
     g.lastAge = age;
 
     // Hold (stay on, don't move CJ) while either game is paused.
@@ -434,6 +638,20 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         return;
     }
 
+    // Phase 5-3e: F9 = record the next 3 seconds (recorder.cpp); this frame's row.
+    {
+        // temporary (user plays on a TV): touchpad + D-pad Down = F9. The
+        // touchpad isn't in GTA's pad; the THAW plugin reads it (touchpad.cpp).
+        const LONG pad = PadRawButtons(link);
+        const bool combo = (pad & kPadRawTouch) && (pad & kPadRawDown);
+        RecorderFrameBegin(log, combo);
+    }
+    RecSet(REC_FRAME, static_cast<float>(CTimer::m_FrameCounter));
+    RecSet(REC_SAMPLE, static_cast<float>(s.sampleCount));
+    RecSet(REC_AGE_MS, static_cast<float>(age));
+    RecSet3(REC_THAW_X, s.pos[0], s.pos[1], s.pos[2]);
+    RecSet3(REC_VEL_X, s.vel[0], s.vel[1], s.vel[2]);
+
     // How far did GTA's own physics move CJ since our last placement?
     if (g.haveLastTarget) {
         const float drift = Distance(ToVec(ped->GetPosition()), g.lastTarget);
@@ -442,6 +660,7 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
 
     // Target: skater position, nudged forward by velocity x sample age (max 50 ms).
     const LONG ex = age < 0 ? 0 : (age > kMaxExtrapolateMs ? kMaxExtrapolateMs : age);
+    RecSet(REC_AHEAD_MS, blendPct);
     const Vec3 p{s.pos[0] + s.vel[0] * ex / 1000.0f, s.pos[1] + s.vel[1] * ex / 1000.0f,
                  s.pos[2] + s.vel[2] * ex / 1000.0f};
     Vec3 t;
@@ -509,6 +728,12 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         BodySetTarget(s.body, s.orient, scale, kMapping.ySign, t.x, t.y, t.z - g.feetOffset - kBoardLift);
     else
         BodyClear();
+    if (RecorderOn()) {
+        RecSet3(REC_TGT_X, t.x, t.y, t.z);
+        const CVector& cp = ped->GetPosition();
+        RecSet3(REC_PED_X, cp.x, cp.y, cp.z);
+        if (ped->m_matrix) RecSet3(REC_UP_X, ped->m_matrix->at.x, ped->m_matrix->at.y, ped->m_matrix->at.z);
+    }
     g.lastTarget = ToVec(ped->GetPosition()); // where CJ really is (turned or not)
     g.haveLastTarget = true;
     ++g.moved;

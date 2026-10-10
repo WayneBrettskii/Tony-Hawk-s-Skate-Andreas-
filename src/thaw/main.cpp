@@ -50,7 +50,12 @@
 #include "focus.h"
 #include "input.h"
 #include "pose.h"
+#include "drawlog.h"
+#include "touchpad.h"
+#include "music.h"
 #include <tlhelp32.h>
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -65,6 +70,11 @@ namespace {
 
 HMODULE g_self = nullptr;
 unsigned long g_repeatSamples = 0; // 5-3d fix 2: same reTHAWed frame read again
+unsigned long g_newFrames = 0;     // 5-3g: new reTHAWed frames (skater moved) per second
+// 8.26 body flips, for the once-per-second log
+unsigned long g_flipSamples = 0, g_flippedFlag = 0;
+float g_flipMax[3] = {};
+constexpr long long kSettleMs = 4;  // 5-3f: wait this long after a new reTHAWed frame before reading it
 wchar_t g_logPath[MAX_PATH] = {};
 ULONGLONG g_startTick = 0;
 volatile LONG g_stop = 0;
@@ -604,22 +614,55 @@ DWORD WINAPI MainThread(LPVOID)
     LogModules();
 
     SetUpLink();
+    mp::thaw::TouchpadStart(g_link); // temporary test shortcut (touchpad.h)
     const bool canReadSkater = CheckCodeGroup(mp::thaw::kGroupSkater, "skater");
     const bool canReadState = CheckCodeGroup(mp::thaw::kGroupState, "state (menus/level/pause)");
     LogInFrontendJump();
     const bool canReadPose = canReadSkater && mp::thaw::PoseCodeChecksPass(&Log);
+    if (canReadPose) mp::thaw::DisplayCodeChecksPass(&Log); // 8.26 body flips
+    mp::thaw::MusicCodeChecksPass(&Log); // 8.27 radio
 
-    // Loop as fast as Sleep(10) allows (about every 15 ms on Windows):
-    //   every pass:     read state + skater, publish to the link (phase 2-1)
+    // Phase 5-3f: wake about every 1 ms and check only the skater's position;
+    // when it changes, reTHAWed has a new frame: note the exact time, wait
+    // kSettleMs for reTHAWed to finish that frame (skeleton), then do a full
+    // pass. Without a change, a full pass still runs every 10 ms (menus,
+    // controller, standing still).
+    // Full pass:
+    //   read state + skater, publish to the link (phase 2-1)
     //   every 100 ms:   one position line in the log (as before)
     //   every second:   heartbeat, distance-vs-speed check, link report
     unsigned long beat = 0;
     LONG published = 0;
     ULONGLONG nextLog = GetTickCount64();
     ULONGLONG nextSecond = nextLog + 1000;
+    timeBeginPeriod(1); // lets Sleep(1) really sleep about 1 ms
+    LARGE_INTEGER qpcFreq;
+    QueryPerformanceFrequency(&qpcFreq);
+    const long long settleTicks = qpcFreq.QuadPart * kSettleMs / 1000;
+    unsigned long quickSkater = 0;   // skater found by the last full pass
+    float quickPos[3] = {};
+    bool changeSeen = false;          // new reTHAWed frame noticed, full pass pending
+    long long changeQpc = 0, frameQpc = 0;
+    ULONGLONG nextFull = 0;
     while (!g_stop) {
-        Sleep(10);
-        const ULONGLONG now = GetTickCount64();
+        Sleep(1);
+        LARGE_INTEGER qn;
+        QueryPerformanceCounter(&qn);
+        if (quickSkater && !changeSeen) {
+            float p[3];
+            if (mp::thaw::ReadPosQuick(quickSkater, p) && memcmp(p, quickPos, sizeof(p)) != 0) {
+                memcpy(quickPos, p, sizeof(p));
+                changeSeen = true;
+                changeQpc = qn.QuadPart;
+            }
+        }
+        const ULONGLONG nowFull = GetTickCount64();
+        const bool settled = changeSeen && qn.QuadPart - changeQpc >= settleTicks;
+        if (!settled && (changeSeen || nowFull < nextFull)) continue; // a noticed frame waits until settled
+        nextFull = nowFull + 10;
+        const ULONGLONG now = nowFull;
+        const bool fromChange = changeSeen; // this pass reads a frame the quick check noticed
+        changeSeen = false;
         const bool logLine = now >= nextLog;
         if (logLine) nextLog = now + 100;
 
@@ -632,8 +675,19 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::SkaterSample sample;
         if (canReadSkater) SampleSkater(tag, logLine, sample);
         TickMark(state, canReadState, sample, canReadSkater, canReadPose);
+        {
+            // phase 6 H1: F11 = log one reTHAWed frame's drawing; temporarily
+            // also touchpad + D-pad Up on the PS5 controller (user plays on a TV)
+            const LONG pad = mp::thaw::TouchpadTick(&Log);
+            const bool combo = (pad & mp::kPadRawTouch) && (pad & mp::kPadRawUp);
+            // phase 6 H2: catch the HUD only in a level, with reTHAWed behind GTA
+            const bool inLevel = canReadState && state.readOk && state.inFrontend == 0;
+            const bool hudToggle = (pad & mp::kPadRawTouch) && (pad & mp::kPadRawLeft);
+            mp::thaw::DrawLogTick(&Log, combo, inLevel && !ReTHAWedInFrontNow(), hudToggle);
+        }
         mp::thaw::PoseSample pose;
         if (canReadPose && sample.readOk && sample.skater) SamplePose(sample.skater, tag, logLine, pose);
+        quickSkater = sample.readOk ? sample.skater : 0;
 
         if (g_link) {
             mp::SkaterShared shared;
@@ -650,13 +704,25 @@ DWORD WINAPI MainThread(LPVOID)
                         for (int c = 0; c < 3; ++c) shared.orient[r * 3 + c] = pose.orient[r * 4 + c];
                     for (int r = 0; r < 4; ++r)
                         for (int c = 0; c < 3; ++c) shared.board[r * 3 + c] = pose.board.m[r * 4 + c];
+                    // 8.26: body flips turn the board too
+                    mp::thaw::ApplyDisplayRotation(pose.disp, nullptr, 0, shared.board);
                 }
                 // Phase 5-3d: body bone positions for CJ.
                 if (pose.readOk && pose.haveBody) {
                     static_assert(mp::kLinkBodyBones == mp::thaw::kBodyBoneCount, "body bone lists differ");
                     shared.flags |= mp::kBodyValid;
                     for (int i = 0; i < mp::kLinkBodyBones * 3; ++i) shared.body[i] = pose.body[i];
+                    // 8.26: body flips (reTHAWed turns the drawn model, not the skeleton)
+                    mp::thaw::ApplyDisplayRotation(pose.disp, shared.body, mp::kLinkBodyBones, nullptr);
                 }
+                if (pose.disp.active) {
+                    ++g_flipSamples;
+                    for (int a = 0; a < 3; ++a) {
+                        const float v = pose.disp.angle[a] < 0 ? -pose.disp.angle[a] : pose.disp.angle[a];
+                        if (v > g_flipMax[a]) g_flipMax[a] = v;
+                    }
+                }
+                if (pose.disp.flipped) ++g_flippedFlag;
             }
             if (canReadState && state.readOk) {
                 shared.flags |= mp::kStateValid;
@@ -681,6 +747,14 @@ DWORD WINAPI MainThread(LPVOID)
                     ++g_repeatSamples;
                 }
                 shared.sampleTick = static_cast<LONG>(firstSeen & 0xFFFFFFFFu);
+                // 5-3f: exact time of this reTHAWed frame: when the quick check
+                // saw the position change; if a full pass found new data without
+                // it (first frame, or the check was busy), this pass's time.
+                if (fromChange || !same) ++g_newFrames;
+                if (fromChange) frameQpc = changeQpc;
+                else if (!same) frameQpc = qn.QuadPart;
+                if (shared.flags & mp::kSkaterValid) memcpy(quickPos, shared.pos, sizeof(quickPos));
+                shared.frameQpc = frameQpc;
             }
             shared.sampleCount = ++published;
             mp::PublishSkater(g_link, shared);
@@ -696,11 +770,20 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::FocusKeeperSecond(&Log);
         ReportGtaInput();
         mp::thaw::InputSecond(&Log);
+        mp::thaw::MusicSecond(&Log);
         ReportLink(beat);
-        if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second)",
-                        published, g_repeatSamples);
+        if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
+                        published, g_repeatSamples, g_newFrames);
         g_repeatSamples = 0;
+        g_newFrames = 0;
+        if (g_flipSamples || g_flippedFlag)
+            Log("flips: display rotation in %lu samples in the last second, largest angles x %.0f y %.0f z %.0f degrees | "
+                "'flipped' byte set in %lu samples",
+                g_flipSamples, g_flipMax[0], g_flipMax[1], g_flipMax[2], g_flippedFlag);
+        g_flipSamples = g_flippedFlag = 0;
+        g_flipMax[0] = g_flipMax[1] = g_flipMax[2] = 0.0f;
     }
+    timeEndPeriod(1);
     return 0;
 }
 
@@ -717,6 +800,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         if (t) CloseHandle(t);
     } else if (reason == DLL_PROCESS_DETACH) {
         InterlockedExchange(&g_stop, 1);
+        mp::thaw::TouchpadStop();
         // Tell the other side we're gone (just a memory write; safe here).
         if (g_link) InterlockedExchange(&g_link->thawPid, 0);
     }

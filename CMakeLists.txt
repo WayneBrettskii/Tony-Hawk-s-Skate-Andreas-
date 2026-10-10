@@ -21,7 +21,7 @@ if(NOT EXISTS "${PLUGIN_SDK_LIB}")
 endif()
 
 # --- GTA San Andreas plugin: my-passthrough.asi ---
-add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp)
+add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp src/gta/recorder.cpp src/gta/pacer.cpp src/gta/hudshow.cpp src/gta/radio.cpp)
 
 # Match plugin-sdk's own settings for SA plugins (its tools/premake/premake5.lua):
 # GTA SA 1.0 US, newest C++ standard, multi-byte characters, /sdl- off.
@@ -62,12 +62,13 @@ endif()
 
 # --- reTHAWed plugin: my-passthrough-thaw.dll (loaded into reTHAWed by the launcher) ---
 # Stays in the build folder next to the launcher; nothing goes into the reTHAWed install.
-add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp)
+add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp src/thaw/drawlog.cpp src/thaw/touchpad.cpp src/thaw/hud.cpp src/thaw/music.cpp)
 set_target_properties(thaw_plugin PROPERTIES
     OUTPUT_NAME "my-passthrough-thaw"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_compile_features(thaw_plugin PRIVATE cxx_std_17)
 target_compile_definitions(thaw_plugin PRIVATE "MP_LOG_DIR=\"${MP_LOG_DIR}\"")
+target_link_libraries(thaw_plugin PRIVATE hid setupapi) # touchpad.cpp (temporary test shortcut)
 
 # --- Launcher: my-passthrough-launcher.exe (starts reTHAWed) ---
 # Stays in the build folder; nothing is copied into the reTHAWed install.

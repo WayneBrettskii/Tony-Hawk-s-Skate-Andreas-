@@ -124,6 +124,19 @@ SkaterSample ReadSkater()
     return sample;
 }
 
+bool ReadPosQuick(unsigned long skater, float out[3])
+{
+    __try {
+        const volatile float* pos = reinterpret_cast<const volatile float*>(skater + kPosOffset);
+        out[0] = pos[0];
+        out[1] = pos[1];
+        out[2] = pos[2];
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 JumpInfo ReadInFrontendJump()
 {
     JumpInfo info;

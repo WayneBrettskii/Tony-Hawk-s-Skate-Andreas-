@@ -28,6 +28,9 @@ void BodyAddHook();
 void BodySetTarget(const float* body, const float* orient, float scale, float ySign, float feetX, float feetY,
                    float feetZ);
 
+// 5-3f: F10 switches copying on / off (to compare). Returns the new state.
+bool BodyToggle();
+
 // No body this frame (skate mode off, or reTHAWed didn't send it).
 void BodyClear();
 

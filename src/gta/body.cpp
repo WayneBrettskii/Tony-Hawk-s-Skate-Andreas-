@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "body.h"
+#include "recorder.h"
 #include "../common/link.h"
 
 #include <cmath>
@@ -18,9 +19,22 @@ namespace mp::gta {
 namespace {
 
 // ---- settings ----
-constexpr bool kCopyBody = true;     // false = CJ keeps GTA's animation only
+bool g_copyBody = true;              // F10 switches it (5-3f); false = CJ keeps GTA's animation only
 constexpr ULONGLONG kStaleMs = 200;  // target older than this = don't use
 constexpr int kMaxNodes = 64;
+// Fix 3: neck, head and the two face bones (GTA ids 5, 8, 6, 7) keep the pose
+// they had in the first frame of skate mode (relative to the chest), so GTA's
+// head turning (looking at things / up) and talking mouth don't show.
+// 5-3f: CJ's skeleton log shows bone 4 is the neck (the collar bones and the
+// head hang from it) and 5 the head (jaw and brows 6, 7, 8 hang from it);
+// plugin-sdk's names are one off. Fix 3 had missed the neck.
+// 5-3g: plus the collar bones (21, 31): nothing copies them from the skater,
+// so GTA's skating animation kept rolling the shoulders under the copied
+// arms (the shoulder "shimmy" with the copy on; user's F10 test, 10:51).
+// (5-3h: now every bone is held; see Apply.)
+// 5-3f: take the calm pose only after this many drawn frames of skate mode,
+// once GTA's look-at and talking (switched off by skate mode) have faded.
+constexpr int kLockAfterFrames = 20;
 
 // Order of the bones the THAW plugin sends (src/thaw/pose.cpp kBodyBones).
 enum ThawBone {
@@ -35,7 +49,12 @@ static_assert(T_COUNT == mp::kLinkBodyBones, "body bone lists differ (link.h, sr
 
 // GTA SA ped bone IDs (plugin-sdk ePedBones).
 enum GtaBone {
-    G_PELVIS1 = 1, G_SPINE1 = 3, G_NECK = 5, G_HEAD = 8,
+    // 5-3i: CJ's skeleton log: bone 4 is the neck (collar bones and head hang
+    // from it), 5 the head (jaw / brows hang from it). plugin-sdk calls 5 "neck",
+    // so the hips and chest had been aimed at CJ's HEAD while the targets were
+    // the skater's NECK: that tipped him back (user 11:14: "leaning back,
+    // looking up").
+    G_PELVIS1 = 1, G_SPINE1 = 3, G_NECK = 4, G_HEAD = 5,
     G_R_CLAVICLE = 21, G_L_CLAVICLE = 31,
     G_R_SHOULDER = 22, G_R_ELBOW = 23, G_R_WRIST = 24,
     G_L_SHOULDER = 32, G_L_ELBOW = 33, G_L_WRIST = 34,
@@ -60,6 +79,9 @@ const Op kOps[] = {
     // chest axis (from its left point to the chest = towards its right). Fix 2:
     // not the shoulder joints, which move with the arms (shoulder "shimmy").
     {AIM2, G_SPINE1, G_NECK, T_STOMACH_UP, T_NECK, G_L_CLAVICLE, G_R_CLAVICLE, T_CHEST_SIDE, T_CHEST},
+    // 5-3i: neck aimed so neck-to-head matches the skater's (fix 3 had removed
+    // an aim that paired the wrong bones: CJ's head-to-jaw with the skater's
+    // neck-to-head, which tipped his face up).
     {AIM, G_NECK, G_HEAD, T_NECK, T_HEAD, 0, 0, 0, 0},
     {AIM, G_R_SHOULDER, G_R_ELBOW, T_BICEP_R, T_FOREARM_R, 0, 0, 0, 0},
     {AIM, G_R_ELBOW, G_R_WRIST, T_FOREARM_R, T_WRIST_R, 0, 0, 0, 0},
@@ -176,6 +198,9 @@ unsigned g_frames = 0;
 unsigned g_skipped = 0; // samples skipped as half-updated
 float g_segRef[7] = {};  // usual bone lengths of the skater
 int g_tornRun = 0;
+M43 g_lock[kMaxNodes];   // 5-3h: the calm pose of every bone (local matrices)
+bool g_haveLock = false;
+int g_lockWait = 0;
 unsigned g_lastFrameCounter = 0xFFFFFFFFu;
 char g_info[600] = {};
 bool g_infoReady = false, g_infoLogged = false;
@@ -187,7 +212,7 @@ void Recompute(const M43* local, const int* parent, int n, const M43& root, M43*
 
 void Apply(CPed* ped)
 {
-    if (!kCopyBody || !g_target.valid) return;
+    if (!g_copyBody || !g_target.valid) return;
     if (GetTickCount64() - g_target.tick > kStaleMs) return;
     if (ped != FindPlayerPed()) return;
     if (CTimer::m_FrameCounter == g_lastFrameCounter) return; // once per frame
@@ -222,6 +247,21 @@ void Apply(CPed* ped)
     root.r[0] = V3(1, 0, 0); root.r[1] = V3(0, 1, 0); root.r[2] = V3(0, 0, 1); root.p = V3(0, 0, 0);
     for (int i = 0; i < n; ++i)
         local[i] = parent[i] < 0 ? world[i] : Mul(world[i], InverseRigid(world[parent[i]]));
+
+    // Fix 3: calm head. First frame: remember neck / head / face; then every
+    // frame put them back (GTA's look-at and talking change them each frame).
+    // 5-3h: not just the head: EVERY bone (except the root, which carries CJ's
+    // place in the world) starts from the calm pose each frame, and only then
+    // is turned to match the skater. GTA's skating animation underneath had
+    // still been rolling the arms around their own length (the shoulder
+    // "shimmy", user 11:00: still there after locking the collar bones), and
+    // swaying the lower spine.
+    for (int li = 0; li < n; ++li) {
+        if (parent[li] < 0) continue;
+        if (g_haveLock) local[li] = g_lock[li];
+        else if (g_lockWait >= kLockAfterFrames) g_lock[li] = local[li];
+    }
+    if (!g_haveLock && ++g_lockWait > kLockAfterFrames) g_haveLock = true;
 
     // Targets in the matrices' space.
     V3 t[T_COUNT];
@@ -275,6 +315,17 @@ void Apply(CPed* ped)
         if (!Finite(world[i])) return; // something went wrong: leave GTA's pose
     for (int i = 0; i < n; ++i) ToRw(world[i], h->pMatrixArray[i]);
     ++g_frames;
+    if (RecorderOn()) {
+        RecSet(REC_DRAW_MS, RecNowMs());
+        RecSet(REC_DRAW_FRAME, static_cast<float>(CTimer::m_FrameCounter));
+        const int hip = idx(G_PELVIS1);
+        if (hip >= 0) {
+            // as drawn, in world space (CJ's own space turned back into world if needed)
+            V3 w = world[hip].p;
+            if (!worldSpace) w = RotateRow(w, pedM) + pedM.p;
+            RecSet3(REC_DRAW_HIPS_X, w.x, w.y, w.z);
+        }
+    }
 }
 
 void ApplySafe(CPed* ped)
@@ -350,6 +401,15 @@ void BodySetTarget(const float* body, const float* orient, float scale, float yS
     }
     g_target.tick = GetTickCount64();
     g_target.valid = true;
+    if (RecorderOn()) {
+        const V3& h = g_target.pos[T_PELVIS];
+        RecSet3(REC_HIPS_X, h.x, h.y, h.z);
+        V3 c = g_target.pos[T_CHEST] - g_target.pos[T_CHEST_SIDE];
+        Unit(c);
+        RecSet3(REC_CHEST_X, c.x, c.y, c.z);
+        const V3 a = g_target.pos[T_FOREARM_R] - g_target.pos[T_BICEP_R];
+        RecSet3(REC_ARM_X, a.x, a.y, a.z);
+    }
 }
 
 void BodyClear()
@@ -357,6 +417,14 @@ void BodyClear()
     g_target.valid = false;
     for (float& r : g_segRef) r = 0.0f; // next skater may be built differently
     g_tornRun = 0;
+    g_haveLock = false; // fix 3: take a fresh calm head pose next time
+    g_lockWait = 0;
+}
+
+bool BodyToggle()
+{
+    g_copyBody = !g_copyBody;
+    return g_copyBody;
 }
 
 unsigned BodyFramesAndReset(unsigned* skipped)

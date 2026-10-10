@@ -41,6 +41,9 @@
 #include "mark.h"
 #include "board.h"
 #include "body.h"
+#include "pacer.h"
+#include "hudshow.h"
+#include "radio.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -105,6 +108,8 @@ void AddHooks()
     plugin::Events::drawingEvent.Add([] {
         RecordFirst(g_firstDrawTick);
         g_drawCount.fetch_add(1, std::memory_order_relaxed);
+        // Phase 5-3j: even 60 fps when GTA's own frame limiter is off.
+        mp::gta::PacerFrame(&Log);
     });
     plugin::Events::gameProcessEvent.Add([] {
         RecordFirst(g_firstProcessTick);
@@ -117,12 +122,18 @@ void AddHooks()
         mp::gta::PadLinkFrame(g_link, &Log);
         // Phase 4-0: F9 = log CJ's position as a landmark "mark".
         mp::gta::MarkFrameSafe(&Log);
+        // 8.27: radio while skating (hold Back = next station).
+        mp::gta::RadioFrame(g_link, &Log);
     });
 
     // Phase 5-1: draw the stand-in board (only while skate mode is on).
     mp::gta::BoardAddHook();
     // Phase 5-3d: CJ's body copies the skater's (only while skate mode is on).
     mp::gta::BodyAddHook();
+    // Phase 6 H4: reTHAWed's HUD over GTA's screen (only while skate mode is on).
+    mp::gta::HudShowAddHook(&Log);
+    // 8.27: station name on screen.
+    mp::gta::RadioAddHook();
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);

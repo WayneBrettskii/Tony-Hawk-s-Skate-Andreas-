@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include "input.h"
+#include "music.h"
 
 #include <cstring>
 
@@ -68,6 +69,8 @@ volatile LONG g_pressedFromGta = 0; // GetButton answers "pressed" from GTA's fr
 
 unsigned char __cdecl HookGetButton(void* controller, int button)
 {
+    // 8.27 radio: reTHAWed's game thread; pause / resume its music as GTA wants
+    MusicGameThreadTick(g_link);
     const LONG src = g_source;
     InterlockedIncrement(&g_calls[src]);
     if (src == kReal) return g_realGetButton(controller, button);

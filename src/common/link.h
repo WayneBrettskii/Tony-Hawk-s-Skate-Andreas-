@@ -1,13 +1,14 @@
 // my-passthrough: the shared memory block both plugins use to talk (phase 0c;
 // version 2 adds the skater, phase 2-1; version 3 adds the controller, phase 3-2;
 // version 4 adds the skater's facing and the board bone, phase R4-2;
-// version 5 adds the body bone positions, phase 5-3d; version 6: 20 of them).
+// version 5 adds the body bone positions, phase 5-3d; version 6: 20 of them;
+// version 7: the high-resolution time each reTHAWed frame was first seen, 5-3f).
 //
 // Windows lets two programs open the same named block of memory. Whichever
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v6": only programs in the user's own Windows
+// Name "Local\MyPassthrough_v7": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -22,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 6;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v6";
+constexpr LONG kLinkVersion = 7;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v7";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -63,6 +64,17 @@ constexpr LONG kPoseValid = 16;   // thawOrient and thawBoard were read (phase R
 constexpr LONG kBodyValid = 32;   // thawBody was read (phase 5-3d)
 constexpr int kLinkBodyBones = 20; // order: see kBodyBones in src/thaw/pose.cpp
 
+// reserved[0] bits (temporary test shortcuts; the touchpad is not in GTA's pad)
+constexpr LONG kPadRawTouch = 1;  // DualSense touchpad pressed down (clicked)
+constexpr LONG kPadRawUp = 2;     // D-pad Up, from the same read
+constexpr LONG kPadRawDown = 4;   // D-pad Down, from the same read
+constexpr LONG kPadRawLeft = 8;   // D-pad Left, from the same read
+
+// reserved[1]: what GTA wants reTHAWed's music to do (8.27 radio)
+constexpr LONG kMusicLeave = 0;   // don't touch (skate mode off)
+constexpr LONG kMusicPlay = 1;    // reTHAWed soundtrack station
+constexpr LONG kMusicPause = 2;   // a GTA station or Off
+
 struct LinkBlock {
     volatile LONG magic;    // kLinkMagic once set up (0 in a brand-new block)
     volatile LONG version;  // kLinkVersion
@@ -94,7 +106,12 @@ struct LinkBlock {
     volatile LONG gtaInButtons;     // kBtn* bits
     volatile short gtaInAxes[kAxisCount];
 
-    LONG reserved[6];               // unused (was padding to 128 bytes in version 3)
+    // reserved[0], 2026-10-09 (temporary, remove before release): the THAW
+    // plugin's own read of the DualSense (src/thaw/touchpad.cpp), kPadRaw* bits.
+    // Read with PadRawButtons().
+    // reserved[1], [2] (8.27 radio): written by GTA: wanted reTHAWed music
+    // (kMusic*) and GTA's GetTickCount() when written. reserved[3..5] unused.
+    LONG reserved[6];               // was padding to 128 bytes in version 3
 
     // ---- phase R4-2, written by the THAW plugin under thawSeq ----
     // The skater's orientation, rows right, up, at (at = facing; up tilts on
@@ -106,8 +123,12 @@ struct LinkBlock {
     // ---- phase 5-3d: body bone positions in the skater's own space (THAW
     // units), kLinkBodyBones x (x, y, z), same order as the THAW plugin's kBodyBones.
     volatile float thawBody[kLinkBodyBones * 3];
+    // ---- phase 5-3f: QueryPerformanceCounter value (same clock in every
+    // program on the PC) when the THAW plugin first saw this reTHAWed frame;
+    // low and high 32 bits. GTA blends between frames by these times.
+    volatile LONG thawFrameQpcLo, thawFrameQpcHi;
 };
-static_assert(sizeof(LinkBlock) == 452, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 460, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {
@@ -121,6 +142,7 @@ struct SkaterShared {
     float orient[9] = {};  // valid with kPoseValid
     float board[12] = {};  // valid with kPoseValid
     float body[kLinkBodyBones * 3] = {}; // valid with kBodyValid
+    long long frameQpc = 0;              // 5-3f: when this reTHAWed frame was first seen
 };
 
 // THAW side (the only writer): publish one sample.
@@ -139,6 +161,8 @@ inline void PublishSkater(LinkBlock* b, const SkaterShared& s)
     for (int i = 0; i < 9; ++i) b->thawOrient[i] = s.orient[i];
     for (int i = 0; i < 12; ++i) b->thawBoard[i] = s.board[i];
     for (int i = 0; i < kLinkBodyBones * 3; ++i) b->thawBody[i] = s.body[i];
+    b->thawFrameQpcLo = static_cast<LONG>(s.frameQpc & 0xFFFFFFFFll);
+    b->thawFrameQpcHi = static_cast<LONG>(s.frameQpc >> 32);
     InterlockedExchange(&b->thawSeq, seq + 2); // even: done
 }
 
@@ -162,6 +186,8 @@ inline bool ReadSkaterShared(const LinkBlock* b, SkaterShared& out, int& retries
         for (int i = 0; i < 9; ++i) out.orient[i] = b->thawOrient[i];
         for (int i = 0; i < 12; ++i) out.board[i] = b->thawBoard[i];
         for (int i = 0; i < kLinkBodyBones * 3; ++i) out.body[i] = b->thawBody[i];
+        out.frameQpc = (static_cast<long long>(b->thawFrameQpcHi) << 32) |
+                       static_cast<long long>(static_cast<unsigned long>(b->thawFrameQpcLo));
         MemoryBarrier();
         if (b->thawSeq == s1) { out.seq = s1; return true; }
         ++retries;
@@ -263,5 +289,8 @@ struct PeerWatch {
     LONG lastPid = -1;  // -1 = nothing logged yet
     LONG lastBeat = 0;
 };
+
+// The THAW plugin's direct DualSense read (kPadRaw* bits; 0 when none).
+inline LONG PadRawButtons(const LinkBlock* b) { return b ? b->reserved[0] : 0; }
 
 } // namespace mp

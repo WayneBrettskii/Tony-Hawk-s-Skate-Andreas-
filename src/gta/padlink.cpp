@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include "padlink.h"
+#include "radio.h"
 #include "skatemode.h"
 
 #include <atomic>
@@ -81,6 +82,7 @@ void Publish()
     if (s.DPadDown) b |= kBtnDown;
     if (s.DPadLeft) b |= kBtnLeft;
     if (s.DPadRight) b |= kBtnRight;
+    RadioFilterPad(b); // 8.27: Back hold = radio, tap = passed on to reTHAWed
     in.buttons = b;
     in.axes[kAxisLX] = Clamp16(s.LeftStickX);
     in.axes[kAxisLY] = Clamp16(s.LeftStickY);

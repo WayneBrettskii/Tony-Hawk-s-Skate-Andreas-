@@ -2,13 +2,173 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-09] Radio fix 2: GTA treats our station like an interior radio
+
+**Changed:** `src/gta/radio.cpp`: GTA's radio code (0x4EA590) asks, when CJ has no vehicle radio, whether an interior radio is playing (call at 0x4EA5C3 to 0x507280 -> AEAmbienceTrackManager 0x4D6D40) and stops the radio if not. That one call now goes to our function: "yes" while our skate-mode GTA station plays, GTA's own answer otherwise (call checked first: E8 -> 0x507280, verified on the cloud copy too). Diagnostics stay for this test (now also count the answers).
+**Why:** diagnostics test (user 21:01): every start was followed within a second by exactly one stop from 0x4EA5D2 (GTA's radio code, right after that question); no interior-code stops, no cutscene (state 8), flags 0xB7CB48/49 = 0, ambience track 0.
+**Tested how:** not tested.
+**Result:** none yet.
+
+## [2026-10-09] Radio diagnostics (log only): why GTA stations don't play on foot
+
+**Changed:** `src/gta/radio.cpp` (temporary diagnostics, STATUS.md): every other call of GTA's two radio-stop functions (8 calls of 0x4E9820, 7 of 0x506F70; each checked to be GTA's original call first) goes through a counter that notes where it came from, then calls GTA's own function as before. gta.log: GTA's radio state (manager status +0x68, flags +0x00..+0x07, retunes, station byte +0xE9, IsRadioOn, IsAmbienceTrackActive, cutscene-track state at 0x8AE55C, bytes 0xB7CB48/49) just before and right after our StartRadio, and once a second while a GTA station is chosen, with the stop calls counted since the last line.
+**Why:** user 20:57: fix the GTA stations first. Two failed attempts, so measure before changing anything (AGENTS.md).
+**Tested how:** user 21:01: Playback FM ~10 s, K-Rose ~10 s.
+**Result:** found it: each StartRadio turned the radio on (IsRadioOn 1), then one stop call from 0x4EA5D2 turned it off within a second. Everything else quiet. Fix 2 above.
+
+## [2026-10-09] Radio fix 1: GTA stations stopped on foot
+
+**Changed:** `src/gta/radio.cpp`: GTA's interior-radio code (0x4D6E60) stops the radio every frame while CJ is outside a club or house; its three StopRadio calls (0x4D71D2, 0x4D71FD, 0x4D7221, checked to be E8 -> 0x506F70 first) now go to our function, which skips the stop only while our skate-mode GTA station plays (otherwise GTA's own stop as before). The station is restarted at most once (each start loads it = a hitch).
+**Why:** test 20:45: Back hold changed stations and the reTHAWed station played, but GTA stations didn't play and GTA stuttered. gta.log: "GTA's radio had stopped ... starting it again" every 3 s; pacer 480-550 frames per 10 s.
+**Tested how:** user 20:55: rebuilt, chose GTA stations while skating.
+**Result:** failed: still no music on GTA stations; no stutter now; the reTHAWed station plays. gta.log: redirect installed, 0 interior stops skipped, radio off again 3 s later (restarted once). Second failed attempt: STATUS.md written, next step is a log-only build.
+
+## [2026-10-09] Radio while skating, step R1: station switch on Back
+
+**Changed:** new `src/gta/radio.h/.cpp`: while skate mode is on, Back (Create/Share on PlayStation, View on Xbox) is kept from reTHAWed; a tap is passed on at release (4 frames), a hold of 0.4 s steps to the next station: reTHAWed soundtrack -> GTA stations 1-11 -> Off. The name shows at the top of the screen (GTA's font) for 2.5 s. GTA station = AudioEngine.StartRadio on foot (restarted if GTA stops it); skate mode off = GTA radio stopped and reTHAWed's music paused (user 20:35: its music only in skate mode while GTA runs; GTA silent for 5 s = back to normal). Logs all GTA station names once. `src/gta/padlink.cpp`: calls the Back filter before the pad goes to reTHAWed. `src/gta/main.cpp`: radio per world update, name drawing hook. New `src/thaw/music.h/.cpp`: on reTHAWed's game thread (inside our controller hook, every 30 ms) pauses / resumes only reTHAWed's music with its own PauseMusic (0x004B4DE0, 3 code checks, verified on the cloud copy); only resumes what it paused; GTA's wish older than 5 s = leave alone. `src/thaw/input.cpp`, `src/thaw/main.cpp`: hooks it in, logs once per second. `src/common/link.h`: reserved[1] (wish), reserved[2] (GTA tick), kMusic*. `CMakeLists.txt`: both new files. Plan: DESIGN 8.27.
+**Why:** user 20:23: a GTA V-style radio with reTHAWed's playlist as its own station; must work on PlayStation and Xbox controllers (20:24); Back opens a menu in reTHAWed, so tap vs hold (20:28, OK 20:29). Wheel comes next (R2).
+**Tested how:** user 20:45: built and played.
+**Result:** partly. Back hold steps through the stations (names from GTA correct: 1 Playback FM ... 11 WCTR), the name shows, the reTHAWed station plays, reTHAWed's music pauses and resumes (thaw.log), no wheel yet (as planned). GTA stations did not play and GTA stuttered (fix 1 above).
+
+## [2026-10-09] Body flips: copy reTHAWed's display rotation
+
+**Changed:** `src/thaw/pose.h/.cpp`: new `DisplayCodeChecksPass` (16 code checks, all verified against the cloud copy of reTHAWed.exe) and `ApplyDisplayRotation`; `ReadPose` now also rebuilds reTHAWed's display-only rotation of the skater model (3 angle queues in the model component, the game's two clocks, its easing, L = Rx * Ry * Rz around the pivot at model +0x28), read only. `src/thaw/main.cpp`: before publishing, turns the body bones and the board by it; logs once per second when a flip is on (largest angles) and when the model's 'flipped' byte is set. GTA side unchanged. Plan and addresses: DESIGN 8.26.
+**Why:** user 19:49/20:00: no backflip, front flip or roll on CJ; asked for every trick's animation from reTHAWed. The 8 recordings (20:00) show the skater's facing and bones completely steady in the air: reTHAWed does body flips by turning the drawn model (script command RotateDisplay, model component), not the skeleton.
+**Tested how:** user 20:15: backflips, front flips and rolls with GTA in front; 6 GTA recordings.
+**Result:** works: "it looked pretty good on my end". thaw.log: all 16 code checks passed; flips seen as x-axis rotations up to 353-374 degrees (back/front flips) and z-axis up to 353 (rolls); 'flipped' byte never set. The GTA recordings show CJ's hips going below the board during flips (body really turns). Body copy: 0-1 half-updated samples skipped per second (as before).
+
+## [2026-10-09] Phase 6 H3 + H4: reTHAWed's HUD shown in GTA
+
+**Changed:** new `src/common/hudlink.h`: second shared memory block (`Local\MyPassthrough_Hud_v1`, header + 2 picture slots up to 1920x1200). `src/thaw/hud.cpp`: after each caught HUD, shrinks the picture on the graphics card (3840x2160 -> 1920x1080), starts copying it to memory, and writes last frame's copy into the slot GTA isn't reading; logs time per frame every 10 s. New `src/gta/hudshow.h/.cpp`: right after GTA draws its own HUD (`drawHudEvent`), while skate mode is on and the picture is fresh (< 250 ms), copies a new picture into a RenderWare texture and draws it over the whole screen (pre-multiplied blend); logs every 10 s. `src/gta/main.cpp`: adds the hook. `CMakeLists.txt`: hudshow.cpp. Plan: DESIGN 8.25.
+**Why:** user chose copying reTHAWed's own HUD (14:52); H2 works (19:33); user OK 19:35.
+**Tested how:** user 19:49: built, skated in GTA with skate mode on, 5 HUD pictures taken.
+**Result:** works: "the hud looks pretty great overall". thaw.log: ~600 pictures shared per 10 s, 1.0-1.3 ms per frame (max 3.4 ms), 0 failures. gta.log: shown in ~550-600 frames per 10 s, 1.1-1.2 ms per new picture, 0 half-written, 0 errors.
+**Still broken:** user: "the numbers on the score and combo meter look slightly off" (the caught picture's numbers look clean at 1920x1080; cause not known yet: maybe softness from 1920x1080 stretched to GTA's screen). Body flips (backflip, front flip, rolls) still don't show on CJ; no GTA recording of one yet. gta.log: body copied ~60 frames/s, 0 samples skipped, so the flip is either not in the data or undone on the GTA side.
+
+## [2026-10-09] H2 fix 1: HUD picture came out empty; force alpha writes
+
+**Changed:** `src/thaw/hud.cpp`: while the HUD draws into our picture, also sets the colour write mask to all 4 channels (game's value put back afterwards). The test picture keeps the colour where alpha is 0, and the log line now says how many pixels had alpha / colour and the game's write mask.
+**Why:** test 19:18 (GTA in front): HUD caught in every frame (44-57 draws, start/end marks in the right place in thaw_frame_1), 6 pictures saved, but all fully see-through (alpha 0 everywhere). The save also blanked colour where alpha was 0, so whether colour arrived is unknown. Most likely cause: the game draws its HUD with alpha writes off (it never needed alpha on its own screen).
+**Tested how:** user 19:33: GTA in front, 7 pictures with touchpad + D-pad Up.
+**Result:** works. Log: the game's write mask is 0x7 (colour only, no alpha), which was the cause. All 7 pictures have the HUD with proper see-through: score + special bar, trick name and combo line, multiplier x base points, manual balance meter, "Hidden Combo!", stance (FAKIE). Picture kept outside the repo (game content).
+
+## [2026-10-09] Phase 6 H2: catch reTHAWed's HUD in a see-through picture
+
+**Changed:** new `src/thaw/hud.h/.cpp`: when reTHAWed starts drawing its HUD (first `DrawIndexedPrimitiveUP` of a frame, see DESIGN 8.23), its drawing goes into our own full-size see-through picture instead of its screen, until its next render target change / EndScene / Present; then everything is put back (target, depth buffer, viewport, 4 alpha states). Only in a level with reTHAWed behind GTA. Touchpad + D-pad Left switches it off/on. The frame logged with touchpad + D-pad Up / F11 also saves the HUD picture as `logs/thaw_hud_N.tga` (half size). Device reset: our picture is released first. `src/thaw/drawlog.*`: calls it from the wrapped functions (+ Reset wrapped), marks "HUD picture start/end" in the frame log. `src/thaw/main.cpp`: passes in-level / not-in-front / toggle. `src/thaw/touchpad.cpp`, `src/common/link.h`: D-pad Left bit. `CMakeLists.txt`: hud.cpp. Plan: DESIGN 8.23.
+**Why:** user chose copying reTHAWed's own HUD (14:52); H1 found where it is drawn; user OK 18:03.
+**Tested how:** user 19:12: built, skated with GTA in front, special mode, 8 frame logs with touchpad + D-pad Up.
+**Result:** catching works: with reTHAWed behind GTA the HUD was caught in every frame (about 590 of 590 per 10 s, 44-55 draws each), 0 failures, no crash. GTA's pacer numbers look the same with catching on and off. **No HUD picture saved yet:** reTHAWed was the front window (thaw.log 118-205 s and from 278 s) every time the button was pressed, and catching is off then by design. Special mode: the frame logs show the same targets and passes as normal frames (only more 3D), so its screen effect is not an extra pass; probably the same glow passes with other shader values, which the log doesn't record yet (DESIGN 8.24).
+**Still to do:** take the HUD picture with GTA in front. Nothing goes to GTA yet (H3, H4).
+
+## [2026-10-09] Shortcuts use the PS5 touchpad instead of Select
+
+**Changed:** new `src/thaw/touchpad.h/.cpp`: the reTHAWed plugin reads the PS5 controller (DualSense, USB or Bluetooth) directly, read only, on its own thread, for the touchpad click and the D-pad. It puts them in the link (`reserved[0]`, `kPadRaw*` bits in `src/common/link.h`). Touchpad + D-pad Up = F11 draw log (`src/thaw/main.cpp`); touchpad + D-pad Down = F9 recording (`src/gta/skatemode.cpp`). Select is no longer used. `CMakeLists.txt`: builds touchpad.cpp, links hid + setupapi. Temporary: remove before release.
+**Why:** user 17:51: Select + D-pad was awkward; touchpad + D-pad is easier. The touchpad isn't in GTA's pad (DualSenseX shows GTA an Xbox pad), so it has to be read from the controller itself.
+**Tested how:** user 18:01, PS5 controller over Bluetooth with DualSenseX running. (Earlier Select test: reTHAWed's draw log worked, GTA's recording never started; cause not found, the new route doesn't use GTA's pad.)
+**Result:** works. thaw.log: "reading the PS5 controller", first report id 0x31 (Bluetooth), 78 bytes; 8 presses logged. GTA: 5 recordings (gta_frames_1-5.csv); reTHAWed: 4 frame logs (thaw_frame_1-4.txt). Fixed afterwards: drawlog.cpp still printed "Select + D-pad Up" (text only; not rebuilt yet).
+**H1 finding (same test):** in all 4 frames the end looks the same: small 960x540 / 240x135 glow passes, then the full-size 3840x2160 picture gets one full-screen quad (glow added), then about 120 small 2D draws (DrawIndexedPrimitiveUP, screen-space FVF 0x144, mostly 2-triangle quads: text and icons; some larger shapes: meters) = the HUD; then one copy to another full-size target and EndScene. So the HUD is the stretch between the glow quad and that last target change.
+
+## [2026-10-09] Temporary controller shortcuts for the two recorders
+
+**Changed:** `src/gta/recorder.*`, `src/gta/skatemode.cpp`: Select + D-pad Down (controller) = F9 frame recording. `src/thaw/drawlog.*`, `src/thaw/main.cpp`: Select + D-pad Up = F11 draw log. Both read the controller from the link (GTA's pad as published for reTHAWed). Temporary: remove before release.
+**Why:** user 17:32 plays on a TV with a small keyboard; hard to hit F9 / F11 at the right moment.
+**Tested how:** not tested. Note: the buttons still reach reTHAWed too (Select may do something there).
+**Result:** none yet.
+
+## [2026-10-09] Phase 6 H1: log how reTHAWed draws one frame (F11)
+
+**Changed:** new `src/thaw/drawlog.h/.cpp`: after a code check, wraps 17 functions of reTHAWed's Direct3D 9 device (found at 0x00852044); F11 logs every call of the next frame to `logs/thaw_frame_N.txt`. `src/thaw/main.cpp` calls it each pass. `CMakeLists.txt`: builds drawlog.cpp. Plan: DESIGN 8.22 (user chose copying reTHAWed's HUD picture).
+**Why:** to find where reTHAWed's HUD drawing starts, before copying it.
+**Tested how:** not tested (not compiled here).
+**Result:** none yet.
+**Next:** user: build, skate, F11 a few times (riding normally; during a manual; during a grind), plus F9 in GTA during a body flip.
+
+## [2026-10-09] Phase 5-3k: even frame clock for showing reTHAWed
+
+**Changed:** `src/gta/skatemode.cpp`: new `FrameClock`: the moment at which reTHAWed is shown (blended, 40 ms back) and the orientation smoothing's time now advance by the average frame time each frame (measured, about 16.7 ms), only nudged 5 % towards the real time each frame (restarts after a hitch over 3 frames). Reset when skate mode goes off.
+**Why:** recording 14:35: GTA's updates still alternate 13.5 / 19.5 ms apart even with the pacer; sampling reTHAWed at those moments gives uneven steps on screen.
+**Tested how:** in the cloud with updates alternating 13.5 / 19.8 ms: the clock moves 16.55 to 16.78 ms per frame; after a 0.5 s hitch it restarts at the real time. Not in the game.
+**Result (user 14:43):** skating smooth now.
+**Next:** phase 6 plan (DESIGN 8.22): HUD and body flips.
+
+## [2026-10-09] Research: reTHAWed's frame rate and pool limits (no code)
+
+**Changed:** `docs/DESIGN.md` 8.21 only.
+**Why:** user away (vet), asked for research on the animation / fps issue and the map.
+**Found (read only, rthw.dll):** reTHAWed's game step is fixed at 1/60 s (the `UnlockFPSValue` debug option turns it into 1/120); the animation fps option only thins the skeleton updates. reTHAWed reads pool sizes from `rethawed.ini` `[Memory]` by pool name before its own table: `HashItem` (30000 by default; T4's limit) and `Out set RailPoint` (20000; very likely the rail hang) can be raised there by the user.
+**Tested how:** not tested (reading only).
+**Next:** user: pacer test (8.20); later T4 with `[Memory] HashItem=100000`.
+
+## [2026-10-09] Phase 5-3j: even 60 fps pacer for GTA
+
+**Changed:** new `src/gta/pacer.h/.cpp`: once per drawn frame (main.cpp's drawing hook) waits until exactly 1/60 s after the previous frame (QueryPerformanceCounter; Sleep(1) with timeBeginPeriod(1), last 1.5 ms spinning). Only while GTA's own Frame Limiter (Display Setup) is OFF (read from the menu settings byte plugin-sdk calls `m_bPrefsVsync`, which is the frame limiter in GTA SA 1.0); with it on the pacer stands aside. Logs when it starts / stands aside and every 10 s how many frames came late. `CMakeLists.txt`: builds pacer.cpp.
+**Why:** user 11:39: both games at 30 = smooth; wants 60. The recordings showed GTA's frames 14 / 19.5 ms apart in turn at 60 (its limiter, here FramerateVigilante's 60): an uneven picture even when our positions are right.
+**Tested how:** user 14:35 (GTA Frame Limiter off; reTHAWed animations default), one recording (ramp jump).
+**Result:** "almost there": still a little stutter at the peak of jumps. Log: pacer on, 600 frames per 10 s, late frames 0 to 284 per 10 s. Recording: GTA's game updates STILL come 13.5 / 19.5 ms apart in turn; CJ's step per update follows that exactly (positions are right for the moment of each update), so the picture judders when frames reach the screen evenly. Most visible when he moves slowly (peak of a jump).
+**Next:** 5-3k (entry above).
+
+## [2026-10-09] Phase 5-3i: aim at CJ's real neck; neck matches the skater's neck-to-head
+
+**Changed:** `src/gta/body.cpp`: GTA bone ids corrected: neck = 4, head = 5 (from CJ's skeleton log; plugin-sdk's names are one off). The hips and chest are now aimed at CJ's neck (they were aimed at his head while matching the skater's neck), and the neck is aimed so neck-to-head matches the skater's neck-to-head.
+**Why:** user 11:14: CJ leans back slightly and looks up. Pairing CJ's head with the skater's neck tips the upper body back.
+**Tested how:** body maths in the cloud on a made-up skeleton with the real neck/head layout (neck-to-head within 0.01 degrees, hips-to-neck 1.5 degrees). Not in the game.
+**Also suggested to the user:** try reTHAWed's own frame-rate setting at 60 instead of unlimited (reTHAWed's option, nothing of ours); the logs show reTHAWed already makes 60 new frames a second while skating, so the gain may be small; GTA's own frames alternate 14 / 19.5 ms apart.
+**Result (user 11:39):** CJ looks "a lot more natural on the board". reTHAWed only offers a frame-rate setting for its animations (no 60 choice); with GTA at 30 and reTHAWed's animations at 30 the stutter is gone. User wants 60 without stutter.
+**Next:** user test.
+
+## [2026-10-09] Phase 5-3h: smooth the skater's orientation; whole calm pose under the copy
+
+**Changed:** `src/gta/skatemode.cpp`: the skater's orientation (after blending) is smoothed with a 40 ms time constant (`SmoothOrient`; a 45 degree step spreads over about 5 frames; reset when skate mode goes off). `src/gta/body.cpp`: the calm pose now covers every bone except the root: each frame every bone starts from the pose of the 20th frame of skate mode, then gets turned to match the skater; GTA's animation underneath no longer moves anything (it used to roll the arms).
+**Why:** recordings 11:00 (entry below).
+**Tested how:** smoothing and body maths in the cloud; user 11:14.
+**Result:** smoother; shoulder shimmy gone. Still slight stutter on ramps. CJ looks stiff: "looking up and leaning back slightly".
+**Note:** F10 OFF shows GTA's own (roller-skating) animation on purpose; it's only for comparing.
+**Next:** 5-3i (entry above).
+
+## [2026-10-09] Phase 5-3g: calm collar bones; log reTHAWed's frame rate
+
+**Changed:** `src/gta/body.cpp`: collar bones (21, 31) join the calm pose (neck, head, face). `src/thaw/main.cpp`: the per-second link line adds "new reTHAWed frames in the last second".
+**Why:** user's F10 test (10:51): shimmy only with the copy on. Nothing copies the collar bones from the skater, so GTA's skating animation kept rolling the shoulders under the copied arms. The frame count: blending often fell back to "newest frame as is", which happens when reTHAWed's frames come more than 40 ms apart; need to know how fast reTHAWed really runs behind GTA.
+**Tested how:** user 11:00, three recordings (bowl run, standing still with F10).
+**Result:** shimmy still there; stutter a bit better, still there. reTHAWed runs at 60 (60 new frames a second while skating). Bowl recording: blending in every frame, position smooth, BUT the skater's orientation (up direction) changes in steps every few frames (0.58 -> 0.64 -> 0.85 ...): on curved ramps it jumps from one flat face to the next; every step jerked CJ's tilt, board and copied body (arm direction up to 90 degrees in one frame). Standing still: the copied targets move smoothly (slow idle sway only), so the shimmy there comes from GTA's side: its skating animation still rolled the arms around their own length (only their direction is copied). GTA's frames alternate 14 / 19.5 ms apart (its own frame limiter).
+**Next:** 5-3h (entry above).
+
+## [2026-10-09] Phase 5-3f: blend between reTHAWed frames; neck too; stop GTA's look-at and talking; F10 compare
+
+**Changed:**
+- `src/thaw/main.cpp`: the loop wakes about every 1 ms (timeBeginPeriod(1)) and only checks the skater's position; a change = a new reTHAWed frame: its exact time is noted (QueryPerformanceCounter), the full read follows 4 ms later (lets reTHAWed finish the frame); without a change a full read still runs every 10 ms. `src/thaw/skater.h/.cpp`: `ReadPosQuick`.
+- `src/common/link.h`: version 7 (`_v7`, 460 bytes): the frame's time.
+- `src/gta/skatemode.cpp`: keeps the last 8 reTHAWed frames and shows the skater 40 ms ago, blended between the two frames around that moment (position, speed, facing squared up again, board, body); every frame stops GTA's look-at (secondary IK task) and talking face (secondary facial task) on CJ; F10 switches the body copy on / off; per-second log: frames blended, tasks stopped.
+- `src/gta/body.cpp`: calm pose now neck + head + jaw + brows (bones 4, 5, 6, 7, 8), taken after 20 drawn frames (once the look-at / talking have stopped); `BodyToggle`. `src/gta/recorder.*`: column `blend_pct` instead of `ahead_ms`.
+**Why:** user 10:40 + recordings (entry below).
+**Tested how:** blending tested in the cloud; user 10:51 (after one more build fix: `HistClear` used before declared; and the first copy to the PC again landed stale).
+**Result:** F10 works: copy on = skating pose, copy off = roller skating; so the copy does reach the screen. With the copy on the shoulders still shimmy. Stutter not checked yet. Log: blending used in 22 to 28 of 60 frames in most seconds, all 60 in some; GTA's look-at / talking tasks: none found to stop.
+**Next:** 5-3g (entry above).
+
+## [2026-10-09] Phase 5-3d fix 3: no look-ahead (the stutter); calm head and face
+
+**Changed:** `src/gta/skatemode.cpp`: look-ahead off (`kMaxExtrapolateMs` 50 -> 0). `src/gta/body.cpp`: the neck is no longer aimed at the skater's head; neck, head and the two face bones keep the pose of the first frame of skate mode (relative to the chest) every frame, so GTA's head turning and talking mouth don't show.
+**Why:** frame recorder (entry below): the look-ahead made CJ (and with him the hips, body and board) jump back and forth up to 0.6 m per frame. The shoulder "shimmy" is most likely the same shaking (the skater's own shoulders don't shimmy, per the user). User 10:31: CJ looks up and moves his mouth: the neck aim tipped his face up; GTA's own look-at and talking ran underneath.
+**Tested how:** body maths retested in the cloud; user 10:40 with two new recordings.
+**Result:** improved, but still noticeable stutter; CJ still looks up, moves his mouth, shimmies; roller-skating look when standing still. Recordings: look-ahead off as planned; a third of GTA's frames now got NO new reTHAWed frame (56 and 63 of 179) and the next got two: the remaining stutter. CJ's skeleton log shows bone 4 is the neck (collar bones and head hang from it), 5 the head, 6/7/8 hang from the head: fix 3 locked the head but not the neck, so GTA's look-at still turned the neck.
+**Still open:** a few single-frame jumps remain in the skater's own data (a reTHAWed frame seen twice, then one missed); smoothing those would need the blend buffer (STATUS idea A). The calm head is taken from the first frame; if CJ was mid-glance then, the head keeps that glance until skate mode is switched off and on.
+**Next:** user test.
+
+## [2026-10-09] Phase 5-3e: frame recorder (F9 records 3 seconds)
+
+**Changed:** new `src/gta/recorder.h/.cpp`; `src/gta/skatemode.cpp`, `board.cpp`, `body.cpp` fill in one row per frame while recording; `CMakeLists.txt` builds recorder.cpp. Plan: DESIGN 8.18.
+**Why:** STATUS.md: measure the shimmy / stutter before a third fix.
+**Tested how:** user 10:31: two recordings (pushing; ramp jump).
+**Result:** works, and found the stutter: CJ moved 0.07 m, then 0.68 m, then 0.07 m ... per frame while the skater moved an even 0.39 m. The step size followed the sample age, which only ever reads 0 or 16 ms (GetTickCount64 steps). GTA got one new reTHAWed frame per frame almost every time; the drawing happens 2 ms after the update in the same frame. Chest direction from the skater changes smoothly. User also checked: reTHAWed's skater does NOT shimmy its shoulders.
+**Next:** fix 3 (entry above).
+
 ## [2026-10-09] Phase 5-3d fix 2 (second attempt at shimmy / stutter)
 
 **Changed:** `src/thaw/main.cpp`: a sample keeps the time we FIRST saw that reTHAWed frame (same position and speed as last time = same frame; refreshed after 200 ms so standing still isn't "old"); log counts the repeats per second. `src/thaw/pose.h/.cpp`: 20 body points: adds the chest and a point 10 units along the chest's right axis. `src/common/link.h`: version 6 (`_v6`, 452 bytes). `src/gta/body.cpp`: CJ's chest twist follows the skater's chest axis instead of its shoulder joints.
 **Why (two causes found by reasoning, not yet measured):** (1) stutter: reTHAWed runs about 60 frames a second, we read about 65 times, so the same frame is read twice; the second read was stamped "new" and GTA's "move ahead by speed x age" then put CJ up to one frame's travel behind (at 8 m/s about 13 cm) and back: a jitter along the travel direction, worst when fast (take-offs). The board had the same stutter earlier. (2) shimmy: the chest twist copied the line between the skater's shoulder joints, which move with every arm swing in the push animation; reTHAWed's chest itself doesn't twist that much.
 **Tested how:** bone maths in the cloud. Not in the game. Second real attempt at this problem: if it still happens, STATUS.md next (AGENTS.md).
-**Result:** none yet.
-**Next:** user test (both plugins: link version 6).
+**Result (user 02:50): did NOT help either.** Log: about 34 repeat reads a second while skating; GTA sees samples 0, 16 or 31 ms old. Two real attempts failed: stopped, wrote STATUS.md.
+**Next:** see STATUS.md (measure first).
 
 ## [2026-10-09] Phase 5-3d fix 1: steady shoulders, smoother take-offs
 

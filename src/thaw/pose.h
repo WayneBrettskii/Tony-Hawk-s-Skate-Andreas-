@@ -29,6 +29,17 @@ struct BoneMatrix {
 constexpr int kBodyBoneCount = 20; // the last two: chest, and a point 10 units along the chest's right axis
 extern const char* const kBodyBones[kBodyBoneCount];
 
+// Body flips (docs/DESIGN.md 8.26): reTHAWed's display-only rotation of the
+// whole model (body and board), rebuilt read-only from the model component.
+struct DisplayRot {
+    bool read = false;     // the model component was found and read
+    bool active = false;   // a rotation is on (L is not the identity)
+    float angle[3] = {};   // degrees around x, y, z (skater's own axes)
+    float L[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // rows; L = Rx * Ry * Rz (row vectors)
+    float pivot[3] = {};   // the point it turns around (skater's own space)
+    int flipped = 0;       // model +0x1F4 (not applied yet; logged)
+};
+
 struct PoseSample {
     bool readOk = false;      // false = an exception happened while reading
     DWORD exceptionCode = 0;
@@ -39,7 +50,17 @@ struct PoseSample {
     BoneMatrix board, pelvis; // Bone_Board_Root, Bone_Pelvis (valid if index >= 0)
     bool haveBody = false;    // all kBodyBones found
     float body[kBodyBoneCount * 3] = {}; // their positions, skater's own space (THAW units)
+    DisplayRot disp;          // body flips (only if DisplayCodeChecksPass said yes)
 };
+
+// Code checks for the display-rotation addresses (8.26); after this passes,
+// ReadPose also fills PoseSample::disp.
+bool DisplayCodeChecksPass(void (*log)(const char*, ...));
+
+// Turn skater-space points (count x xyz) and the board's 4 rows (right, up,
+// at, position; 12 floats, may be null) by the display rotation, as reTHAWed
+// does when it draws the skater: q -> (q - pivot) * L + pivot.
+void ApplyDisplayRotation(const DisplayRot& d, float* points, int count, float* boardRows);
 
 // Code checks for the addresses above; all must pass before ReadPose is used.
 bool PoseCodeChecksPass(void (*log)(const char*, ...));

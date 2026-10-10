@@ -1,4 +1,113 @@
-# STATUS: phase 4-2d step 1 (our own reTHAWed map from GTA collision)
+# STATUS: radio while skating (8.27): GTA's stations don't play on foot
+
+**Update 2026-10-09 21:05: cause found by the diagnostics.** The stop comes
+from 0x4EA5D2 in GTA's radio code (0x4EA590): with no vehicle radio it asks
+whether an interior radio is playing (0x4EA5C3 -> 0x507280) and stops the radio
+if not. Fix 2 answers "yes" while our station plays (MODLOG). Waiting for the
+in-game result.
+
+**Written 2026-10-09 20:58 after two real attempts failed (AGENTS.md rule).**
+Stopped guessing. Everything else of the radio works: Back hold steps through
+the stations, the names are right, the reTHAWed station plays, reTHAWed's music
+pauses / resumes, a tap of Back still reaches reTHAWed.
+
+## What the user sees
+- Choosing a GTA station (Playback FM etc.) while skating: no music.
+- Attempt 1 (20:45): also a stutter (our code restarted the station every 3 s;
+  each start loads it). Attempt 2 (20:55): no stutter, still no music.
+
+## What was tried (MODLOG has the details)
+1. **R1:** `AudioEngine.StartRadio(id, 0)` (0x507DC0) on foot; restart every
+   3 s if `IsRadioOn()` was false. gta.log: "GTA's radio had stopped" every 3 s.
+2. **Fix 1:** found (gta_sa.exe) that GTA's interior-radio code (0x4D6E60)
+   stops the radio outside clubs/houses; redirected its three StopRadio calls
+   (0x4D71D2, 0x4D71FD, 0x4D7221) to skip while our station plays; one restart
+   at most. gta.log 20:53: redirect installed, **0 stops skipped**, radio still
+   off 3 s later. So it isn't that code.
+
+## What we know now (read from gta_sa.exe, not tested)
+- `CAudioEngine::StartRadio` (0x507DC0) does nothing if 0x4DBEC0 on 0x8AE554
+  says yes (probably "a cutscene / mission audio track is active").
+- `CAERadioTrackManager::StartRadio` (0x4EB3C0) can also return without
+  starting: when flags at 0xB7CB48 / 0xB7CB49 are set and the manager's state
+  (+0x68) is 7, or when `IsAmbienceTrackActive` (0x507210) says yes (it then
+  plays a frontend sound 0x23 instead). Other stop calls: 0x4E9820 from
+  0x4EA5D2, 0x4EB7DF, 0x4EB835, 0x4EBE2F and from the audio engine 0x507AB4,
+  0x507CCA, 0x507E5B, 0x507F6B.
+
+## Next step (measuring, not guessing) - user OK 20:57, built as "Radio diagnostics" (MODLOG)
+A log-only build: right after our StartRadio and then every second while a GTA
+station is chosen, log: the radio manager's state (+0x68), its flags (+0x00..
++0x07), `IsRadioOn`, `IsAmbienceTrackActive`, the 0x4DBEC0 answer and the bytes
+at 0xB7CB48/49; and count calls of the stop functions above (which one stops
+it). Then fix only what the numbers show.
+Alternative if this stays stuck: GTA's radio only in a vehicle is how the game
+is built; mods that play radio on foot exist, so it is possible, but it may
+take a few rounds.
+
+---
+
+# STATUS: phase 5-3d, CJ's copied body: shoulder "shimmy" and stutter at take-off
+
+**Update 2026-10-09 10:45: cause found by the frame recorder.** The look-ahead
+(speed x sample age) made CJ jump back and forth: the age is only known in
+16 ms steps. Fix 3 turns the look-ahead off (MODLOG). Waiting for the in-game
+result.
+
+**Written 2026-10-09 02:55 after two real attempts failed (AGENTS.md rule).**
+Stopped guessing; next step is measuring. Nothing is broken otherwise: the body
+copy, board, tricks, tilt and facing all work.
+
+## What the user sees
+- Copying reTHAWed's skater body onto CJ works "pretty good" (02:39).
+- CJ's shoulders do a "shimmy" motion while skating.
+- His body stutters when jumping off a ramp.
+- Both still there after fix 1 (02:44) and fix 2 (02:50).
+
+## What was tried (MODLOG has the details)
+1. **Fix 1:** GTA's animation under the copy held on one standing pose (it
+   switched 172 times a session before); chest twist from the collar bones;
+   samples with changed bone lengths (half-updated reads) skipped.
+   Log afterwards: 1 animation switch, 0 samples skipped. No change for the user.
+   So: not the base animation, not torn reads.
+2. **Fix 2:** each sample keeps the time its reTHAWed frame was first seen
+   (repeat reads had made GTA's look-ahead jitter CJ); chest twist from the
+   skater's chest axis instead of its shoulder joints (link v6).
+   Log afterwards: about 34 repeat reads a second while skating (so reTHAWed
+   runs about 60 frames a second, we read about 95 times); GTA sees samples
+   0, 16 or 31 ms old. No change for the user.
+
+## What we know
+- GTA draws 60 frames a second; reTHAWed about 60; the two clocks are not in
+  step. Sample age 31 ms means GTA sometimes gets no new reTHAWed frame for two
+  of its frames and then a jump of two.
+- Only CJ's position is moved ahead by speed x age. The body pose, the board
+  and the tilt are NOT: they show the latest reTHAWed frame as is, so they
+  move in uneven steps (0, 1 or 2 reTHAWed frames per GTA frame), and they can
+  be up to one frame out of step with CJ's position.
+
+## Ideas not yet checked
+- A. Uneven steps (above). Usual cure: show everything about 2 reTHAWed frames
+  late and blend between the two samples around that moment (a small buffer
+  of samples with their times). Smooth, at the cost of about 33 ms delay.
+- B. The "shimmy" may be real: reTHAWed's own pushing animation may move the
+  shoulders like that; the copy would then just show it. Needs a look at the
+  reTHAWed window side by side.
+- C. Position, facing, board and body are read from reTHAWed at slightly
+  different moments of its frame and could belong to different frames.
+
+## Next step (user OK'd 2026-10-09 10:22; recorder built, DESIGN 8.18)
+1. Measuring run: F9 in GTA starts a 3-second record of every GTA frame (which
+   reTHAWed sample, its age, CJ's position, hips, chest axis, board) into
+   `logs/gta_frames.csv`; Claude reads it and shows where the jumps are.
+2. User looks at the reTHAWed window while pushing: do its shoulders move like
+   CJ's? (idea B)
+3. Then, depending on the numbers: the blend buffer (idea A).
+
+---
+
+# Earlier STATUS (phase 4-2d step 1, resolved 2026-10-08)
+
 
 **RESOLVED 2026-10-08 12:52:** attempt 6 works: the map loads and skates (the
 user skated the skatepark bowl). Kept below as the record of how we got

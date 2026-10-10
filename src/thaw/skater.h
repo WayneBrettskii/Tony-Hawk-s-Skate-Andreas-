@@ -60,6 +60,10 @@ bool RunCodeCheck(const CodeCheck& check, unsigned int& firstMismatch, unsigned 
 // caught and reported in the sample instead of crashing the game.
 SkaterSample ReadSkater();
 
+// Phase 5-3f: just the position of an already known skater (fast check for a
+// new reTHAWed frame). False if it couldn't be read.
+bool ReadPosQuick(unsigned long skater, float out[3]);
+
 struct GameState {
     bool readOk = false;          // false = an exception happened while reading
     DWORD exceptionCode = 0;

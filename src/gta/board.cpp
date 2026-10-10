@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include "board.h"
+#include "recorder.h"
 
 #include <cmath>
 #include <vector>
@@ -302,6 +303,7 @@ void BoardUpdatePose(const float origin[3], const float right[3], const float fo
         g_drawErrors = 0;
     }
     g.origin = V(origin[0], origin[1], origin[2]);
+    RecSet3(REC_BOARD_X, origin[0], origin[1], origin[2]);
     g.right = V(right[0], right[1], right[2]);
     g.forward = V(forward[0], forward[1], forward[2]);
     g.up = V(up[0], up[1], up[2]);
