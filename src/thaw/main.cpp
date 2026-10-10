@@ -51,6 +51,7 @@
 #include "input.h"
 #include "pose.h"
 #include "bikeparts.h"
+#include "bikefind.h"
 #include "drawlog.h"
 #include "touchpad.h"
 #include "music.h"
@@ -699,10 +700,16 @@ DWORD WINAPI MainThread(LPVOID)
             mp::thaw::DrawLogTick(&Log, combo, inLevel && !ReTHAWedInFrontNow(), hudToggle);
         }
         mp::thaw::PoseSample pose;
+        float bikeParts[mp::kLinkBikeFloats] = {};
+        bool bikePartsOk = false;
         if (canReadPose && sample.readOk && sample.skater) {
             SamplePose(sample.skater, tag, logLine, pose);
-            // 8.29 B6 research (log only): which bike bones turn in tricks
-            mp::thaw::BikePartsTick(sample.skater, g_link && g_link->thawBikeState == mp::kBikeStateOn, &Log);
+            // 8.29 B6 / B7: the bike's fork and cranks, the rider's hands and feet on them
+            bikePartsOk = mp::thaw::BikePartsTick(sample.skater, g_link && g_link->thawBikeState == mp::kBikeStateOn,
+                                                  &Log, bikeParts);
+            // 8.29 B8 research (log only): find the bike's own skeleton
+            mp::thaw::BikeFindTick(g_link && g_link->thawBikeState == mp::kBikeStateOn,
+                                   pose.readOk ? pose.skeleton : 0, &Log);
         }
         quickSkater = sample.readOk ? sample.skater : 0;
 
@@ -740,6 +747,11 @@ DWORD WINAPI MainThread(LPVOID)
                     }
                 }
                 if (pose.disp.flipped) ++g_flippedFlag;
+                // 8.29 B7: bike parts (in the bike's own space, so body flips don't matter)
+                if (bikePartsOk) {
+                    shared.flags |= mp::kBikeValid;
+                    for (int i = 0; i < mp::kLinkBikeFloats; ++i) shared.bike[i] = bikeParts[i];
+                }
             }
             if (canReadState && state.readOk) {
                 shared.flags |= mp::kStateValid;
@@ -791,6 +803,7 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::TagsSecond(&Log);
         mp::thaw::BmxSecond(&Log);
         mp::thaw::BikePartsSecond(&Log);
+        mp::thaw::BikeFindSecond(&Log);
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
                         published, g_repeatSamples, g_newFrames);

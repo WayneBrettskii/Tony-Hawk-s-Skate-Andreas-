@@ -1,13 +1,38 @@
-# WHERE WE LEFT OFF (2026-10-10 12:55)
+# WHERE WE LEFT OFF (2026-10-10 13:50)
 
-BMX B4b fix 3 works (user 12:41): the bike stays with CJ and flips with him.
-Now (DESIGN 8.29):
-1. **B5 smooth BMX riding** + **B6 research log** (which reTHAWed bike bones turn in bar spins,
-   crank flips, tabletops, tailwhips): built, to test.
-2. **B7:** turn the GTA bike's parts (fork / bars, cranks / pedals) from what B6 shows.
-3. **Then the map:** T4 rerun with `[Memory] HashItem=100000` (user's rethawed.ini), then the rail
-   budget via `Out set RailPoint` (DESIGN 8.21).
-Working and tested: freak-out (option on), Grove tags (ground), BMX B1-B4b, no replay, gun release guard.
+BMX (DESIGN 8.29). Working: B1-B5 (riding, smoothing, bike flips with CJ), hands on the grips (B7, roughly).
+Now: **B8 research build** (log only): find reTHAWed's bike skeleton. To test.
+Then: bar spins / tailwhips / crank flips from it; feet on the pedals (B7 fix 1 to check); slight stutter
+in flips; then the map (T4 with `[Memory] HashItem=100000`, rail budget via `Out set RailPoint`).
+
+---
+
+# STATUS: BMX tricks (bar spins, tailwhips) don't show on the GTA bike
+
+**Written 2026-10-10 13:50 after two attempts didn't work (AGENTS.md rule).** No third guess.
+
+## What was tried
+1. B7 (13:05): the GTA fork / bars copy reTHAWed's Board_Nose bone, cranks Board_Tail (picked from the
+   B6 log, where Board_Nose turned up to 71 degrees in turns and once 180).
+2. B7 fix 1 (13:30, mostly feet): same source for the bars.
+
+## What the test showed (user 13:28, video + logs)
+- Bars don't spin, the frame doesn't whip round in tailwhips.
+- reTHAWed's Board_Nose never turned more than 20 degrees in that whole ride, with several bar spins:
+  the bar spin is not in the rider's bones. Our code did turn the GTA bars as asked (log: "bars as
+  drawn" matched the small numbers), so the GTA side works; the data source is wrong.
+- Feet still counted off the pedals most of the time; feet went round ~2x as far as the crank bone.
+
+## What we know now
+- reTHAWed's bike is a separate skinned model: `data\models\Veh\veh_BMX\veh_bmx.skin` (read only,
+  looked at its file list; nothing copied into the repo). So it has its own skeleton and animations;
+  the bike trick scripts (bike_scripts, decompiled in the scratch folder) play their animations
+  through a different command (0x35197927) than the rider's tricks.
+
+## Next (B8, research, log only)
+Find every skeleton in reTHAWed's memory once the rider is on the bike (same layout as the rider's),
+log them, follow the small ones that aren't the rider's and log which bones turn in tricks.
+Then copy those bones to the GTA bike's parts (B7's GTA side already works).
 
 ---
 

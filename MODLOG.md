@@ -2,12 +2,19 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] BMX B8 (research): find reTHAWed's bike skeleton
+
+**Changed:** new `src/thaw/bikefind.h/.cpp` (log only): once per mount, 6 s after getting on, scans reTHAWed's memory for skeletons, logs them, follows the small ones that aren't the rider's and logs which bones turn each second. `src/thaw/main.cpp` calls it; `CMakeLists.txt` adds it. STATUS.md written (two attempts at the tricks).
+**Why:** test 13:28: bars don't spin, tailwhips don't show; reTHAWed's rider bones don't carry those tricks; the bike is its own model (veh_bmx).
+**Tested how:** cloud syntax check only. Not tested in the games.
+**Result:** none yet.
+
 ## [2026-10-10] BMX B7 fix 1: feet on the pedals; checks that the parts reach the screen
 
 **Changed:** `src/thaw/bikeparts.cpp`: foot "on the pedal" = keeps its distance from the crank axle and its place along it (as in the riding pose); the crank's angle from the rider's feet while on, from the crank bone while off; per-second log of feet vs crank bone turning. `near` / `far` renamed (Windows macros; build error 13:11). `src/gta/bmxmode.cpp`: per-second log of the bars' turn as GTA will draw it.
 **Why:** test 13:15 (video + logs): feet counted off the pedals nearly all the time; legs looked unnatural; tricks not visible.
-**Tested how:** cloud: compile check with Windows' near/far macros; the made-up bike test still right. Not tested in the games.
-**Result:** none yet.
+**Tested how:** user 13:28: video + logs.
+**Result:** bars don't spin, tailwhips don't show (data source wrong: STATUS.md); feet still mostly counted off the pedals; "bars as drawn" matched what was sent (GTA side works).
 
 ## [2026-10-10] BMX B7: bars and cranks like reTHAWed's; CJ's hands on the grips, feet on the pedals
 
