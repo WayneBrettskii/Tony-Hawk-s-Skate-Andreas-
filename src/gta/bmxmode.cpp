@@ -9,6 +9,10 @@
 #include "CPedIntelligence.h"
 #include "CPlayerPed.h"
 #include "CTaskComplexLeaveCar.h"
+#include "CTaskSimpleCarSetPedOut.h"
+#include "CCarEnterExit.h"
+#include "CPools.h"
+#include "CCheat.h"
 #include "CTaskManager.h"
 #include "CReplay.h"
 #include "CStuntJumpManager.h"
@@ -135,6 +139,22 @@ float g_barsDrawnMax = 0.0f;          // log: biggest bars turn GTA really drew 
 unsigned g_barsChecked = 0;
 float g_onMin[4] = {1, 1, 1, 1};      // log: lowest "on" this second (hands R, L, feet R, L)
 constexpr float kGripGuessX = 0.27f, kGripGuessZ = 0.10f; // if the bars' mesh can't be read
+constexpr float kLimbEaseMs = 100.0f;  // B10: hands / feet "on" amounts ease with this time constant
+// B11: BMX <-> skate the quick way
+int g_lastBikeRef = -1;          // the GTA BMX CJ last left for skate mode (GTA's vehicle handle)
+DWORD g_l1r1At = 0;              // when L1 + R1 were last held in BMX mode (the get-off buttons)
+bool g_quickStart = false;       // CJ was put on the bike because reTHAWed's rider already is: no waiting
+LONG g_skateThawPrev = kBikeStateUnknown;
+constexpr DWORD kL1R1RecentMs = 2000;
+// B12: the GTA bike CJ left lies where reTHAWed's bike lies (skate mode)
+bool g_mirroring = false;
+CVehicle* g_mirrorBike = nullptr;
+bool g_mirrorSavedCollision = true;
+unsigned g_mirrorFrames = 0;
+// B10 fix 1: where the GTA bike stays once reTHAWed's rider is off it
+bool g_holdHave = false;
+CMatrix g_holdMatrix;
+unsigned g_heldOff = 0;
 float g_lastSpeed = 0.0f;
 bool g_haveBoardLog = false;
 Basis g_boardStart;                   // for the log only (fix 1)
@@ -271,6 +291,178 @@ void CjOffBikeUnsafe(CVehicle* bike, LogFn log)
     ped->m_pIntelligence->m_TaskMgr.SetTask(new CTaskComplexLeaveCar(bike, 0, 0, true, false), TASK_PRIMARY_PRIMARY,
                                             false);
     log("bmx: the rider got off in reTHAWed: CJ gets off the GTA bike too");
+}
+
+// B11 (user 14:25: in reTHAWed the board rolls to the rider and he hops on):
+// CJ off the bike at once, no GTA get-off animation, so skate mode can copy
+// reTHAWed's hop-on right away. Next to the bike; skate mode then puts him at
+// the rider's spot. False if GTA kept him on (then the old way).
+bool CjWarpOffBikeUnsafe(CVehicle* bike, LogFn log)
+{
+    CPlayerPed* ped = FindPlayerPed();
+    if (!ped || !bike || ped->m_pVehicle != bike) return false;
+    CTaskSimpleCarSetPedOut out(bike, 0, false);
+    out.m_bWarpingOutOfCar = true;
+    out.ProcessPed(ped);
+    CCarEnterExit::RemoveCarSitAnim(ped);
+    const CVector p = bike->GetPosition();
+    ped->Teleport(CVector(p.x, p.y, p.z + 0.6f), false);
+    const bool off = !ped->bInVehicle;
+    log("bmx: B11: CJ %s the GTA bike at once", off ? "taken off" : "NOT taken off (GTA kept him on)");
+    return off;
+}
+
+bool CjWarpOffBike(CVehicle* bike, LogFn log)
+{
+    __try {
+        return CjWarpOffBikeUnsafe(bike, log);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        log("bmx: B11: error while taking CJ off the bike");
+        return false;
+    }
+}
+
+// B11: the GTA BMX to put CJ on when reTHAWed's rider gets on his bike in
+// skate mode: the one he left (within 30 m), else the nearest free BMX within
+// 15 m, else a new one (GTA's own vehicle cheat).
+CVehicle* FindOrSpawnBmx(CPlayerPed* ped, const char*& from)
+{
+    const CVector c = ped->GetPosition();
+    auto dist = [&](CVehicle* v) { const CVector p = v->GetPosition(); return (p - c).Magnitude(); };
+    if (g_lastBikeRef >= 0) {
+        CVehicle* v = CPools::GetVehicle(g_lastBikeRef);
+        if (v && v->m_nModelIndex == kBmxModel && !v->m_pDriver && dist(v) < 30.0f) {
+            from = "the BMX CJ left";
+            return v;
+        }
+    }
+    CVehicle* best = nullptr;
+    float bestD = 15.0f;
+    for (int i = 0; i < CPools::ms_pVehiclePool->m_nSize; ++i) {
+        CVehicle* v = CPools::ms_pVehiclePool->GetAt(i);
+        if (!v || v->m_nModelIndex != kBmxModel || v->m_pDriver) continue;
+        const float d = dist(v);
+        if (d < bestD) { bestD = d; best = v; }
+    }
+    if (best) {
+        from = "the nearest BMX";
+        return best;
+    }
+    from = "a new BMX";
+    return CCheat::VehicleCheat(kBmxModel);
+}
+
+// B12: stop putting the bike where reTHAWed's is (its collision back on)
+void StopMirror(LogFn log)
+{
+    if (!g_mirroring) return;
+    g_mirroring = false;
+    __try {
+        if (g_mirrorBike) {
+            g_mirrorBike->bUsesCollision = g_mirrorSavedCollision;
+            g_mirrorBike->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    if (log) log("bmx: B12: the GTA bike no longer follows reTHAWed's dropped bike (%u frames)", g_mirrorFrames);
+    g_mirrorBike = nullptr;
+    g_mirrorFrames = 0;
+}
+
+// B12 (user 14:37: CJ bent down for a bike that wasn't there): in skate mode,
+// the GTA bike CJ left is put where reTHAWed's bike lies, and moves with it
+// when the rider picks it up (Square).
+void DroppedBikeFrameUnsafe(LinkBlock* link, LogFn log)
+{
+    const LevelAlignment* a = FindLevelAlignment(static_cast<unsigned long>(link->thawLevelId));
+    SkaterShared s;
+    int retries = 0;
+    const bool want = a && ReadSkaterShared(link, s, retries) && (s.flags & kDroppedBikeValid);
+    CVehicle* bike = (want && g_lastBikeRef >= 0) ? CPools::GetVehicle(g_lastBikeRef) : nullptr;
+    if (bike && (bike->m_nModelIndex != kBmxModel || bike->m_pDriver)) bike = nullptr;
+    if (!bike) {
+        StopMirror(log);
+        return;
+    }
+    if (!g_mirroring || g_mirrorBike != bike) {
+        StopMirror(log);
+        g_mirrorBike = bike;
+        g_mirrorSavedCollision = bike->bUsesCollision;
+        bike->bUsesCollision = false; // it may lie on reTHAWed's ramps; GTA mustn't knock it about
+        g_mirroring = true;
+        log("bmx: B12: the GTA bike now lies where reTHAWed's bike lies");
+    }
+    const float* d = s.droppedBike; // board convention, THAW world
+    const V3 r = Norm(Dir(d, a->ySign));
+    const V3 f = Mul(Norm(Dir(d + 3, a->ySign)), -1.0f); // the "up" row points to the back wheel
+    const V3 u = Norm(Dir(d + 6, a->ySign));
+    const Vec3 p = MapAbsolute(Vec3{d[9], d[10], d[11]}, *a);
+    const float base = bike->GetDistanceFromCentreOfMassToBaseOfModel();
+    const V3 pos = Add(V3{p.x, p.y, p.z}, Mul(u, base - kBoardRestHeight * a->scale)); // as BMX mode's picture
+    CMatrix m;
+    m.right = CVector(r.x, r.y, r.z);
+    m.up = CVector(f.x, f.y, f.z);
+    m.at = CVector(u.x, u.y, u.z);
+    m.pos = CVector(pos.x, pos.y, pos.z);
+    bike->SetMatrix(m);
+    bike->UpdateRwMatrix();
+    bike->UpdateRwFrame();
+    bike->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+    bike->m_vecTurnSpeed = CVector(0.0f, 0.0f, 0.0f);
+    ++g_mirrorFrames;
+}
+
+void DroppedBikeFrame(LinkBlock* link, LogFn log)
+{
+    __try {
+        DroppedBikeFrameUnsafe(link, log);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_mirroring = false;
+        g_mirrorBike = nullptr;
+    }
+}
+
+void MountFromSkateUnsafe(LinkBlock* link, LogFn log)
+{
+    CPlayerPed* ped = FindPlayerPed();
+    if (!ped || ped->bInVehicle) return;
+    const char* from = "?";
+    CVehicle* bike = FindOrSpawnBmx(ped, from);
+    if (!bike) {
+        log("bmx: B11: reTHAWed's rider got on his bike, but no GTA BMX could be found or made");
+        return;
+    }
+    const CVector c = ped->GetPosition();
+    const float heading = ped->GetHeading();
+    const bool mirrored = g_mirroring && g_mirrorBike == bike; // B12: already where reTHAWed's bike is
+    StopMirror(log);
+    SkateModeTurnOffNow(link, log, "reTHAWed's rider got on his bike (Square): BMX mode");
+    if (!mirrored) {
+        // the bike where CJ is, facing his way, on the ground
+        bool found = false;
+        float ground = CWorld::FindGroundZFor3DCoord(c.x, c.y, c.z + 1.0f, &found, nullptr);
+        if (!found) ground = c.z - 1.0f;
+        bike->SetPosn(c.x, c.y, ground + bike->GetDistanceFromCentreOfMassToBaseOfModel());
+        bike->SetHeading(heading);
+    }
+    bike->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+    bike->m_vecTurnSpeed = CVector(0.0f, 0.0f, 0.0f);
+    bike->UpdateRwMatrix();
+    bike->UpdateRwFrame();
+    CCarEnterExit::SetPedInCarDirect(ped, bike, 0, true);
+    g_lastBikeRef = CPools::GetVehicleRef(bike);
+    g_quickStart = ped->bInVehicle && ped->m_pVehicle == bike;
+    log("bmx: B11: reTHAWed's rider got on his bike: CJ put on %s at once (%s)%s", from,
+        g_quickStart ? "on" : "NOT on: GTA refused", mirrored ? ", where reTHAWed's bike lay (B12)" : "");
+}
+
+void MountFromSkate(LinkBlock* link, LogFn log)
+{
+    __try {
+        MountFromSkateUnsafe(link, log);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        log("bmx: B11: error while putting CJ on a bike");
+    }
 }
 
 void CjOffBike(CVehicle* bike, LogFn log)
@@ -448,10 +640,21 @@ void LimbTargets(const SkaterShared& s)
     const V3 wr = ChassisToWorld(pedR), wl = ChassisToWorld(pedL);
     t[2][0] = wr.x; t[2][1] = wr.y; t[2][2] = wr.z;
     t[3][0] = wl.x; t[3][1] = wl.y; t[3][2] = wl.z;
+    // B10 (user 14:11: awkward when CJ starts pedalling again): the "on" amounts
+    // ease in / out over ~0.1 s instead of switching in a few frames
+    static float smooth[4] = {};
+    static ULONGLONG lastMs = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    const float dt = lastMs ? static_cast<float>(nowMs - lastMs) : 0.0f;
+    const bool fresh = !lastMs || dt > 500.0f; // first frame of a ride: no easing from old values
+    lastMs = nowMs;
+    const float a = fresh ? 1.0f : 1.0f - std::exp(-dt / kLimbEaseMs);
     for (int k = 0; k < 4; ++k) {
-        w[k] = s.bike[kBikeHandOn + k]; // hands R, L, feet R, L (kBikeFootOn follows kBikeHandOn)
-        if (!(w[k] >= 0.0f)) w[k] = 0.0f;
-        if (w[k] > 1.0f) w[k] = 1.0f;
+        float want = s.bike[kBikeHandOn + k]; // hands R, L, feet R, L (kBikeFootOn follows kBikeHandOn)
+        if (!(want >= 0.0f)) want = 0.0f;
+        if (want > 1.0f) want = 1.0f;
+        smooth[k] += (want - smooth[k]) * a;
+        w[k] = smooth[k];
         if (w[k] < g_onMin[k]) g_onMin[k] = w[k];
     }
     BodySetLimbTargets(t, w);
@@ -510,6 +713,8 @@ void StartUnsafe(LinkBlock* link, LogFn log)
     g_frames = g_held = g_skipped = g_blended = 0;
     g_maxAge = 0;
     g_blend.Clear();
+    g_holdHave = false;
+    g_quickStart = false;
     g_nextReport = GetTickCount() + 1000;
     LogBikeParts(log);
     LearnParts(log);
@@ -624,8 +829,32 @@ bool BodyFrame(const SkaterShared& s, const LevelAlignment& a, const Vec3& feet,
 }
 
 // One frame: the GTA bike (and so CJ) where reTHAWed's rider is.
+// B10 fix 1 (test 14:17: the GTA bike "rolled up like a board" while getting
+// off): from the moment reTHAWed's rider is off the bike, the GTA bike stops
+// following (what we'd copy is the rider's skateboard by then) and stays
+// where it last was, upright; CJ goes back to GTA's riding pose until he gets off.
+
+void HoldBike()
+{
+    g_haveVisual = false;
+    g_haveParts = false;
+    BodyClear();
+    if (g_holdHave) {
+        g_bike->SetMatrix(g_holdMatrix);
+        g_bike->UpdateRwMatrix();
+        g_bike->UpdateRwFrame();
+    }
+    g_bike->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+    g_bike->m_vecTurnSpeed = CVector(0.0f, 0.0f, 0.0f);
+    ++g_heldOff;
+}
+
 void FollowUnsafe(LinkBlock* link, const LevelAlignment& a)
 {
+    if (link->thawBikeState != kBikeStateOn) { // B10 fix 1
+        HoldBike();
+        return;
+    }
     SkaterShared s;
     int retries = 0;
     if (!ReadSkaterShared(link, s, retries)) {
@@ -670,6 +899,8 @@ void FollowUnsafe(LinkBlock* link, const LevelAlignment& a)
     m.at = CVector(up.x, up.y, up.z);
     m.pos = CVector(feet.x + up.x * g_baseDist, feet.y + up.y * g_baseDist, feet.z + up.z * g_baseDist);
     g_bike->SetMatrix(m);
+    g_holdMatrix = m; // B10 fix 1: where it stays if the rider gets off
+    g_holdHave = true;
     g_bike->UpdateRwMatrix(); // GTA's CEntity::UpdateRW
     g_bike->UpdateRwFrame();
     // GTA speed is metres per 1/50 s; this keeps the wheels and CJ's pedalling going
@@ -881,6 +1112,16 @@ void BmxAddHook()
 void BmxFrame(LinkBlock* link, LogFn log)
 {
     if (!link) return;
+    // B11 (user 14:25): in skate mode, reTHAWed's rider getting on his bike
+    // (its own Square prompt) puts CJ on a GTA BMX and BMX mode takes over
+    {
+        const LONG t = link->thawBikeState;
+        if (SkateModeIsOn() && t == kBikeStateOn && g_skateThawPrev == kBikeStateOff) MountFromSkate(link, log);
+        g_skateThawPrev = t;
+        // B12: in skate mode, the GTA bike CJ left lies where reTHAWed's bike lies
+        if (SkateModeIsOn()) DroppedBikeFrame(link, log);
+        else if (g_mirroring) StopMirror(log);
+    }
     const bool riding = !SkateModeIsOn() && CjRidesBmx();
     const DWORD now = GetTickCount();
     const bool toggle = TogglePressed();
@@ -946,14 +1187,27 @@ void BmxFrame(LinkBlock* link, LogFn log)
     if (g_active) {
         CPlayerPed* ped = FindPlayerPed();
         if (!ped || ped->m_pVehicle != g_bike) { End(link, log, "not the same bike any more"); return; }
+        {
+            LONG raw = 0;
+            if (PadLinkRawButtons(raw) && (raw & kBtnL1) && (raw & kBtnR1)) g_l1r1At = now ? now : 1;
+        }
         if (thaw == kBikeStateOff) {
             if (!g_riderOffSince) g_riderOffSince = now ? now : 1;
-            if (now - g_riderOffSince >= kRiderOffMs) {
+            // B11: L1 + R1 (the get-off buttons) held lately = really getting
+            // off: no waiting (the wait is only for bails)
+            const bool asked = g_l1r1At && now - g_l1r1At < kL1R1RecentMs;
+            if (asked || now - g_riderOffSince >= kRiderOffMs) {
                 g_userOff = true;
                 g_riderOffSince = 0;
+                g_l1r1At = 0;
                 CVehicle* bike = g_bike;
-                End(link, log, "the rider got off the bike in reTHAWed");
-                CjOffBike(bike, log); // CJ gets off too (user 01:14)
+                End(link, log, asked ? "the rider got off the bike in reTHAWed (L1 + R1)"
+                                     : "the rider got off the bike in reTHAWed");
+                g_lastBikeRef = CPools::GetVehicleRef(bike);
+                // B11: CJ off at once (GTA's get-off animation only if that fails)
+                if (!CjWarpOffBike(bike, log)) CjOffBike(bike, log);
+                // B10 (user 14:11): L1 + R1 goes from BMX to skate (L3 + R3 = GTA's normal BMX)
+                SkateModeRequestOn("BMX -> skate (L1 + R1 in reTHAWed)", 6000);
                 return;
             }
         } else {
@@ -1010,6 +1264,8 @@ void BmxFrame(LinkBlock* link, LogFn log)
                 g_crankG.y, g_crankG.z, g_barsDrawnMax, g_barsChecked);
             g_barsDrawnMax = 0.0f;
             g_barsChecked = 0;
+            if (g_heldOff) log("bmx: B10: bike held still for %u frames (reTHAWed's rider is off it)", g_heldOff);
+            g_heldOff = 0;
             g_partsDrawn = g_limbFrames = 0;
             for (float& m : g_onMin) m = 1.0f;
             g_frames = g_held = g_skipped = g_blended = 0;
@@ -1035,8 +1291,13 @@ void BmxFrame(LinkBlock* link, LogFn log)
     // started mid-switch and CJ was thrown off again).
     {
         CPlayerPed* ped = FindPlayerPed();
-        if (!ped || ped->m_ePedState != PEDSTATE_DRIVING) return;
-        if (now - g_askedAt < 3000) return;
+        if (g_quickStart) {
+            // B11: reTHAWed's rider is already on, CJ was put on directly
+            if (!ped || !ped->bInVehicle) return;
+        } else {
+            if (!ped || ped->m_ePedState != PEDSTATE_DRIVING) return;
+            if (now - g_askedAt < 3000) return;
+        }
     }
     if (g_placeSeqWanted == 0) {
         if (!PlaceRider(link, *align, log)) return;

@@ -2,12 +2,54 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] B12: the GTA bike lies where reTHAWed's dropped bike lies
+
+**Changed:** `src/common/link.h`: version 12 (`_v12`, 636 bytes), `thawDroppedBike` + `kDroppedBikeValid`. `src/thaw/bikeparts.h/.cpp`: `DroppedBikeTick` (bike frame in THAW's world while the rider is off the bike; sent only once it's known to stay put). `src/thaw/main.cpp`: sends it. `src/gta/bmxmode.cpp`: in skate mode the GTA bike CJ left mirrors it (collision off meanwhile); Square mount keeps it there.
+**Why:** user 14:37 (clip): getting on with Square looked off: CJ bent down for a bike that wasn't there, then it popped in.
+**Tested how:** cloud syntax check of the THAW file. Not compiled with Visual Studio; not tested in the games.
+**Result:** none yet.
+
+## [2026-10-10] B11: BMX <-> skate the quick way (hop-on copied; Square gets back on the bike)
+
+**Changed:** `src/gta/bmxmode.cpp`: L1 + R1 + rider off = no 1 s wait; CJ taken off the GTA bike at once (GTA's set-ped-out task, warp flag), skate mode starts at once; the bike's GTA handle remembered. In skate mode, reTHAWed's rider getting on his bike (Square) puts CJ on a GTA BMX at once (the one he left within 30 m, the nearest free one within 15 m, or a new one via GTA's vehicle cheat), placed where CJ is; BMX mode starts without the 3 s wait. `src/gta/skatemode.h/.cpp`: `SkateModeTurnOffNow`.
+**Why:** user 14:25 (clip): in reTHAWed the board rolls to the rider and he hops on; GTA missed it. Also: get on the bike from skate mode with reTHAWed's Square prompt.
+**Tested how:** user 14:37 (clip + gta.log).
+**Result:** hop-on "a lot better"; Square mount works but looks off (bike not there while CJ picks it up): B12.
+
+## [2026-10-10] B10 fix 1: the GTA bike stays put while the rider gets off
+
+**Changed:** `src/gta/bmxmode.cpp`: while reTHAWed's rider is off the bike (thawBikeState not "on"), BMX mode no longer follows: the GTA bike is held at its last placement, upright, speed zero; no turned picture, no bike parts, CJ's body copy dropped. Logged.
+**Why:** test 14:17 (clip): the bike rolled up like a skateboard while getting off (it was copying the rider's board bone).
+**Tested how:** user 14:25 (clip).
+**Result:** bike stays put. Still: reTHAWed's hop-on missed (B11).
+
+## [2026-10-10] B10: L1 + R1 goes from BMX mode to skate mode; hands / feet ease in
+
+**Changed:** `src/gta/skatemode.h/.cpp`: `SkateModeRequestOn(why, ms)`: skate mode switches on by itself as soon as GTA allows (CJ out of the vehicle, no script, not paused), for up to that long; F7 / L3 + R3 cancel it. `src/gta/bmxmode.cpp`: when the rider gets off the bike in reTHAWed (L1 + R1), after CJ is told to get off, skate mode is requested (6 s); the hands / feet "on" amounts ease with a 0.1 s time constant.
+**Why:** user 14:11: L1 + R1 should go from BMX to skate (L3 + R3 already = GTA's normal BMX); awkward moment when CJ starts pedalling again.
+**Tested how:** user 14:17 (clip).
+**Result:** BMX -> skate works; the bike rolled up like a board while getting off (fix 1).
+
+## [2026-10-10] BMX B9 fix 1: riding pose safe from tricks; feet by distance to the crank axle
+
+**Changed:** `src/thaw/pose.h/.cpp`: `ReadSkeletonBind` (a skeleton's default pose). `src/thaw/bikeparts.cpp`: straight bars from the bike's default pose; riding pose only taken while the bars are straight; feet on the pedals within 22 units of the crank axle (off beyond 32); log of the feet's distances.
+**Why:** test 13:57: tricks show, but the riding pose was taken mid-trick and feet were counted off.
+**Tested how:** cloud maths tests; user 14:11.
+**Result:** tricks look good, feet look good most of the time; awkward moment when pedalling again (B10 eases it); slight stutter left: GTA runs at 44-60 fps while riding (gta.log pacer lines).
+
+## [2026-10-10] BMX B9: the GTA bike from reTHAWed's own bike skeleton
+
+**Changed:** `src/thaw/bikefind.h/.cpp`: quick finder for the bike skeleton (rider's components, then 2 MB around the rider's skeleton; bone checksums named). `src/thaw/bikeparts.h/.cpp`: rewritten on the bike's bones: frame (sent as the board, lined up with Bone_Board_Root once), fork (Bone_Bike_Front), crank (crank + pedal bones), hands / feet on grips / pedals. `src/thaw/pose.h/.cpp`: `ReadSkeletonBones` for any skeleton. `src/thaw/main.cpp`: uses them; the 15 s scan removed.
+**Why:** B8 found the bike's skeleton; its bones carry the bar spins (Front 178 deg), tailwhips (Frame 180), crank flips.
+**Tested how:** cloud maths tests; user 13:57 (video + logs).
+**Result:** "the tricks are looking a lot better": tailwhips, bar spins, tabletops, crank flips show. Feet mostly counted off (riding pose taken mid-trick): fix 1.
+
 ## [2026-10-10] BMX B8 (research): find reTHAWed's bike skeleton
 
 **Changed:** new `src/thaw/bikefind.h/.cpp` (log only): once per mount, 6 s after getting on, scans reTHAWed's memory for skeletons, logs them, follows the small ones that aren't the rider's and logs which bones turn each second. `src/thaw/main.cpp` calls it; `CMakeLists.txt` adds it. STATUS.md written (two attempts at the tricks).
 **Why:** test 13:28: bars don't spin, tailwhips don't show; reTHAWed's rider bones don't carry those tricks; the bike is its own model (veh_bmx).
-**Tested how:** cloud syntax check only. Not tested in the games.
-**Result:** none yet.
+**Tested how:** user 13:45, thaw.log read.
+**Result:** found it: an 8-bone bike skeleton next to the rider's; its Front bone turns in bar spins, Frame in tailwhips (DESIGN 8.29 B8 result).
 
 ## [2026-10-10] BMX B7 fix 1: feet on the pedals; checks that the parts reach the screen
 

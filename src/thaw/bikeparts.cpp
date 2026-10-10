@@ -1,68 +1,94 @@
-// my-passthrough: reTHAWed's bike parts for GTA. READ ONLY. See bikeparts.h.
+// my-passthrough: reTHAWed's bike for GTA. READ ONLY. See bikeparts.h.
 
 #include <windows.h>
 
 #include <cmath>
 
 #include "bikeparts.h"
+#include "bikefind.h"
 #include "pose.h"
 
 namespace mp::thaw {
 namespace {
 
-constexpr int kParts = 4;
-const char* const kPartNames[kParts] = {"Bone_Board_Nose", "Bone_Trucks_Nose", "Bone_Board_Tail", "Bone_Trucks_Tail"};
-constexpr int kNose = 0, kTail = 2;    // the fork, the cranks
-constexpr DWORD kRestAfterMs = 4000;   // riding pose taken this long after getting on (the switch takes ~3 s)
-constexpr float kLogAngle = 20.0f;     // degrees from the riding pose worth a line
-constexpr DWORD kLineGapMs = 100;      // at most 10 lines a second
-constexpr DWORD kAlwaysTurnedMs = 3000; // turned this long without a break = turns all the time
-// B7: hand on the grip / foot on the pedal: fully within the first distance
-// (THAW units) of where it was in the riding pose, not at all beyond the second
+constexpr DWORD kRestAfterMs = 4000; // riding pose taken this long after getting on (the switch takes ~3 s)
+// hand on the grip / foot on the pedal: fully within the first distance (THAW
+// units) of how it was in the riding pose, not at all beyond the second
 constexpr float kHandNear = 3.0f, kHandFar = 10.0f;
-// B7 fix 1 (test 13:15: feet counted "off" all the time while pedalling): a foot
-// is on its pedal while it keeps its distance from the crank axle and its place
-// along the axle (as in the riding pose), wherever round the circle it is
-constexpr float kFootNear = 3.0f, kFootFar = 8.0f;
+// B9 fix 1 (test 13:57: the riding pose was taken mid-trick, feet 11-18 units
+// from the pedals): a foot is on its pedal while it is near the crank axle
+// (THAW units; riding: ~14-18 seen at 13:15), no learned pose
+constexpr float kFootNear = 22.0f, kFootFar = 32.0f;
+constexpr float kStraightFork = 10.0f; // riding pose only while the fork is this close to straight (degrees)
 
-// extra bones for B7 (wrists, ankles, toes)
-enum Extra { kWristL, kWristR, kAnkleL, kToeL, kAnkleR, kToeR, kExtraCount };
-const char* const kExtraNames[kExtraCount] = {"Bone_Wrist_L", "Bone_Wrist_R", "Bone_Ankle_L",
-                                              "Bone_Toe_L",   "Bone_Ankle_R", "Bone_Toe_R"};
+// rider bones used here
+enum Rider { kBoardRoot, kWristL, kWristR, kAnkleL, kToeL, kAnkleR, kToeR, kRiderCount };
+const char* const kRiderNames[kRiderCount] = {"Bone_Board_Root", "Bone_Wrist_L", "Bone_Wrist_R", "Bone_Ankle_L",
+                                              "Bone_Toe_L",      "Bone_Ankle_R", "Bone_Toe_R"};
+// bike bones used here
+enum Bike { kFrame, kFront, kCrank, kPedalR, kPedalL, kBikeCount };
+const unsigned long kBikeSums[kBikeCount] = {kBikeBoneFrame, kBikeBoneFront, kBikeBoneCrank, kBikeBonePedalR,
+                                             kBikeBonePedalL};
 
-struct Part {
-    float rest[9] = {};       // turn relative to Board_Root in the riding pose (rows)
-    float angle = 0.0f;       // now, degrees from rest
-    float axis[3] = {};       // about this axis (the part's own space in the riding pose)
-    float off[3] = {};        // position relative to Board_Root (its space, THAW units)
-    DWORD turnedSince = 0;    // > kLogAngle since (0 = not)
-    float maxAngle = 0.0f;    // this second
-    float maxAxis[3] = {};
+struct M4 {
+    float m[16];
 };
 
-Part g_part[kParts];
-bool g_found = false;
-bool g_haveRest = false;
+bool g_onBike = false, g_haveRest = false, g_found = false;
 DWORD g_onSince = 0;
-DWORD g_lastLine = 0;
-unsigned g_lines = 0, g_samples = 0;
-bool g_onBike = false;
-
-// B7 riding pose: per bike side (0 = right, +x; 1 = left)
-float g_gripLocal[2][3] = {};  // the hand on that side, in the fork's space
-float g_footR0[2] = {}, g_footX0[2] = {}; // fix 1: each foot's distance from the axle / place along it, riding pose
-float g_e1[3] = {}, g_e2[3] = {}; // fix 1: two directions square to the crank axle (bike frame space)
-float g_phaseOff = 0.0f;       // fix 1: right-foot angle minus the crank bone's angle (kept while the foot is off)
-float g_lastFootAng = 0.0f, g_lastTailAng = 0.0f;
-bool g_haveLastAng = false;
-float g_footTurn = 0.0f, g_tailTurn = 0.0f; // research: degrees turned this second (feet on)
-int g_handBone[2] = {}, g_footBone[2] = {}; // which Extra (wrist / ankle) is on that side
-float g_armRest[3] = {};       // crank axle -> right foot, bike frame space, at rest
+M4 g_offset;                    // frame -> board (riding pose): board = offset x frame
+float g_frontRest[9] = {};      // the fork's turn in the bike's (board's) space, riding pose
+float g_gripLocal[2][3] = {};   // the hand on each side (0 = bike's right, +x), in the fork's space
+int g_handBone[2] = {}, g_footBone[2] = {}, g_pedalBone[2] = {}; // which rider hand / foot, which pedal bone per side
+float g_footMin[2] = {1e9f, 1e9f}, g_footMax[2] = {0, 0}; // log: foot to crank axle this second
+bool g_haveBindFork = false;
+float g_bindFork[9] = {};       // fix 1: the fork's turn relative to the frame in the bike's default pose (straight)
+DWORD g_waitLogged = 0;
 float g_out[kLinkBikeFloats] = {};
-float g_handOnMin[2] = {1, 1}, g_footOnMin[2] = {1, 1}; // this second (log)
+// log, this second
+float g_forkMax = 0.0f, g_handOnMin[2] = {1, 1}, g_footOnMin[2] = {1, 1};
+unsigned g_samples = 0;
+float g_crankTurn = 0.0f, g_lastCrankAng = 0.0f;
+bool g_haveCrankAng = false;
 
-// rows of a 4x4 bone matrix: right, up, at; the rotation of `b` in `r`'s
-// space: rel = B x R^T (row vectors, as the game's bone matrices)
+void Mul4(const float* a, const float* b, float* o) // o = a x b (row vectors)
+{
+    float t[16];
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            t[r * 4 + c] = a[r * 4] * b[c] + a[r * 4 + 1] * b[4 + c] + a[r * 4 + 2] * b[8 + c] + a[r * 4 + 3] * b[12 + c];
+    for (int i = 0; i < 16; ++i) o[i] = t[i];
+}
+
+// a bone matrix with its rotation rows made unit length (bones may carry a little scale)
+M4 Clean(const float* m)
+{
+    M4 o;
+    for (int i = 0; i < 16; ++i) o.m[i] = m[i];
+    for (int r = 0; r < 3; ++r) {
+        float* row = o.m + r * 4;
+        const float l = std::sqrt(row[0] * row[0] + row[1] * row[1] + row[2] * row[2]);
+        if (l > 1e-6f) { row[0] /= l; row[1] /= l; row[2] /= l; }
+        row[3] = 0.0f;
+    }
+    o.m[15] = 1.0f;
+    return o;
+}
+
+M4 InverseRigid(const M4& a)
+{
+    M4 o;
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) o.m[r * 4 + c] = a.m[c * 4 + r];
+        o.m[r * 4 + 3] = 0.0f;
+    }
+    for (int c = 0; c < 3; ++c)
+        o.m[12 + c] = -(a.m[12] * o.m[c] + a.m[13] * o.m[4 + c] + a.m[14] * o.m[8 + c]);
+    o.m[15] = 1.0f;
+    return o;
+}
+
+// rel = B x R^T (3x3): b's rotation in r's space (row vectors)
 void Relative(const float* b, const float* r, float* rel)
 {
     for (int i = 0; i < 3; ++i)
@@ -70,42 +96,33 @@ void Relative(const float* b, const float* r, float* rel)
             rel[i * 3 + j] = b[i * 4 + 0] * r[j * 4 + 0] + b[i * 4 + 1] * r[j * 4 + 1] + b[i * 4 + 2] * r[j * 4 + 2];
 }
 
-// a point (skater space) in a bone's space: (p - pos) . rows
-void ToBone(const float* p, const float* m, float* out)
+// a point (rider's space) in a matrix's space: (p - pos) . rows
+void ToSpace(const float* p, const float* m, float* out)
 {
     const float d[3] = {p[0] - m[12], p[1] - m[13], p[2] - m[14]};
     for (int j = 0; j < 3; ++j) out[j] = d[0] * m[j * 4] + d[1] * m[j * 4 + 1] + d[2] * m[j * 4 + 2];
 }
 
-// a point in a part's space -> bike frame space: off + l x rel
-void FromPart(const float* l, const float* rel, const float* off, float* out)
+// M = rest^T x now (row vectors: now = rest x M), 3x3
+void TurnSince(const float* rest, const float* now, float* m)
 {
-    for (int j = 0; j < 3; ++j) out[j] = off[j] + l[0] * rel[j] + l[1] * rel[3 + j] + l[2] * rel[6 + j];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            m[i * 3 + j] = rest[i] * now[j] + rest[3 + i] * now[3 + j] + rest[6 + i] * now[6 + j];
+}
+
+float Angle3(const float* m) // of a 3x3 turn, degrees
+{
+    float c = (m[0] + m[4] + m[8] - 1.0f) * 0.5f;
+    if (c > 1.0f) c = 1.0f;
+    if (c < -1.0f) c = -1.0f;
+    return std::acos(c) * 57.29578f;
 }
 
 float Dist(const float* a, const float* b)
 {
     const float d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
     return std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-}
-
-float Wrap(float a) // to -pi..pi
-{
-    while (a > 3.14159265f) a -= 6.2831853f;
-    while (a < -3.14159265f) a += 6.2831853f;
-    return a;
-}
-
-// fix 1: a foot round the crank axle (axle at `c`, direction `ax`): its
-// distance from the axle, its place along it, its angle (g_e1 / g_e2)
-void FootPolar(const float* f, const float* c, const float* ax, float& r, float& x, float& ang)
-{
-    const float d[3] = {f[0] - c[0], f[1] - c[1], f[2] - c[2]};
-    x = d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2];
-    const float a = d[0] * g_e1[0] + d[1] * g_e1[1] + d[2] * g_e1[2];
-    const float b = d[0] * g_e2[0] + d[1] * g_e2[1] + d[2] * g_e2[2];
-    r = std::sqrt(a * a + b * b);
-    ang = std::atan2(b, a);
 }
 
 float OnAmount(float d, float nearDist, float farDist)
@@ -115,49 +132,22 @@ float OnAmount(float d, float nearDist, float farDist)
     return (farDist - d) / (farDist - nearDist);
 }
 
-// angle (degrees) and axis of a * b^T
-float AngleBetween(const float* a, const float* b, float* axis)
-{
-    float d[9];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            d[i * 3 + j] = a[i * 3 + 0] * b[j * 3 + 0] + a[i * 3 + 1] * b[j * 3 + 1] + a[i * 3 + 2] * b[j * 3 + 2];
-    float c = (d[0] + d[4] + d[8] - 1.0f) * 0.5f;
-    if (c > 1.0f) c = 1.0f;
-    if (c < -1.0f) c = -1.0f;
-    axis[0] = d[5] - d[7];
-    axis[1] = d[6] - d[2];
-    axis[2] = d[1] - d[3];
-    const float l = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
-    if (l > 1e-4f) {
-        for (int k = 0; k < 3; ++k) axis[k] /= l;
-    } else if (c < 0.0f) { // about 180 degrees: axis from the diagonal
-        int k = (d[0] > d[4] && d[0] > d[8]) ? 0 : (d[4] > d[8] ? 1 : 2);
-        axis[0] = axis[1] = axis[2] = 0.0f;
-        axis[k] = 1.0f;
-    }
-    return std::acos(c) * 57.29578f;
-}
-
-// M = rest^T x now (row vectors: now = rest x M), 3x3
-void TurnSince(const float* rest, const float* now, float* m)
-{
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            m[i * 3 + j] = rest[0 * 3 + i] * now[0 * 3 + j] + rest[1 * 3 + i] * now[1 * 3 + j] + rest[2 * 3 + i] * now[2 * 3 + j];
-}
-
 void Reset()
 {
     g_haveRest = false;
     g_found = false;
-    for (Part& p : g_part) p = Part{};
+    g_haveBindFork = false;
+    g_waitLogged = 0;
+    g_haveCrankAng = false;
+    ForgetBikeSkeleton();
 }
 
 } // namespace
 
-bool BikePartsTick(unsigned long skater, bool onBike, void (*log)(const char*, ...), float* out)
+bool BikePartsTick(unsigned long skater, unsigned long riderSkeleton, bool onBike, void (*log)(const char*, ...),
+                   float* out, float* board12, bool* boardValid)
 {
+    *boardValid = false;
     const DWORD now = GetTickCount();
     if (!onBike || !skater) {
         if (g_onBike) Reset();
@@ -169,213 +159,272 @@ bool BikePartsTick(unsigned long skater, bool onBike, void (*log)(const char*, .
         g_onSince = now;
         Reset();
     }
-    static BoneMatrix bones[64];
-    const int n = ReadAllBones(skater, bones, 64);
-    if (n <= 0) return false;
-    static unsigned long sums[kParts + 1] = {}, extraSums[kExtraCount] = {};
-    if (!sums[0]) {
-        sums[0] = NameChecksum("Bone_Board_Root");
-        for (int k = 0; k < kParts; ++k) sums[k + 1] = NameChecksum(kPartNames[k]);
-        for (int k = 0; k < kExtraCount; ++k) extraSums[k] = NameChecksum(kExtraNames[k]);
+    // the rider's bones
+    static BoneMatrix rb[64];
+    const int rn = ReadAllBones(skater, rb, 64);
+    if (rn <= 0) return false;
+    static unsigned long rsum[kRiderCount] = {};
+    if (!rsum[0])
+        for (int k = 0; k < kRiderCount; ++k) rsum[k] = NameChecksum(kRiderNames[k]);
+    int ri[kRiderCount];
+    for (int k = 0; k < kRiderCount; ++k) {
+        ri[k] = -1;
+        for (int i = 0; i < rn; ++i)
+            if (rb[i].name == rsum[k]) { ri[k] = i; break; }
+        if (ri[k] < 0) return false;
     }
-    auto find = [&](unsigned long sum) {
-        for (int i = 0; i < n; ++i)
-            if (bones[i].name == sum) return i;
-        return -1;
-    };
-    int idx[kParts + 1], ex[kExtraCount];
-    for (int k = 0; k <= kParts; ++k) idx[k] = find(sums[k]);
-    bool haveExtra = true;
-    for (int k = 0; k < kExtraCount; ++k) {
-        ex[k] = find(extraSums[k]);
-        if (ex[k] < 0) haveExtra = false;
+    // the bike's bones (B8: its own skeleton)
+    const unsigned long bikeSkel = FindBikeSkeleton(riderSkeleton, skater, log);
+    if (!bikeSkel) return false;
+    static BoneMatrix bb[32];
+    const int bn = ReadSkeletonBones(bikeSkel, bb, 32);
+    if (bn <= 0) return false;
+    int bi[kBikeCount];
+    for (int k = 0; k < kBikeCount; ++k) {
+        bi[k] = -1;
+        for (int i = 0; i < bn; ++i)
+            if (bb[i].name == kBikeSums[k]) { bi[k] = i; break; }
+        if (bi[k] < 0) {
+            if (!g_found) log("bike parts: bike skeleton at 0x%08lX lacks bone %d of ours; off", bikeSkel, k);
+            g_found = true;
+            return false;
+        }
     }
-    if (idx[0] < 0) return false;
     if (!g_found) {
         g_found = true;
-        log("bike parts: on the bike, %d bones; Board_Root #%d, Board_Nose #%d, Trucks_Nose #%d, Board_Tail #%d, "
-            "Trucks_Tail #%d, wrists / ankles / toes %s (riding pose taken in %lu s)", n, idx[0], idx[1], idx[2],
-            idx[3], idx[4], haveExtra ? "found" : "MISSING", kRestAfterMs / 1000);
+        log("bike parts: bike skeleton 0x%08lX, %d bones (frame #%d, front #%d, crank #%d, pedals #%d #%d); "
+            "riding pose in %lu s", bikeSkel, bn, bi[kFrame], bi[kFront], bi[kCrank], bi[kPedalR], bi[kPedalL],
+            kRestAfterMs / 1000);
     }
-    const float* root = bones[idx[0]].m;
-    float rel[kParts][9] = {};
-    for (int k = 0; k < kParts; ++k) {
-        if (idx[k + 1] < 0) continue;
-        const float* b = bones[idx[k + 1]].m;
-        Relative(b, root, rel[k]);
-        ToBone(b + 12, root, g_part[k].off);
+    const M4 frame = Clean(bb[bi[kFrame]].m);
+    if (!g_haveBindFork) {
+        // fix 1: "straight" from the bike's default pose, not from whenever the riding pose is taken
+        static BoneMatrix bind[32];
+        if (ReadSkeletonBind(bikeSkel, bind, 32) == bn) {
+            const M4 bf = Clean(bind[bi[kFrame]].m), bfr = Clean(bind[bi[kFront]].m);
+            Relative(bfr.m, bf.m, g_bindFork); // in the frame's space; the offset (board vs frame) is applied below
+            g_haveBindFork = true;
+        }
     }
-    // hands and feet in the bike frame's space
-    float hand[2][3] = {}, foot[2][3] = {}; // index: 0 = the rider's left, 1 = right
-    if (haveExtra) {
-        ToBone(bones[ex[kWristL]].m + 12, root, hand[0]);
-        ToBone(bones[ex[kWristR]].m + 12, root, hand[1]);
-        float a[3], t[3];
-        ToBone(bones[ex[kAnkleL]].m + 12, root, a);
-        ToBone(bones[ex[kToeL]].m + 12, root, t);
-        for (int j = 0; j < 3; ++j) foot[0][j] = (a[j] + t[j]) * 0.5f; // about the ball of the foot
-        ToBone(bones[ex[kAnkleR]].m + 12, root, a);
-        ToBone(bones[ex[kToeR]].m + 12, root, t);
-        for (int j = 0; j < 3; ++j) foot[1][j] = (a[j] + t[j]) * 0.5f;
+    if (!g_haveBindFork) return false;
+
+    // hands and feet (rider's space)
+    const float* wrist[2] = {rb[ri[kWristL]].m + 12, rb[ri[kWristR]].m + 12};
+    float foot[2][3];
+    for (int j = 0; j < 3; ++j) {
+        foot[0][j] = (rb[ri[kAnkleL]].m[12 + j] + rb[ri[kToeL]].m[12 + j]) * 0.5f; // about the ball of the foot
+        foot[1][j] = (rb[ri[kAnkleR]].m[12 + j] + rb[ri[kToeR]].m[12 + j]) * 0.5f;
     }
-    const bool canB7 = haveExtra && idx[kNose + 1] >= 0 && idx[kTail + 1] >= 0;
 
     if (!g_haveRest) {
         if (now - g_onSince < kRestAfterMs) return false;
-        g_haveRest = true;
-        for (int k = 0; k < kParts; ++k)
-            if (idx[k + 1] >= 0)
-                for (int j = 0; j < 9; ++j) g_part[k].rest[j] = rel[k][j];
-        if (canB7) {
-            // which of the rider's hands / feet is on the bike's right (+x)
-            g_handBone[0] = hand[1][0] >= hand[0][0] ? 1 : 0;
-            g_handBone[1] = 1 - g_handBone[0];
-            g_footBone[0] = foot[1][0] >= foot[0][0] ? 1 : 0;
-            g_footBone[1] = 1 - g_footBone[0];
-            const Part& nose = g_part[kNose];
-            const Part& tail = g_part[kTail];
-            for (int s = 0; s < 2; ++s) {
-                // hand in the fork's space: (p - off) . rest rows
-                const float* h = hand[g_handBone[s]];
-                const float dh[3] = {h[0] - nose.off[0], h[1] - nose.off[1], h[2] - nose.off[2]};
-                for (int j = 0; j < 3; ++j)
-                    g_gripLocal[s][j] = dh[0] * nose.rest[j * 3] + dh[1] * nose.rest[j * 3 + 1] + dh[2] * nose.rest[j * 3 + 2];
+        // fix 1: only while the fork is straight (not mid bar spin / tailwhip)
+        {
+            const M4 fr = Clean(bb[bi[kFront]].m);
+            float relF[9], m[9];
+            Relative(fr.m, frame.m, relF);
+            TurnSince(g_bindFork, relF, m);
+            if (Angle3(m) > kStraightFork) {
+                if (!g_waitLogged || now - g_waitLogged > 5000) {
+                    g_waitLogged = now;
+                    log("bike parts: waiting for the bars to be straight to take the riding pose (now %.0f deg)", Angle3(m));
+                }
+                return false;
             }
-            // crank: axle -> the right foot, square to the crank's axis (its x row)
-            const float* ax = tail.rest;
-            float arm[3];
-            for (int j = 0; j < 3; ++j) arm[j] = foot[g_footBone[0]][j] - tail.off[j];
-            const float d = arm[0] * ax[0] + arm[1] * ax[1] + arm[2] * ax[2];
-            for (int j = 0; j < 3; ++j) arm[j] -= ax[j] * d;
-            const float l = std::sqrt(arm[0] * arm[0] + arm[1] * arm[1] + arm[2] * arm[2]);
-            for (int j = 0; j < 3; ++j) g_armRest[j] = l > 1e-4f ? arm[j] / l : (j == 2 ? -1.0f : 0.0f);
-            // fix 1: e1 = the riding pose's crank direction, e2 = axle x e1
-            for (int j = 0; j < 3; ++j) g_e1[j] = g_armRest[j];
-            g_e2[0] = ax[1] * g_e1[2] - ax[2] * g_e1[1];
-            g_e2[1] = ax[2] * g_e1[0] - ax[0] * g_e1[2];
-            g_e2[2] = ax[0] * g_e1[1] - ax[1] * g_e1[0];
-            for (int s = 0; s < 2; ++s) {
-                float ang;
-                FootPolar(foot[g_footBone[s]], tail.off, ax, g_footR0[s], g_footX0[s], ang);
-            }
-            g_phaseOff = 0.0f;
-            g_haveLastAng = false;
         }
-        log("bike parts: riding pose taken; offsets from Board_Root: nose %.1f %.1f %.1f | trucks nose %.1f %.1f %.1f "
-            "| tail %.1f %.1f %.1f | trucks tail %.1f %.1f %.1f", g_part[0].off[0], g_part[0].off[1], g_part[0].off[2],
-            g_part[1].off[0], g_part[1].off[1], g_part[1].off[2], g_part[2].off[0], g_part[2].off[1], g_part[2].off[2],
-            g_part[3].off[0], g_part[3].off[1], g_part[3].off[2]);
-        if (canB7)
-            log("bike parts: B7 riding pose: right hand %.1f %.1f %.1f, left hand %.1f %.1f %.1f (bike frame); right foot "
-                "%.1f %.1f %.1f, left foot %.1f %.1f %.1f; crank to the right pedal %.2f %.2f %.2f; the rider's %s hand "
-                "and %s foot are on the bike's right",
-                hand[g_handBone[0]][0], hand[g_handBone[0]][1], hand[g_handBone[0]][2], hand[g_handBone[1]][0],
-                hand[g_handBone[1]][1], hand[g_handBone[1]][2], foot[g_footBone[0]][0], foot[g_footBone[0]][1],
-                foot[g_footBone[0]][2], foot[g_footBone[1]][0], foot[g_footBone[1]][1], foot[g_footBone[1]][2],
-                g_armRest[0], g_armRest[1], g_armRest[2], g_handBone[0] ? "right" : "left",
-                g_footBone[0] ? "right" : "left");
-        else
-            log("bike parts: B7 off: bones missing");
+        // line the bike frame up with the rider's board bone (GTA's picture code
+        // is built on the board bone's convention): board = offset x frame
+        const M4 board = Clean(rb[ri[kBoardRoot]].m);
+        Mul4(board.m, InverseRigid(frame).m, g_offset.m);
+        float b[16];
+        Mul4(g_offset.m, frame.m, b);
+        const M4 front = Clean(bb[bi[kFront]].m);
+        // the straight fork in the board's space: Relative(front_bind, offset x frame_bind)
+        // = front_bind x frame_bind^T x offset^T = g_bindFork x offset^T (rotation rows)
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c)
+                g_frontRest[r * 3 + c] = g_bindFork[r * 3] * g_offset.m[c * 4] + g_bindFork[r * 3 + 1] * g_offset.m[c * 4 + 1] +
+                                         g_bindFork[r * 3 + 2] * g_offset.m[c * 4 + 2];
+        // sides (0 = bike's right, +x in the board's space)
+        float h0[3], h1[3], f0[3], f1[3], pr[3], pl[3];
+        ToSpace(wrist[0], b, h0);
+        ToSpace(wrist[1], b, h1);
+        ToSpace(foot[0], b, f0);
+        ToSpace(foot[1], b, f1);
+        ToSpace(bb[bi[kPedalR]].m + 12, b, pr);
+        ToSpace(bb[bi[kPedalL]].m + 12, b, pl);
+        g_handBone[0] = h1[0] >= h0[0] ? 1 : 0;
+        g_handBone[1] = 1 - g_handBone[0];
+        g_footBone[0] = f1[0] >= f0[0] ? 1 : 0;
+        g_footBone[1] = 1 - g_footBone[0];
+        g_pedalBone[0] = pr[0] >= pl[0] ? kPedalR : kPedalL;
+        g_pedalBone[1] = g_pedalBone[0] == kPedalR ? kPedalL : kPedalR;
+        for (int s = 0; s < 2; ++s) {
+            // hand in the fork's space
+            float hp[3];
+            ToSpace(wrist[g_handBone[s]], front.m, hp);
+            for (int j = 0; j < 3; ++j) g_gripLocal[s][j] = hp[j];
+        }
+        g_haveRest = true;
+        const float* rp = g_pedalBone[0] == kPedalR ? pr : pl;
+        const float* lp = g_pedalBone[0] == kPedalR ? pl : pr;
+        log("bike parts: riding pose taken. Board vs bike frame: offset rows %.2f %.2f %.2f | %.2f %.2f %.2f | %.2f "
+            "%.2f %.2f | pos %.1f %.1f %.1f. Pedals (board space) right %.1f %.1f %.1f, left %.1f %.1f %.1f; feet "
+            "%.1f / %.1f units from the crank axle; the rider's %s hand and %s foot on the bike's right",
+            g_offset.m[0], g_offset.m[1], g_offset.m[2], g_offset.m[4], g_offset.m[5], g_offset.m[6], g_offset.m[8],
+            g_offset.m[9], g_offset.m[10], g_offset.m[12], g_offset.m[13], g_offset.m[14], rp[0], rp[1], rp[2],
+            lp[0], lp[1], lp[2], Dist(foot[g_footBone[0]], bb[bi[kCrank]].m + 12),
+            Dist(foot[g_footBone[1]], bb[bi[kCrank]].m + 12), g_handBone[0] ? "right" : "left",
+            g_footBone[0] ? "right" : "left");
         return false;
     }
 
-    // ---- B7: what GTA needs ----
-    bool valid = false;
-    if (canB7) {
-        const Part& nose = g_part[kNose];
-        const Part& tail = g_part[kTail];
-        float* o = g_out;
-        TurnSince(nose.rest, rel[kNose], o + kBikeFork);
-        float mc[9];
-        TurnSince(tail.rest, rel[kTail], mc);
-        float arm[3];
-        for (int j = 0; j < 3; ++j) arm[j] = g_armRest[0] * mc[j] + g_armRest[1] * mc[3 + j] + g_armRest[2] * mc[6 + j];
-        // fix 1: the crank's angle from the rider's feet while they are on the
-        // pedals (that's what CJ's feet stand on); from the crank bone,
-        // continuing from there, while they are off (crank flips)
-        const float* ax = tail.rest;
-        const float tailAng = std::atan2(arm[0] * g_e2[0] + arm[1] * g_e2[1] + arm[2] * g_e2[2],
-                                         arm[0] * g_e1[0] + arm[1] * g_e1[1] + arm[2] * g_e1[2]);
-        float footAng[2];
-        for (int s = 0; s < 2; ++s) {
-            float r, x;
-            FootPolar(foot[g_footBone[s]], tail.off, ax, r, x, footAng[s]);
-            const float dev = std::sqrt((r - g_footR0[s]) * (r - g_footR0[s]) + (x - g_footX0[s]) * (x - g_footX0[s]));
-            o[kBikeFootOn + s] = OnAmount(dev, kFootNear, kFootFar);
-        }
-        float crankAng;
-        bool fromFoot = true;
-        if (o[kBikeFootOn] >= 0.5f) crankAng = footAng[0];
-        else if (o[kBikeFootOn + 1] >= 0.5f) crankAng = Wrap(footAng[1] + 3.14159265f);
-        else fromFoot = false, crankAng = Wrap(tailAng + g_phaseOff);
-        if (fromFoot) {
-            g_phaseOff = Wrap(crankAng - tailAng);
-            if (g_haveLastAng) { // research: does the crank bone turn as fast as the feet?
-                g_footTurn += std::fabs(Wrap(crankAng - g_lastFootAng)) * 57.29578f;
-                g_tailTurn += std::fabs(Wrap(tailAng - g_lastTailAng)) * 57.29578f;
-            }
-            g_lastFootAng = crankAng;
-            g_lastTailAng = tailAng;
-            g_haveLastAng = true;
-        } else {
-            g_haveLastAng = false;
-        }
-        for (int j = 0; j < 3; ++j)
-            o[kBikeCrank + j] = g_e1[j] * std::cos(crankAng) + g_e2[j] * std::sin(crankAng);
-        for (int s = 0; s < 2; ++s) {
-            float grip[3];
-            FromPart(g_gripLocal[s], rel[kNose], nose.off, grip);
-            o[kBikeHandOn + s] = OnAmount(Dist(hand[g_handBone[s]], grip), kHandNear, kHandFar);
-            if (o[kBikeHandOn + s] < g_handOnMin[s]) g_handOnMin[s] = o[kBikeHandOn + s];
-            if (o[kBikeFootOn + s] < g_footOnMin[s]) g_footOnMin[s] = o[kBikeFootOn + s];
-        }
-        for (int k = 0; k < kLinkBikeFloats; ++k) out[k] = o[k];
-        valid = true;
-    }
+    // ---- every pass ----
+    float b[16];
+    Mul4(g_offset.m, frame.m, b); // the bike frame in the board bone's convention
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 3; ++c) board12[r * 3 + c] = b[r * 4 + c];
+    *boardValid = true;
 
-    // ---- B6 log ----
-    ++g_samples;
-    bool worth = false;
-    for (int k = 0; k < kParts; ++k) {
-        Part& p = g_part[k];
-        if (idx[k + 1] < 0) continue;
-        p.angle = AngleBetween(rel[k], p.rest, p.axis);
-        if (p.angle > p.maxAngle) {
-            p.maxAngle = p.angle;
-            for (int j = 0; j < 3; ++j) p.maxAxis[j] = p.axis[j];
+    float* o = g_out;
+    // fork / bars
+    const M4 front = Clean(bb[bi[kFront]].m);
+    float relFront[9];
+    Relative(front.m, b, relFront);
+    TurnSince(g_frontRest, relFront, o + kBikeFork);
+    const float forkAng = Angle3(o + kBikeFork);
+    if (forkAng > g_forkMax) g_forkMax = forkAng;
+    // crank: axle -> pedal on the bike's right, square to the bike's x
+    float axle[3], pedal[3];
+    ToSpace(bb[bi[kCrank]].m + 12, b, axle);
+    ToSpace(bb[bi[g_pedalBone[0]]].m + 12, b, pedal);
+    const float arm[3] = {0.0f, pedal[1] - axle[1], pedal[2] - axle[2]};
+    const float l = std::sqrt(arm[1] * arm[1] + arm[2] * arm[2]);
+    if (l > 1e-3f) {
+        o[kBikeCrank] = 0.0f;
+        o[kBikeCrank + 1] = arm[1] / l;
+        o[kBikeCrank + 2] = arm[2] / l;
+        const float ang = std::atan2(arm[2], arm[1]);
+        if (g_haveCrankAng) {
+            float d = ang - g_lastCrankAng;
+            while (d > 3.14159265f) d -= 6.2831853f;
+            while (d < -3.14159265f) d += 6.2831853f;
+            g_crankTurn += std::fabs(d) * 57.29578f;
         }
-        if (p.angle > kLogAngle) {
-            if (!p.turnedSince) p.turnedSince = now;
-            if (now - p.turnedSince < kAlwaysTurnedMs) worth = true;
-        } else {
-            p.turnedSince = 0;
+        g_lastCrankAng = ang;
+        g_haveCrankAng = true;
+    }
+    // hands on the grips (each side's grip moves with the fork), feet on the pedals
+    for (int s = 0; s < 2; ++s) {
+        const float* gl = g_gripLocal[s];
+        float grip[3];
+        for (int j = 0; j < 3; ++j)
+            grip[j] = front.m[12 + j] + gl[0] * front.m[j] + gl[1] * front.m[4 + j] + gl[2] * front.m[8 + j];
+        o[kBikeHandOn + s] = OnAmount(Dist(wrist[g_handBone[s]], grip), kHandNear, kHandFar);
+        const float d = Dist(foot[g_footBone[s]], bb[bi[kCrank]].m + 12);
+        o[kBikeFootOn + s] = OnAmount(d, kFootNear, kFootFar);
+        if (d < g_footMin[s]) g_footMin[s] = d;
+        if (d > g_footMax[s]) g_footMax[s] = d;
+        if (o[kBikeHandOn + s] < g_handOnMin[s]) g_handOnMin[s] = o[kBikeHandOn + s];
+        if (o[kBikeFootOn + s] < g_footOnMin[s]) g_footOnMin[s] = o[kBikeFootOn + s];
+    }
+    for (int k = 0; k < kLinkBikeFloats; ++k) out[k] = o[k];
+    ++g_samples;
+    return true;
+}
+
+// ---- B12: the bike lying in the world while the rider is off it ----
+namespace {
+bool g_dropOn = false;           // rider off the bike, tracking
+bool g_dropConfirmed = false, g_dropAttached = false, g_dropHaveStart = false;
+float g_dropRider0[3] = {}, g_dropLocal0[3] = {}, g_dropWorld0[3] = {};
+bool g_haveOffset = false;       // g_offset from some riding pose (else: identity; test 13:57 showed identity)
+unsigned g_dropFound = 0, g_dropValid = 0;
+float g_dropDist = 0.0f;
+} // namespace
+
+bool DroppedBikeTick(unsigned long skater, unsigned long riderSkeleton, bool onBike, const float* orient16,
+                     const float* pos3, void (*log)(const char*, ...), float* out12)
+{
+    if (g_haveRest) g_haveOffset = true;
+    if (onBike || !skater) {
+        if (g_dropOn) {
+            g_dropOn = false;
+            g_dropHaveStart = false;
+        }
+        return false;
+    }
+    if (!g_dropOn) {
+        g_dropOn = true;
+        g_dropConfirmed = g_dropAttached = g_dropHaveStart = false;
+    }
+    const unsigned long bikeSkel = FindBikeSkeleton(riderSkeleton, skater, log);
+    if (!bikeSkel) return false;
+    static BoneMatrix bb[32];
+    const int bn = ReadSkeletonBones(bikeSkel, bb, 32);
+    if (bn <= 0) return false;
+    int fi = -1;
+    for (int i = 0; i < bn; ++i)
+        if (bb[i].name == kBikeBoneFrame) { fi = i; break; }
+    if (fi < 0) return false;
+    ++g_dropFound;
+    // the board convention (offset x frame) in the rider's space, then THAW's world
+    M4 frame = Clean(bb[fi].m), b;
+    if (g_haveOffset) Mul4(g_offset.m, frame.m, b.m);
+    else b = frame;
+    float w[12];
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            w[r * 3 + c] = b.m[r * 4] * orient16[c] + b.m[r * 4 + 1] * orient16[4 + c] + b.m[r * 4 + 2] * orient16[8 + c];
+    for (int c = 0; c < 3; ++c)
+        w[9 + c] = pos3[c] + b.m[12] * orient16[c] + b.m[13] * orient16[4 + c] + b.m[14] * orient16[8 + c];
+    const float local[3] = {b.m[12], b.m[13], b.m[14]};
+    if (!g_dropHaveStart) {
+        g_dropHaveStart = true;
+        for (int c = 0; c < 3; ++c) {
+            g_dropRider0[c] = pos3[c];
+            g_dropLocal0[c] = local[c];
+            g_dropWorld0[c] = w[9 + c];
         }
     }
-    // the cranks turn all the time while pedalling: only the fork makes a line
-    worth = g_part[kNose].angle > kLogAngle;
-    if (!worth || now - g_lastLine < kLineGapMs) return valid;
-    g_lastLine = now;
-    ++g_lines;
-    const Part* q = g_part;
-    log("bike parts: fork %3.0f deg (%.2f %.2f %.2f) | cranks %3.0f (%.2f %.2f %.2f) | hands on %.1f %.1f | feet on "
-        "%.1f %.1f", q[kNose].angle, q[kNose].axis[0], q[kNose].axis[1], q[kNose].axis[2], q[kTail].angle,
-        q[kTail].axis[0], q[kTail].axis[1], q[kTail].axis[2], g_out[kBikeHandOn], g_out[kBikeHandOn + 1],
-        g_out[kBikeFootOn], g_out[kBikeFootOn + 1]);
-    return valid;
+    if (!g_dropConfirmed && !g_dropAttached && Dist(pos3, g_dropRider0) > 10.0f) {
+        const float worldMoved = Dist(w + 9, g_dropWorld0), localMoved = Dist(local, g_dropLocal0);
+        if (worldMoved < 3.0f) {
+            g_dropConfirmed = true;
+            log("bike parts: B12: reTHAWed's bike stays in the world after getting off (moved %.1f units while the "
+                "rider moved %.0f): the GTA bike will be put there", worldMoved, Dist(pos3, g_dropRider0));
+        } else if (localMoved < 2.0f) {
+            g_dropAttached = true;
+            log("bike parts: B12: reTHAWed's bike skeleton moves WITH the rider after getting off (not lying in the "
+                "world): not used");
+        }
+    }
+    g_dropDist = Dist(w + 9, pos3);
+    if (!g_dropConfirmed) return false;
+    for (int i = 0; i < 12; ++i) out12[i] = w[i];
+    ++g_dropValid;
+    return true;
 }
 
 void BikePartsSecond(void (*log)(const char*, ...))
 {
+    if (!g_onBike && g_dropOn && (g_dropFound || g_dropValid)) {
+        log("bike parts: B12 (off the bike): bike skeleton read %u times, sent %u times; bike %.0f units from the "
+            "rider%s", g_dropFound, g_dropValid, g_dropDist,
+            g_dropAttached ? " (moves with the rider: not used)" : (g_dropConfirmed ? "" : " (not confirmed yet)"));
+        g_dropFound = g_dropValid = 0;
+    }
     if (!g_onBike || !g_haveRest) return;
-    const Part* q = g_part;
-    log("bike parts (1 s, %u samples, %u lines): most turned: fork %.0f deg, cranks %.0f deg | lowest 'on' this second: "
-        "hands %.1f %.1f, feet %.1f %.1f (bike's right, left) | crank now %.2f %.2f %.2f | feet on: feet went round "
-        "%.0f deg, the crank bone %.0f deg",
-        g_samples, g_lines, q[kNose].maxAngle, q[kTail].maxAngle, g_handOnMin[0], g_handOnMin[1], g_footOnMin[0],
-        g_footOnMin[1], g_out[kBikeCrank], g_out[kBikeCrank + 1], g_out[kBikeCrank + 2], g_footTurn, g_tailTurn);
-    g_footTurn = g_tailTurn = 0.0f;
-    for (Part& p : g_part) p.maxAngle = 0.0f;
-    g_samples = g_lines = 0;
+    log("bike parts (1 s, %u samples): fork turned up to %.0f deg, cranks went round %.0f deg | lowest 'on': hands "
+        "%.1f %.1f, feet %.1f %.1f (bike's right, left) | crank now %.2f %.2f | feet to crank axle %.0f-%.0f, "
+        "%.0f-%.0f units", g_samples, g_forkMax, g_crankTurn, g_handOnMin[0], g_handOnMin[1], g_footOnMin[0],
+        g_footOnMin[1], g_out[kBikeCrank + 1], g_out[kBikeCrank + 2], g_footMin[0], g_footMax[0], g_footMin[1],
+        g_footMax[1]);
+    g_footMin[0] = g_footMin[1] = 1e9f;
+    g_footMax[0] = g_footMax[1] = 0.0f;
+    g_forkMax = 0.0f;
+    g_crankTurn = 0.0f;
+    g_samples = 0;
     g_handOnMin[0] = g_handOnMin[1] = g_footOnMin[0] = g_footOnMin[1] = 1.0f;
 }
 

@@ -8,7 +8,7 @@
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v10": only programs in the user's own Windows
+// Name "Local\MyPassthrough_v12": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 10;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v10";
+constexpr LONG kLinkVersion = 12;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2); 11: bike parts (8.29 B7); 12: dropped bike (8.29 B12)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v12";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -63,6 +63,15 @@ constexpr LONG kPaused = 8;       // reTHAWed is paused
 constexpr LONG kPoseValid = 16;   // thawOrient and thawBoard were read (phase R4-2)
 constexpr LONG kBodyValid = 32;   // thawBody was read (phase 5-3d)
 constexpr int kLinkBodyBones = 20; // order: see kBodyBones in src/thaw/pose.cpp
+constexpr LONG kBikeValid = 64;   // thawBike was worked out (rider on the bike, 8.29 B7)
+// thawBike (8.29 B7), all in the space of reTHAWed's bike frame (Bone_Board_Root:
+// x = bike's right, y = towards the back wheel, z = bike's up):
+constexpr int kBikeFork = 0;      // 9: the fork's turn since the riding pose (rows, row vectors)
+constexpr int kBikeCrank = 9;     // 3: direction from the crank axle to the pedal on the bike's right (unit)
+constexpr int kBikeHandOn = 12;   // 2: rider's hand on the grip, bike's right then left (0..1)
+constexpr int kBikeFootOn = 14;   // 2: rider's foot on the pedal, bike's right then left (0..1)
+constexpr int kLinkBikeFloats = 16;
+constexpr LONG kDroppedBikeValid = 128; // thawDroppedBike: reTHAWed's bike lying in the world (8.29 B12)
 
 // reserved[0] bits (temporary test shortcuts; the touchpad is not in GTA's pad)
 constexpr LONG kPadRawTouch = 1;  // DualSense touchpad pressed down (clicked)
@@ -162,8 +171,15 @@ struct LinkBlock {
     volatile float gtaPlaceAt[3];
     volatile LONG gtaPlaceSeq;
     volatile LONG thawPlaceDone;
+    // ---- 8.29 B7 (version 11), written by the THAW plugin under thawSeq
+    // with kBikeValid: reTHAWed's bike parts, see kBike* above.
+    volatile float thawBike[kLinkBikeFloats];
+    // ---- 8.29 B12 (version 12), under thawSeq with kDroppedBikeValid: while
+    // the rider is off the bike, reTHAWed's bike frame in THAW's world (rows
+    // right, up (towards the back), at (up), position), same convention as thawBoard.
+    volatile float thawDroppedBike[12];
 };
-static_assert(sizeof(LinkBlock) == 524, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 636, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {
@@ -178,6 +194,8 @@ struct SkaterShared {
     float board[12] = {};  // valid with kPoseValid
     float body[kLinkBodyBones * 3] = {}; // valid with kBodyValid
     long long frameQpc = 0;              // 5-3f: when this reTHAWed frame was first seen
+    float bike[kLinkBikeFloats] = {};    // 8.29 B7: valid with kBikeValid
+    float droppedBike[12] = {};          // 8.29 B12: valid with kDroppedBikeValid
 };
 
 // THAW side (the only writer): publish one sample.
@@ -196,6 +214,8 @@ inline void PublishSkater(LinkBlock* b, const SkaterShared& s)
     for (int i = 0; i < 9; ++i) b->thawOrient[i] = s.orient[i];
     for (int i = 0; i < 12; ++i) b->thawBoard[i] = s.board[i];
     for (int i = 0; i < kLinkBodyBones * 3; ++i) b->thawBody[i] = s.body[i];
+    for (int i = 0; i < kLinkBikeFloats; ++i) b->thawBike[i] = s.bike[i];
+    for (int i = 0; i < 12; ++i) b->thawDroppedBike[i] = s.droppedBike[i];
     b->thawFrameQpcLo = static_cast<LONG>(s.frameQpc & 0xFFFFFFFFll);
     b->thawFrameQpcHi = static_cast<LONG>(s.frameQpc >> 32);
     InterlockedExchange(&b->thawSeq, seq + 2); // even: done
@@ -221,6 +241,8 @@ inline bool ReadSkaterShared(const LinkBlock* b, SkaterShared& out, int& retries
         for (int i = 0; i < 9; ++i) out.orient[i] = b->thawOrient[i];
         for (int i = 0; i < 12; ++i) out.board[i] = b->thawBoard[i];
         for (int i = 0; i < kLinkBodyBones * 3; ++i) out.body[i] = b->thawBody[i];
+        for (int i = 0; i < kLinkBikeFloats; ++i) out.bike[i] = b->thawBike[i];
+        for (int i = 0; i < 12; ++i) out.droppedBike[i] = b->thawDroppedBike[i];
         out.frameQpc = (static_cast<long long>(b->thawFrameQpcHi) << 32) |
                        static_cast<long long>(static_cast<unsigned long>(b->thawFrameQpcLo));
         MemoryBarrier();

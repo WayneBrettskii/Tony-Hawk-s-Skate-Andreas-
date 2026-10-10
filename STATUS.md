@@ -1,13 +1,13 @@
-# WHERE WE LEFT OFF (2026-10-10 13:50)
+# WHERE WE LEFT OFF (2026-10-10 14:30)
 
-BMX (DESIGN 8.29). Working: B1-B5 (riding, smoothing, bike flips with CJ), hands on the grips (B7, roughly).
-Now: **B8 research build** (log only): find reTHAWed's bike skeleton. To test.
-Then: bar spins / tailwhips / crank flips from it; feet on the pedals (B7 fix 1 to check); slight stutter
-in flips; then the map (T4 with `[Memory] HashItem=100000`, rail budget via `Out set RailPoint`).
+BMX (DESIGN 8.29): tricks and feet look good (user 14:11). Now: B10, B11 work; **B12** (GTA bike lies where reTHAWed's dropped bike lies, so the Square
+pick-up looks right): built, to test.
+Open: slight stutter = GTA running at 44-60 fps while riding; options in DESIGN 8.29 (user to choose).
+Then the map (T4 with `[Memory] HashItem=100000`, rail budget via `Out set RailPoint`).
 
 ---
 
-# STATUS: BMX tricks (bar spins, tailwhips) don't show on the GTA bike
+# STATUS: BMX tricks (bar spins, tailwhips) don't show on the GTA bike (SOLVED 13:57: B9, from the bike's own skeleton)
 
 **Written 2026-10-10 13:50 after two attempts didn't work (AGENTS.md rule).** No third guess.
 

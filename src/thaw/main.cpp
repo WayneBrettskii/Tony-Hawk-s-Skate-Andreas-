@@ -51,7 +51,6 @@
 #include "input.h"
 #include "pose.h"
 #include "bikeparts.h"
-#include "bikefind.h"
 #include "drawlog.h"
 #include "touchpad.h"
 #include "music.h"
@@ -702,14 +701,25 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::PoseSample pose;
         float bikeParts[mp::kLinkBikeFloats] = {};
         bool bikePartsOk = false;
+        float droppedBike[12] = {};
+        bool droppedOk = false;
         if (canReadPose && sample.readOk && sample.skater) {
             SamplePose(sample.skater, tag, logLine, pose);
-            // 8.29 B6 / B7: the bike's fork and cranks, the rider's hands and feet on them
-            bikePartsOk = mp::thaw::BikePartsTick(sample.skater, g_link && g_link->thawBikeState == mp::kBikeStateOn,
-                                                  &Log, bikeParts);
-            // 8.29 B8 research (log only): find the bike's own skeleton
-            mp::thaw::BikeFindTick(g_link && g_link->thawBikeState == mp::kBikeStateOn,
-                                   pose.readOk ? pose.skeleton : 0, &Log);
+            // 8.29 B9: reTHAWed's own bike skeleton: its frame (instead of the
+            // rider's board bone, so tailwhips show), fork, cranks; hands / feet on them
+            float bikeBoard[12];
+            bool bikeBoardOk = false;
+            bikePartsOk = mp::thaw::BikePartsTick(sample.skater, pose.readOk ? pose.skeleton : 0,
+                                                  g_link && g_link->thawBikeState == mp::kBikeStateOn, &Log, bikeParts,
+                                                  bikeBoard, &bikeBoardOk);
+            if (bikeBoardOk && pose.readOk && pose.boardIndex >= 0)
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 3; ++c) pose.board.m[r * 4 + c] = bikeBoard[r * 3 + c];
+            // 8.29 B12: reTHAWed's bike lying in the world while the rider is off it
+            if (pose.readOk && sample.readOk)
+                droppedOk = mp::thaw::DroppedBikeTick(sample.skater, pose.skeleton,
+                                                      g_link && g_link->thawBikeState == mp::kBikeStateOn,
+                                                      pose.orient, sample.pos, &Log, droppedBike);
         }
         quickSkater = sample.readOk ? sample.skater : 0;
 
@@ -751,6 +761,10 @@ DWORD WINAPI MainThread(LPVOID)
                 if (bikePartsOk) {
                     shared.flags |= mp::kBikeValid;
                     for (int i = 0; i < mp::kLinkBikeFloats; ++i) shared.bike[i] = bikeParts[i];
+                }
+                if (droppedOk) {
+                    shared.flags |= mp::kDroppedBikeValid;
+                    for (int i = 0; i < 12; ++i) shared.droppedBike[i] = droppedBike[i];
                 }
             }
             if (canReadState && state.readOk) {
@@ -803,7 +817,6 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::TagsSecond(&Log);
         mp::thaw::BmxSecond(&Log);
         mp::thaw::BikePartsSecond(&Log);
-        mp::thaw::BikeFindSecond(&Log);
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
                         published, g_repeatSamples, g_newFrames);
