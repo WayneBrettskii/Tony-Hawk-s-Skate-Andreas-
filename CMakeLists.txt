@@ -73,6 +73,8 @@ target_link_libraries(thaw_plugin PRIVATE hid setupapi) # touchpad.cpp (temporar
 # --- Launcher: my-passthrough-launcher.exe (starts reTHAWed) ---
 # Stays in the build folder; nothing is copied into the reTHAWed install.
 set(RETHAWED_DIR "D:/Games/reTHAWed" CACHE PATH "reTHAWed install folder (read only)")
+# 8.27 radio wheel: the GTA plugin reads reTHAWed's logo (ReTHAWed_NotifIcon.ico) from there at run time
+target_compile_definitions(gta_plugin PRIVATE "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"")
 add_executable(launcher src/launcher/main.cpp)
 set_target_properties(launcher PROPERTIES
     OUTPUT_NAME "my-passthrough-launcher"

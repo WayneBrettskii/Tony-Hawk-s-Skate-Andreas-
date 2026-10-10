@@ -2,8 +2,10 @@
 //
 // Stations: reTHAWed's own soundtrack (played by reTHAWed), GTA's radio stations
 // (played by GTA on foot), Off. Hold Back (Create / Share on PlayStation, View
-// on Xbox) for 0.4 s to step to the next station; its name shows at the top of
-// the screen. A quick tap of Back still reaches reTHAWed (on release).
+// on Xbox) for 0.4 s: a GTA V-style wheel of station logos opens (GTA's own
+// logos from models\fronten1.txd, reTHAWed's from its install); point the right
+// stick, let go of Back to choose. A quick tap of Back still reaches reTHAWed
+// (on release).
 // Only while skate mode is on; off = GTA radio stopped and reTHAWed's music
 // paused (user 20:35: its music only plays in skate mode while GTA runs).
 
@@ -14,8 +16,9 @@
 namespace mp::gta {
 
 // padlink.cpp, GTA's main thread, every controller frame before the pad goes
-// to reTHAWed: the Back hold / tap filter.
-void RadioFilterPad(LONG& buttons);
+// to reTHAWed: the Back hold / tap filter and the wheel's right stick (axes in
+// kAxis* order; the right stick is zeroed for reTHAWed while the wheel is open).
+void RadioFilterPad(LONG& buttons, short* axes);
 
 // GTA's main thread, once per world update.
 void RadioFrame(LinkBlock* link, LogFn log);

@@ -27,10 +27,14 @@
 //
 // It only reads from the reTHAWed folder; it never writes there.
 
+// 8.27: also starts reTHAWed paused and, before it runs, lets its sound effects
+// keep playing behind other windows (PatchSoundFocus; in memory only).
+
 #include <windows.h>
 #include <tlhelp32.h>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <cwctype>
 #include <string>
 #include <vector>
@@ -184,6 +188,51 @@ bool InjectPlugin(HANDLE process, const std::wstring& dllPath)
     return result != 0;
 }
 
+// 8.27 sound fix (user 21:40: no skate sounds while GTA is in front).
+// reTHAWed makes its sound-effect buffers (0x00443F3B..0x00443FBD, IDirectSound
+// CreateSoundBuffer) with flags 0x400B0 / 0x400E0: no DSBCAPS_GLOBALFOCUS
+// (0x8000), so Windows mutes them whenever another program is in front. Its
+// music uses another path and kept playing. We add 0x8000 to both flag values
+// in reTHAWed's memory (nothing on disk), checked byte for byte first.
+// reTHAWed.exe has no address randomisation (image base 0x400000, checked).
+void PatchSoundFocus(HANDLE process)
+{
+    struct Site {
+        DWORD address;            // the instruction: mov dword [reg+0x18], flags
+        unsigned char expect[7];
+        const char* what;
+    };
+    const Site sites[] = {
+        {0x00443F48, {0xC7, 0x41, 0x18, 0xB0, 0x00, 0x04, 0x00}, "3D sound effects (0x400B0)"},
+        {0x00443F7B, {0xC7, 0x42, 0x18, 0xE0, 0x00, 0x04, 0x00}, "other sound effects (0x400E0)"},
+    };
+    for (const Site& s : sites) {
+        unsigned char now[7] = {};
+        SIZE_T got = 0;
+        if (!ReadProcessMemory(process, reinterpret_cast<LPCVOID>(static_cast<ULONG_PTR>(s.address)), now, sizeof(now), &got) ||
+            got != sizeof(now) || memcmp(now, s.expect, sizeof(now)) != 0) {
+            Log("sound fix: code at 0x%08lX is not as expected; sound effects left as they are (%s)", s.address, s.what);
+            continue;
+        }
+        const ULONG_PTR flagByte = static_cast<ULONG_PTR>(s.address) + 4; // second byte of the flags: 0x00 -> 0x80
+        DWORD old = 0;
+        if (!VirtualProtectEx(process, reinterpret_cast<LPVOID>(flagByte), 1, PAGE_EXECUTE_READWRITE, &old)) {
+            Log("sound fix: could not unlock 0x%08lX (Windows error %lu)", static_cast<unsigned long>(flagByte), GetLastError());
+            continue;
+        }
+        const unsigned char value = 0x80;
+        SIZE_T written = 0;
+        const BOOL ok = WriteProcessMemory(process, reinterpret_cast<LPVOID>(flagByte), &value, 1, &written);
+        DWORD tmp = 0;
+        VirtualProtectEx(process, reinterpret_cast<LPVOID>(flagByte), 1, old, &tmp);
+        FlushInstructionCache(process, reinterpret_cast<LPCVOID>(flagByte), 1);
+        if (ok && written == 1)
+            Log("sound fix: %s now keep playing behind other windows (global focus added at 0x%08lX)", s.what, s.address);
+        else
+            Log("sound fix: could not write 0x%08lX (Windows error %lu)", static_cast<unsigned long>(flagByte), GetLastError());
+    }
+}
+
 int Run()
 {
     const std::wstring gameDir = Widen(MP_RETHAWED_DIR);
@@ -225,18 +274,25 @@ int Run()
     else
         Log("controller fix: could not set %ls (Windows error %lu)", kSdlRawInputVar, GetLastError());
 
-    // 2. Start it from its own folder.
+    // 2. Start it from its own folder (paused, for the sound fix below).
     std::wstring cmdLine = L"\"" + exePath + L"\"";
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
-    if (!CreateProcessW(exePath.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, 0, nullptr,
+    if (!CreateProcessW(exePath.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr,
                         gameDir.c_str(), &si, &pi)) {
         Log("ERROR: could not start reTHAWed.exe (Windows error %lu). Stopping.", GetLastError());
         return 1;
     }
     const ULONGLONG launchTick = GetTickCount64();
-    Log("started reTHAWed.exe, process id %lu", pi.dwProcessId);
+    Log("started reTHAWed.exe (paused), process id %lu", pi.dwProcessId);
+    // 8.27 sound fix, before any of reTHAWed's code runs: its sound effects get
+    // DirectSound's "global focus" flag, so they keep playing behind GTA.
+    PatchSoundFocus(pi.hProcess);
+    if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1))
+        Log("ERROR: could not resume reTHAWed (Windows error %lu)", GetLastError());
+    else
+        Log("reTHAWed running");
 
     // 3. Wait for rthw.dll.
     std::vector<std::wstring> modules;
@@ -292,6 +348,7 @@ int Run()
 }
 
 } // namespace
+
 
 int main()
 {

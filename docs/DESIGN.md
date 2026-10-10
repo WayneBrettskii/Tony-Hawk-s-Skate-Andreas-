@@ -708,9 +708,15 @@ GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src
 
 **R1 test (user 20:45):** Back hold steps stations, names right (log: 1 Playback FM ... 11 WCTR, 12 user tracks, 13 radio off); reTHAWed station plays, reTHAWed music pauses/resumes. GTA stations did not play and GTA stuttered: GTA's interior-radio code (CAEAmbienceTrackManager 0x4D6E60, read from gta_sa.exe) stops any radio every frame while CJ is outside a club/house (StopRadio calls at 0x4D71D2, 0x4D71FD, 0x4D7221), and our restart every 3 s loaded the station each time (hitch). **Fix 1:** those 3 calls go to our function, which skips the stop only while our skate-mode GTA station plays (calls checked first: E8 -> 0x506F70); at most one restart per station.
 
-**R2 (next, after fix 1 works): GTA V-style wheel with station icons** (user 20:45). Icons are not shipped with the mod or put in the repo (game / Rockstar artwork, AGENTS.md rule 1); the mod reads PNG files the user puts in `GTA San Andreas\modloader\my-passthrough\radio\` (names: `rethawed.png`, `1.png` ... `11.png`, maybe `off.png`), decoded with Windows' own image reader (WIC) into GTA textures. A missing icon = the station name in its slot.
+**R2 (next): GTA V-style wheel with station icons** (user 20:45). Icons are not shipped with the mod or put in the repo (game artwork, AGENTS.md rule 1). **GTA's own station logos are in the game** (found 21:20): `models\fronten1.txd` (the Audio Setup menu's file) has 128x128 DXT1 textures `radio_playback`, `radio_krose`, `radio_KDST`, `radio_bounce`, `radio_SFUR`, `radio_RLS`, `radio_RADIOX`, `radio_csr`, `radio_kjah`, `radio_mastersounds`, `radio_WCTR`, `radio_TPLAYER`. The mod loads that file at run time from the install (read only, through GTA's own texture store) and uses them directly; nothing is copied or downloaded. Optional: PNG files in `GTA San Andreas\modloader\my-passthrough\radio\` (`1.png` ... `11.png`, `rethawed.png`) would replace them. A missing icon = the station name in its slot. The reTHAWed station's icon is reTHAWed's own logo, read at run time (read only) from `D:\Games\reTHAWed\ReTHAWed_NotifIcon.ico` (256x256, checked 20:50); a `rethawed.png` in the folder above would replace it.
 
-**Then:** R3 remember the choice, maybe skip track (SkipMusicTrack) and user tracks.
+**R2 result (21:28):** the wheel works. **Volume:** GTA's stations were much louder than reTHAWed's skating sounds; GTA's per-frame music fader call (0x50B815 -> 0x506E40) now goes through ours, which scales it by a skate-radio level (default 50%) while our GTA station plays; D-pad Up/Down on the open wheel change it.
+
+**Skate sounds behind GTA (21:40):** reTHAWed's sound effects are DirectSound buffers made without "global focus" (flags 0x400B0 / 0x400E0 at 0x00443F48 / 0x00443F7B), so Windows mutes them while GTA is in front (its music is a separate stream path and plays). The launcher starts reTHAWed paused and adds the flag (0x8000) in memory before it runs.
+
+**21:49 (user):** sound fix works. GTA radio default stays 50%. Added: User Track Player slot (station 12, GTA's own logo); D-pad Up/Down on the open wheel changes the volume of the pointed station (reTHAWed = its own music volume through SetMusicVolume 0x004B4F10, link reserved[3]/[4]; put back when GTA closes).
+
+**Then:** R3 remember the choice and the volumes between sessions, maybe skip track (SkipMusicTrack).
 
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 

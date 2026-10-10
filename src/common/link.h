@@ -110,7 +110,9 @@ struct LinkBlock {
     // plugin's own read of the DualSense (src/thaw/touchpad.cpp), kPadRaw* bits.
     // Read with PadRawButtons().
     // reserved[1], [2] (8.27 radio): written by GTA: wanted reTHAWed music
-    // (kMusic*) and GTA's GetTickCount() when written. reserved[3..5] unused.
+    // (kMusic*) and GTA's GetTickCount() when written.
+    // reserved[3] (GTA): wanted reTHAWed music volume 0..100, -1 = leave it.
+    // reserved[4] (THAW): reTHAWed's current music volume 0..100. [5] unused.
     LONG reserved[6];               // was padding to 128 bytes in version 3
 
     // ---- phase R4-2, written by the THAW plugin under thawSeq ----

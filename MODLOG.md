@@ -2,12 +2,43 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-09] Radio: User Track Player on the wheel; reTHAWed music volume on the wheel
+
+**Changed:** `src/gta/radio.cpp`: the wheel has 14 slots: User Track Player (GTA station 12, GTA's own logo `radio_TPLAYER`) added after WCTR. D-pad Up / Down on the open wheel now change the volume of the station pointed at: a GTA station = GTA radio while skating (default 50%, as before); reTHAWed = reTHAWed's own music volume (0-100 in steps of 10; shows reTHAWed's current value until changed). Sent to reTHAWed through the link (reserved[3]). `src/thaw/music.cpp`: on reTHAWed's game thread, sets its music volume with its own SetMusicVolume (0x004B4F10; 3 more code checks, verified on the cloud copy) when GTA asks; reports the current value back (reserved[4]); puts reTHAWed's own volume back when GTA closes. Music only; sound effects untouched. `src/common/link.h`: reserved[3], [4] described.
+**Why:** user 21:49: keep GTA radio at 50% with the option; make the reTHAWed station's volume adjustable; add the User Track Player for people's own music.
+**Tested how:** not tested.
+**Result:** none yet.
+
+## [2026-10-09] Sound fix: reTHAWed's sound effects keep playing behind GTA
+
+**Changed:** `src/launcher/main.cpp`: reTHAWed is now started paused (CREATE_SUSPENDED); before it runs, the launcher adds DirectSound's "global focus" flag (DSBCAPS_GLOBALFOCUS, 0x8000) to the two flag values reTHAWed uses when it makes its sound-effect buffers (0x00443F48: 0x400B0 for 3D sounds, 0x00443F7B: 0x400E0 for the others; each instruction checked byte for byte first, then one byte 0x00 -> 0x80 written with WriteProcessMemory, in memory only), then lets it run. Logged in launcher.log. reTHAWed.exe has no address randomisation (image base 0x400000, DllCharacteristics 0).
+**Why:** user 21:40: with GTA's radio at 0% the skate sounds still weren't heard. Found in reTHAWed.exe: its sound-effect buffers (IDirectSound CreateSoundBuffer at 0x00443FBD) are made without global focus, so Windows mutes them whenever another program (GTA) is in front; its music goes another way (0x006B3xxx streams) and kept playing. So the skate sounds were probably never heard behind GTA, radio or not.
+**Side effect:** reTHAWed's sound effects also keep playing when reTHAWed is used alone and another window is in front.
+**Tested how:** user 21:49: launched with the new launcher, skated with GTA in front.
+**Result:** works: "It worked that time!" (skate sounds heard).
+
+## [2026-10-09] Radio volume while skating (GTA stations drowned out the skating sounds)
+
+**Changed:** `src/gta/radio.cpp`: GTA sets its music fader every frame from the screen fade (call at 0x50B815 to SetMusicFaderScalingFactor 0x506E40; checked first: E8 -> 0x506E40, also on the cloud copy). That call now goes through ours, which multiplies the value by a skate-radio level (default 50%) while our skate-mode GTA station plays; otherwise unchanged. Music only: sound effects and reTHAWed untouched. While the wheel is open, D-pad Up / Down change the level in 10% steps (kept from reTHAWed meanwhile); the wheel shows "GTA radio volume N%". Logged when changed. Not remembered between sessions yet (R3).
+**Why:** user 21:28: "gta radio stations are a lot louder and you can't really hear the skate sound effects".
+**Tested how:** user 21:35: volume set from 50% down to 0% and up to 40% (gta.log shows each change, redirect installed).
+**Result:** failed: the volume stayed the same. Cause (gta_sa.exe): GTA calls the fader only during a screen fade (CCamera music fade 0x50B6D0 returns at once when no fade is running), so our scaling was never applied. The hardware does use the fader for music channels (0x4D8CE2: fader +0x418 x music volume +0x410).
+**Fix (same day):** `ApplyFader()` sets the fader to the skate-radio level every world update while our GTA station plays, and back to 1 once afterwards (skate mode off, other station); during a fade the redirected call still multiplies. **Tested 21:40: works** ("The volume adjustment worked"). But at 0% the skate sounds still weren't heard: separate cause (sound fix above).
+
+## [2026-10-09] Radio step R2: GTA V-style station wheel with logos
+
+**Changed:** `src/gta/radio.cpp` (rewritten; the diagnostics are gone, fixes 1 and 2 kept): holding Back 0.4 s opens a wheel (13 slots around a dark see-through circle: reTHAWed, GTA stations 1-11, Off); the right stick points at a slot (dead zone half tilt), the pointed station is bigger and bright with its name in the middle, the current one has a gold frame; letting go of Back chooses it (name at the top for 2.5 s). While the wheel is open the right stick is zeroed for reTHAWed (no camera turn). Logos: GTA's own from `models\fronten1.txd` (loaded at run time into our own texture slot "mp_radio", `radio_playback` ... `radio_WCTR`), reTHAWed's from `<reTHAWed>\ReTHAWed_NotifIcon.ico` (Windows' image reader, WIC); nothing copied. A slot without a logo shows its name; Off shows "OFF". `src/gta/radio.h`, `src/gta/padlink.cpp`: the filter now gets the sticks too (called after the axes are filled). `CMakeLists.txt`: MP_RETHAWED_DIR for the GTA plugin. Plan: DESIGN 8.27 R2.
+**Why:** user 20:45 / 21:19: the wheel with icons; 21:17-21:20: GTA's own logos found in its files.
+**Tested how:** user 21:28: built and used.
+**Result:** works: "The wheel looks great". GTA stations were much louder than reTHAWed's skating sounds (volume entry above).
+
 ## [2026-10-09] Radio fix 2: GTA treats our station like an interior radio
 
 **Changed:** `src/gta/radio.cpp`: GTA's radio code (0x4EA590) asks, when CJ has no vehicle radio, whether an interior radio is playing (call at 0x4EA5C3 to 0x507280 -> AEAmbienceTrackManager 0x4D6D40) and stops the radio if not. That one call now goes to our function: "yes" while our skate-mode GTA station plays, GTA's own answer otherwise (call checked first: E8 -> 0x507280, verified on the cloud copy too). Diagnostics stay for this test (now also count the answers).
 **Why:** diagnostics test (user 21:01): every start was followed within a second by exactly one stop from 0x4EA5D2 (GTA's radio code, right after that question); no interior-code stops, no cutscene (state 8), flags 0xB7CB48/49 = 0, ambience track 0.
-**Tested how:** not tested.
-**Result:** none yet.
+**Tested how:** user 21:15: GTA stations while skating, switched through them and back to the reTHAWed station.
+**Result:** works: "Radio stations worked great", reTHAWed playlist back fine. gta.log: radio stays on after each start (manager status 3 = playing), no stop calls. First start of a session cost one frame-rate dip (478 frames in that 10 s), as when GTA loads a station in a car.
+**Still to do:** remove the diagnostics (next radio build); R2 wheel with icons.
 
 ## [2026-10-09] Radio diagnostics (log only): why GTA stations don't play on foot
 

@@ -82,7 +82,6 @@ void Publish()
     if (s.DPadDown) b |= kBtnDown;
     if (s.DPadLeft) b |= kBtnLeft;
     if (s.DPadRight) b |= kBtnRight;
-    RadioFilterPad(b); // 8.27: Back hold = radio, tap = passed on to reTHAWed
     in.buttons = b;
     in.axes[kAxisLX] = Clamp16(s.LeftStickX);
     in.axes[kAxisLY] = Clamp16(s.LeftStickY);
@@ -90,6 +89,8 @@ void Publish()
     in.axes[kAxisRY] = Clamp16(s.RightStickY);
     in.axes[kAxisL2] = Clamp16(s.LeftShoulder2);
     in.axes[kAxisR2] = Clamp16(s.RightShoulder2);
+    // 8.27: Back hold = radio wheel (right stick picks), tap = passed on to reTHAWed
+    RadioFilterPad(in.buttons, in.axes);
 
     g_lastButtons.store(b, std::memory_order_relaxed);
     for (int i = 0; i < kAxisCount; ++i) g_lastAxes[i].store(in.axes[i], std::memory_order_relaxed);
