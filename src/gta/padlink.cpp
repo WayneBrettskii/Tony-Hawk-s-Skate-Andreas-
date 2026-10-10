@@ -2,6 +2,7 @@
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CPad.h"
+#include "CTimer.h"
 #include <windows.h>
 
 #include "padlink.h"
@@ -112,10 +113,42 @@ void PublishSafe()
 }
 
 // Phase 3-4: all buttons up, sticks centred, for the rest of this frame.
-void BlankSafe()
+void BlankSafe(bool touched)
 {
     __try {
-        if (CPad* pad = CPad::GetPad(0)) std::memset(&pad->NewState, 0, sizeof(pad->NewState));
+        if (CPad* pad = CPad::GetPad(0)) {
+            std::memset(&pad->NewState, 0, sizeof(pad->NewState));
+            // 8.29: the player IS playing (in reTHAWed): without this GTA thinks the
+            // controller is idle and starts its cinematic "idle" camera (test 01:01)
+            if (touched) pad->LastTimeTouched = CTimer::m_snTimeInMilliseconds;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// 8.29: GTA's replay starts on the keyboard's F1 (CReplay::Update 0x460500,
+// key 1001) when its "replay allowed" byte 0x8A6160 is set and no control
+// flag is. Skate mode sets a control flag; BMX mode doesn't, and something
+// (probably DualSenseX turning a button into F1) started replays while the
+// radio wheel was used (user 01:06). Not allowed while skate / BMX mode is on.
+constexpr uintptr_t kReplayAllowed = 0x8A6160;
+bool g_replayBlocked = false;
+unsigned char g_replaySaved = 1;
+
+void BlockReplay(bool block)
+{
+    __try {
+        unsigned char& allowed = *reinterpret_cast<unsigned char*>(kReplayAllowed);
+        if (block && !g_replayBlocked) {
+            g_replaySaved = allowed;
+            g_replayBlocked = true;
+        }
+        if (block) {
+            allowed = 0;
+        } else if (g_replayBlocked) {
+            allowed = g_replaySaved;
+            g_replayBlocked = false;
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -127,8 +160,9 @@ void __cdecl OurUpdatePads()
     PublishSafe();
     // 8.28 d: the vehicle list (when open, GTA doesn't get the controller)
     const bool spawnerHolds = SpawnerPadFilter();
-    const bool blank = SkateModeIsOn();
-    if (blank || spawnerHolds) BlankSafe();
+    const bool blank = RideModeIsOn(); // 8.29: BMX mode too
+    if (blank || spawnerHolds) BlankSafe(blank);
+    BlockReplay(blank);
     if (blank) g_blanked.fetch_add(1, std::memory_order_relaxed);
     if (blank != g_wasBlanking) {
         g_wasBlanking = blank;

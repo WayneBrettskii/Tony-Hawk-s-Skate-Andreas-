@@ -4,6 +4,7 @@
 #include <windows.h>
 #include "input.h"
 #include "music.h"
+#include "bmx.h"
 
 #include <cstring>
 
@@ -71,6 +72,8 @@ unsigned char __cdecl HookGetButton(void* controller, int button)
 {
     // 8.27 radio: reTHAWed's game thread; pause / resume its music as GTA wants
     MusicGameThreadTick(g_link);
+    // 8.29 BMX: rider on / off the bike as CJ
+    BmxGameThreadTick(g_link);
     const LONG src = g_source;
     InterlockedIncrement(&g_calls[src]);
     if (src == kReal) return g_realGetButton(controller, button);
@@ -224,8 +227,8 @@ void InputTick(LinkBlock* link, InputLogFn log)
         why = "no link to GTA";
     } else if (link->gtaPid == 0) {
         why = "GTA not running";
-    } else if (link->gtaSkateMode != 1) {
-        why = "skate mode is off in GTA";
+    } else if (link->gtaSkateMode == 0) { // 1 skate mode, 2 BMX mode (8.29)
+        why = "skate / BMX mode is off in GTA";
     } else {
         InputShared in;
         if (!ReadInputShared(link, in) || in.count == 0) {
@@ -236,7 +239,7 @@ void InputTick(LinkBlock* link, InputLogFn log)
                 why = "GTA's controller frames stopped (over 100 ms old)";
             } else {
                 src = kFromGta;
-                why = "skate mode on, reTHAWed behind GTA";
+                why = link->gtaSkateMode == 2 ? "BMX mode on, reTHAWed behind GTA" : "skate mode on, reTHAWed behind GTA";
             }
         }
     }

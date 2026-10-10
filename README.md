@@ -29,6 +29,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Flips and rolls** (tested 2026-10-09): CJ's body turns with the skater's flips and rolls.
 - **Freak-out on bails** (tested 2026-10-09): the meter and animations show in GTA. Switch the freak-out on in reTHAWed's own options first (it's off by default there).
 - **Radio wheel** (tested 2026-10-09): hold Share / Back to open it; pick the reTHAWed soundtrack, any GTA station, the User Track Player or Off with the right stick; D-pad Up / Down sets the volume of the station you point at. reTHAWed's music only plays in skate mode. Skate sounds stay audible behind GTA. Choices are remembered in `radio-settings.ini`.
+- **Graffiti tags** (tested 2026-10-10, ground tags): in skate mode, get off the board and hold Triangle (reTHAWed's "Graffiti Tagging" on); a green Grove Street tag appears in GTA where CJ sprayed. Up to 50; not saved. Tags on walls not tested yet.
 - **Vehicle spawner** (tested 2026-10-09): F6 (skate mode off) opens a list of all GTA vehicles except trains, BMX at the top; D-pad / stick to move, Cross spawns, Circle or F6 closes.
 
 ## What doesn't work / not tested

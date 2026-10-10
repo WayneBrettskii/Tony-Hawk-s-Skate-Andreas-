@@ -149,7 +149,7 @@ void Frame()
         g_shown = g_uploads = g_torn = g_errors = 0;
         g_uploadMs = g_uploadMsMax = 0.0;
     }
-    if (!SkateModeIsOn() || !HaveLink() || g_hl->magic != kHudMagic) return;
+    if (!RideModeIsOn() || !HaveLink() || g_hl->magic != kHudMagic) return;
     if (now - static_cast<DWORD>(g_hl->tickMs) > kMaxAgeMs) return; // reTHAWed not sending
     Upload();
     if (g_haveImage && g_raster) Draw();

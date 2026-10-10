@@ -584,7 +584,7 @@ void DrawSafe()
 
 void RadioFilterPad(LONG& buttons, short* axes)
 {
-    if (!SkateModeIsOn()) {
+    if (!RideModeIsOn()) { // 8.29: BMX mode too
         g_backDown = g_backFired = false;
         g_tapFrames = 0;
         g_wheelOpen = false;
@@ -654,7 +654,7 @@ void RadioFrame(LinkBlock* link, LogFn log)
     BuildList();
     LoadSettings(log); // R3: station and volumes from last time
     PatchGta(log);
-    const bool on = SkateModeIsOn();
+    const bool on = RideModeIsOn(); // 8.29: BMX mode too
     if (!on) {
         // user 20:35: reTHAWed's music only plays in skate mode while GTA runs
         Tell(link, kMusicPause);

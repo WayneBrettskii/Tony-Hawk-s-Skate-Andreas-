@@ -54,6 +54,7 @@
 #include "touchpad.h"
 #include "music.h"
 #include "tags.h"
+#include "bmx.h"
 #include <tlhelp32.h>
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
@@ -623,6 +624,7 @@ DWORD WINAPI MainThread(LPVOID)
     if (canReadPose) mp::thaw::DisplayCodeChecksPass(&Log); // 8.26 body flips
     mp::thaw::MusicCodeChecksPass(&Log); // 8.27 radio
     mp::thaw::TagsStart(g_link, &Log);   // 8.28 a graffiti tags
+    mp::thaw::BmxCodeChecksPass(&Log);   // 8.29 BMX
 
     // Phase 5-3f: wake about every 1 ms and check only the skater's position;
     // when it changes, reTHAWed has a new frame: note the exact time, wait
@@ -774,6 +776,7 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::InputSecond(&Log);
         mp::thaw::MusicSecond(&Log);
         mp::thaw::TagsSecond(&Log);
+        mp::thaw::BmxSecond(&Log);
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
                         published, g_repeatSamples, g_newFrames);

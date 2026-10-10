@@ -21,6 +21,12 @@ void SkateModeFrameSafe(LinkBlock* link, LogFn log);
 // True while skate mode is on (used by the F8 teleport helper to refuse).
 bool SkateModeIsOn();
 
+// 8.29 B3: true while BMX mode is on (bmxmode.cpp).
+bool BmxModeIsOn();
+
+// Skate mode or BMX mode: reTHAWed has the controller (radio wheel, HUD, pad).
+inline bool RideModeIsOn() { return SkateModeIsOn() || BmxModeIsOn(); }
+
 // 8.28 a: a reTHAWed point (THAW units) and direction in GTA terms, with the
 // same mapping CJ uses right now. False when skate mode is off.
 bool SkateModeThawToGta(const float thawPos[3], const float thawDir[3], float gtaPos[3], float gtaDir[3]);

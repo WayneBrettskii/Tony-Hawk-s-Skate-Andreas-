@@ -46,6 +46,7 @@
 #include "radio.h"
 #include "spawner.h"
 #include "tags.h"
+#include "bmxmode.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -130,6 +131,8 @@ void AddHooks()
         mp::gta::SpawnerFrame(&Log);
         // 8.28 a: Grove tags for reTHAWed's graffiti tags.
         mp::gta::TagsFrame(g_link, &Log);
+        // 8.29: BMX mode (B1: reTHAWed's rider gets on / off the bike with CJ).
+        mp::gta::BmxFrame(g_link, &Log);
     });
 
     // Phase 5-1: draw the stand-in board (only while skate mode is on).

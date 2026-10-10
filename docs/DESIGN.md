@@ -739,11 +739,38 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
 - THAW: our update hook in vtable slot 0x006EE3C8 (calls the original) notes "tagging" (+0x1C); our call at 0x005F933A (forwards to 0x004135E0) counts finished tags. Published in link `reserved[5]`: bits 0-15 finished tags, bit 16 tagging now, bit 17 "tag watch working". Code checks first; nothing is patched if they fail.
 - GTA: the two calls above go through our functions: for one of GTA's 100 tags they do exactly what GTA did; for our tags they set the alpha to 255 (fully sprayed) instead of crashing. Then, in skate mode, each finished tag: a line from CJ's chest 1.5 m forward against GTA's buildings / objects; a wall hit (normal not steep) = tag on the wall, centred on the hit, 2 cm out; otherwise a line 2 m down = tag on the ground under CJ, top of the tag pointing where CJ faces. The tag's facing side comes from the model itself (its vertex normals, logged the first time). Object 1490, type 1, no collision, static, CJ's interior. Up to 50 of our tags; the 51st removes the oldest. They stay until GTA closes or a game is loaded; not saved.
 - Correction (test 23:36): the score script call at 0x005F933A only runs when a combo score is going (0x005F92F6 skips it otherwise), so it isn't "tag finished". The tag is put in reTHAWed's world by the call at 0x005F92E0 (to 0x005F8680, thiscall, 12 arguments, the 2nd = component +0x1E: 1 wall, 0 ground). We count that call instead and pass wall / ground on (link bit 18); GTA then looks for a wall only when reTHAWed tagged a wall. reTHAWed's rthw.dll wraps 0x005F8B20 (both its callers point to its own function, which calls the original), so the original code still runs.
+- **T1 result (user 00:03, 10-10): works for ground tags** (green Grove tag, flat, where CJ sprayed). The tag model (tag_01.dff, read from gta3.img at run time) is 2 x 2 m, facing -X. The tag-placing call's two vectors are a downward line (two points 24 units apart up / down), not spot + direction; and its 2nd argument said "wall" for these ground tags, so its meaning is probably reversed. Wall tags: not tried yet; to look at with a wall test (log the vectors of a wall tag).
 - Later (T2, after T1 works): spray can in CJ's hand and spray mist while "tagging now".
 
 **(c) BMX (large, several steps).** When CJ gets on a GTA BMX: switch reTHAWed's skater to its BMX mode, then GTA's bike and CJ follow reTHAWed's bike like CJ follows the skater now (position, facing, bike pose, CJ's body on the bike). Research first: how reTHAWed enters / leaves BMX mode (script command), the bike's bones, whether BMX is available in the user's save. Then the follow, then the animations.
 
 **Proposed order:** (d) spawner, (b) freak-out check, (a) tags, (c) BMX. Each tested before the next.
+
+### 8.29 (c) BMX mode (user 00:07, 10-10; written 00:20)
+
+**Asked:** reTHAWed's BMX (physics, tricks, animations) starts as soon as CJ gets on a GTA BMX. The radio wheel works as in skate mode. GTA's first missions (riding the BMX with the gang) must still be completable.
+
+**Research (reTHAWed, read only; scripts decompiled in a scratch folder outside the repo):**
+- reTHAWed's own bike switch is script 0x27065DA5 (used by its Vehicles quick menu and the debug menu's "Toggle Bike"); without parameters it toggles (on the bike <-> off), loading the "bmx_anims" set.
+- "Is on bike" (skater command 0xE91EAA16) = byte +0x524 of the skater's component 0x5BD63B29 (handler 0x005C74D0). Components are found with 0x0042E8C0 (thiscall, object, checksum).
+- Scripts are run with 0x004135E0 (cdecl: script checksum, parameters or 0, object, 0, 0, 0), as reTHAWed's own C code does (e.g. 0x005F9263).
+
+**Rules for missions (so they stay completable):**
+- CJ stays *in* GTA's BMX the whole time (GTA vehicle, CJ the rider). Missions see "CJ on his bike" as usual; the bike is moved to follow reTHAWed's rider instead of CJ being taken off it.
+- When BMX mode starts, reTHAWed's rider is moved to the GTA bike's spot (not CJ to the rider, as skate mode does), so where GTA / a mission put CJ counts.
+- Only where reTHAWed's map lines up with GTA's world (Los Santos East, or our GTA map); elsewhere CJ rides GTA's normal BMX (logged).
+- When GTA takes control (cutscene, mission switches player control off, CJ taken off the bike), BMX mode stops and the bike is GTA's again.
+- F7 / L3 + R3 switches it off and on by hand (escape hatch if a mission misbehaves).
+- To check with the first missions once B3 works (the "Big Smoke" bike ride).
+
+**Steps (each tested before the next):**
+- **B1:** link version 9 (`gtaBikeWish`, `thawBikeState`). GTA: CJ riding a BMX (model 481) -> wish "on bike", otherwise "off". THAW (on reTHAWed's game thread, at most every 1.5 s): runs the toggle script when the wish and the "on bike" byte differ, while in a level and not paused; publishes the byte. Logged both sides. GTA's own bike and controls unchanged in B1. Test: get on a BMX with F6, check reTHAWed's rider switched to the BMX (log, and look at reTHAWed).
+- **B1 result (00:29):** works (rider gets on / off with CJ; a switch takes about 3 s, so one toggle per change).
+- **B2:** move reTHAWed's rider to the GTA bike's spot when BMX mode starts. Found: reTHAWed's Obj_SetPosition (0x0042E9E0) writes the object's position (+0x68) and then calls every component's "teleported" function (component list +0x11C, next +0x10, vtable +0x24); facing is the matrix at +0x88 (rows right, up, at). We do the same from the THAW plugin on reTHAWed's game thread, plus facing and speed 0, when GTA asks through the link (version 10).
+- **B2 result (00:38):** works (rider 0.00 m from the GTA bike).
+- **B3 (written 00:55, not tested):** see MODLOG. Getting off: in reTHAWed with its own get-off-the-board buttons (L1 + R1; since fix 3 CJ then gets off the GTA bike too), or F7 / L3 + R3 then Triangle. While BMX mode is on, GTA doesn't push the rider back on the bike. GTA's replay (F1) is blocked in skate / BMX mode (fix 2). GTA's Triangle can't go straight through in BMX mode (it's a trick button in reTHAWed).
+- **B3 plan:** BMX mode itself: controller to reTHAWed (as skate mode), GTA's bike + CJ follow the rider (position, facing, lean); radio wheel as in skate mode; the rules above.
+- **B4:** looks: CJ's body copies the rider (tricks), the bike's tilt / spins; the bike's own parts (bars, wheels) if possible.
 
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 

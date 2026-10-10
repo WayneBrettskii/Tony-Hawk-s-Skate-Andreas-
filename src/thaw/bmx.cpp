@@ -1,0 +1,215 @@
+// my-passthrough: reTHAWed's rider on / off the BMX. See bmx.h.
+
+#include <windows.h>
+
+#include <cmath>
+
+#include "bmx.h"
+
+namespace mp::thaw {
+namespace {
+
+constexpr unsigned long kSkateManagerGlobal = 0x0074FB44; // as skater.cpp
+constexpr unsigned long kGetLocalSkater = 0x004A0160;     // thiscall (manager) -> skater
+constexpr unsigned long kGetComponent = 0x0042E8C0;       // thiscall (object, checksum) -> component
+constexpr unsigned long kRunScript = 0x004135E0;          // cdecl (script, params, object, 0, 0, 0)
+constexpr unsigned long kBikeComponent = 0x5BD63B29;      // the component holding "on bike"
+constexpr unsigned long kOnBikeByte = 0x524;
+constexpr unsigned long kToggleBikeScript = 0x27065DA5;   // reTHAWed's own bike on/off script
+constexpr DWORD kStaleMs = 5000;                          // GTA's tick older than this = GTA gone
+constexpr DWORD kRetryMs = 8000; // a switch takes ~3 s (animations load); a second toggle meanwhile restarts it (test 00:25)
+
+struct Check {
+    unsigned long address;
+    unsigned char bytes[12];
+    unsigned int length;
+    const char* what;
+};
+const Check kChecks[] = {
+    {0x0042E8C0, {0x53, 0x8B, 0x59, 0x60, 0x85, 0xDB, 0x74, 0x3B}, 8, "GetComponent"},
+    {0x005C74D0, {0x8A, 0x91, 0x24, 0x05, 0x00, 0x00, 0x33, 0xC0, 0x84, 0xD2}, 10, "IsOnBike reads +0x524"},
+    {0x005F925E, {0x68, 0xD4, 0xE3, 0x98, 0x93, 0xE8, 0x78, 0xA3, 0xE1, 0xFF}, 10, "a call to RunScript 0x4135E0"},
+    {0x004135E0, {0x55, 0x8B, 0x6C, 0x24, 0x08, 0x56, 0x55, 0xE8}, 8, "RunScript start"},
+    {0x004A0160, {0x53, 0x56, 0x57, 0x33, 0xFF, 0x83, 0xCE, 0xFF}, 8, "GetLocalSkater start"},
+    // B2: reTHAWed's Obj_SetPosition (0x0042E9E0) writes the position at +0x68,
+    // then calls every component's vtable +0x24 (list at +0x11C, next at +0x10)
+    {0x0042E9E9, {0x8D, 0x46, 0x68, 0x50, 0x68, 0x0A, 0x1B, 0xD3, 0xB9}, 9, "Obj_SetPosition: position at +0x68"},
+    {0x0042E9F7, {0x8B, 0xB6, 0x1C, 0x01, 0x00, 0x00, 0x85, 0xF6, 0x74, 0x0E, 0x8B, 0x16}, 12,
+     "Obj_SetPosition: component list at +0x11C"},
+    {0x0042EA03, {0x8B, 0xCE, 0xFF, 0x52, 0x24, 0x8B, 0x76, 0x10}, 8, "Obj_SetPosition: each component's +0x24, next +0x10"},
+};
+
+using GetSkaterFn = unsigned long(__thiscall*)(void*);
+using GetComponentFn = unsigned char*(__thiscall*)(void*, unsigned long);
+using RunScriptFn = int(__cdecl*)(unsigned long, void*, void*, DWORD, DWORD, DWORD);
+
+volatile LONG g_ok = 0;
+DWORD g_next = 0, g_lastToggle = 0;         // game thread only
+LONG g_lastWishSeen = kBikeLeave;           // game thread only: a new wish may toggle at once
+volatile LONG g_state = kBikeStateUnknown;  // last seen
+volatile LONG g_wish = kBikeLeave;
+volatile LONG g_toggles = 0, g_errors = 0, g_changes = 0;
+volatile LONG g_lastError = 0;
+volatile LONG g_placed = 0, g_placeErrors = 0;
+float g_placePos[3] = {}, g_placeAt[3] = {}; // last placement (for the log)
+
+using TeleportedFn = void(__thiscall*)(void*);
+
+// Like reTHAWed's Obj_SetPosition, plus the facing and no speed: put the rider
+// at pos (feet, THAW units), facing 'at' (level). Game thread only.
+bool PlaceRider(unsigned long skater, const float pos[3], const float at[3])
+{
+    __try {
+        unsigned char* s = reinterpret_cast<unsigned char*>(skater);
+        float* p = reinterpret_cast<float*>(s + 0x68);
+        float* v = reinterpret_cast<float*>(s + 0xC8);
+        float* m = reinterpret_cast<float*>(s + 0x88); // rows right, up, at (16 bytes each)
+        // keep the matrix's own handedness: is right = up x at, or the other way?
+        const float cx = m[5] * m[10] - m[6] * m[9], cy = m[6] * m[8] - m[4] * m[10], cz = m[4] * m[9] - m[5] * m[8];
+        const float sign = (cx * m[0] + cy * m[1] + cz * m[2]) < 0.0f ? -1.0f : 1.0f;
+        float ax = at[0], az = at[2];
+        const float len = ax * ax + az * az;
+        if (len < 1e-6f) return false;
+        const float inv = 1.0f / sqrtf(len);
+        ax *= inv;
+        az *= inv;
+        // up = (0, 1, 0), at = (ax, 0, az), right = sign * (up x at) = sign * (az, 0, -ax)
+        m[0] = sign * az; m[1] = 0.0f; m[2] = -sign * ax;
+        m[4] = 0.0f;      m[5] = 1.0f; m[6] = 0.0f;
+        m[8] = ax;        m[9] = 0.0f; m[10] = az;
+        p[0] = pos[0]; p[1] = pos[1]; p[2] = pos[2];
+        v[0] = v[1] = v[2] = 0.0f;
+        for (unsigned char* c = *reinterpret_cast<unsigned char**>(s + 0x11C); c;
+             c = *reinterpret_cast<unsigned char**>(c + 0x10)) {
+            void** vt = *reinterpret_cast<void***>(c);
+            reinterpret_cast<TeleportedFn>(vt[0x24 / 4])(c);
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        InterlockedExchange(&g_lastError, static_cast<LONG>(GetExceptionCode()));
+        return false;
+    }
+}
+
+// The rider's "on bike" byte: 1 / 0, or -1 if it can't be read.
+int ReadOnBike(unsigned long& skaterOut)
+{
+    __try {
+        void* manager = *reinterpret_cast<void**>(kSkateManagerGlobal);
+        if (!manager) return -1;
+        const unsigned long skater = reinterpret_cast<GetSkaterFn>(kGetLocalSkater)(manager);
+        if (!skater) return -1;
+        unsigned char* comp =
+            reinterpret_cast<GetComponentFn>(kGetComponent)(reinterpret_cast<void*>(skater), kBikeComponent);
+        if (!comp) return -1;
+        skaterOut = skater;
+        return comp[kOnBikeByte] ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        InterlockedExchange(&g_lastError, static_cast<LONG>(GetExceptionCode()));
+        return -1;
+    }
+}
+
+bool RunToggle(unsigned long skater)
+{
+    __try {
+        reinterpret_cast<RunScriptFn>(kRunScript)(kToggleBikeScript, nullptr, reinterpret_cast<void*>(skater), 0, 0, 0);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        InterlockedExchange(&g_lastError, static_cast<LONG>(GetExceptionCode()));
+        return false;
+    }
+}
+
+} // namespace
+
+bool BmxCodeChecksPass(void (*log)(const char*, ...))
+{
+    for (const Check& c : kChecks) {
+        const unsigned char* code = reinterpret_cast<const unsigned char*>(c.address);
+        for (unsigned int i = 0; i < c.length; ++i)
+            if (code[i] != c.bytes[i]) {
+                log("bmx: code check 0x%08lX (%s) DIFFERENT at byte %u; BMX mode off", c.address, c.what, i);
+                return false;
+            }
+    }
+    const unsigned long* entry = reinterpret_cast<const unsigned long*>(0x007326E0);
+    if (entry[0] != 0xE91EAA16 || entry[1] != kBikeComponent) {
+        log("bmx: 'is on bike' table entry different (0x%08lX 0x%08lX); BMX mode off", entry[0], entry[1]);
+        return false;
+    }
+    InterlockedExchange(&g_ok, 1);
+    log("bmx: code checks passed; reTHAWed's rider follows CJ on / off a BMX");
+    return true;
+}
+
+void BmxGameThreadTick(LinkBlock* link)
+{
+    if (!g_ok || !link) return;
+    const DWORD now = GetTickCount();
+    if (g_next && static_cast<LONG>(now - g_next) < 0) return;
+    g_next = now + 100;
+
+    unsigned long skater = 0;
+    const int onBike = ReadOnBike(skater);
+    const LONG state = onBike < 0 ? kBikeStateUnknown : (onBike ? kBikeStateOn : kBikeStateOff);
+    if (state != g_state) InterlockedIncrement(&g_changes);
+    InterlockedExchange(&g_state, state);
+    InterlockedExchange(&link->thawBikeState, state);
+
+    // B2: GTA asked to put the rider somewhere (once per request)
+    const LONG placeSeq = link->gtaPlaceSeq;
+    if (placeSeq != link->thawPlaceDone && skater) {
+        MemoryBarrier();
+        float pos[3], at[3];
+        for (int i = 0; i < 3; ++i) {
+            pos[i] = link->gtaPlacePos[i];
+            at[i] = link->gtaPlaceAt[i];
+        }
+        if (PlaceRider(skater, pos, at)) {
+            InterlockedIncrement(&g_placed);
+            for (int i = 0; i < 3; ++i) { g_placePos[i] = pos[i]; g_placeAt[i] = at[i]; }
+        } else {
+            InterlockedIncrement(&g_placeErrors);
+        }
+        InterlockedExchange(&link->thawPlaceDone, placeSeq); // done (or given up), either way once
+    }
+
+    LONG wish = link->gtaBikeWish;
+    if (now - static_cast<DWORD>(link->reserved[2]) > kStaleMs) wish = kBikeLeave; // GTA gone
+    InterlockedExchange(&g_wish, wish);
+    if (wish == kBikeLeave || state == kBikeStateUnknown) return;
+    const LONG flags = link->thawFlags;
+    if (!(flags & kInLevel) || (flags & kPaused)) return;
+    const bool newWish = wish != g_lastWishSeen;
+    g_lastWishSeen = wish;
+    const bool want = wish == kBikeOn;
+    if (want == (state == kBikeStateOn)) return;
+    // one toggle per wish; again only if reTHAWed still hasn't switched after kRetryMs
+    if (!newWish && g_lastToggle && now - g_lastToggle < kRetryMs) return;
+    g_lastToggle = now;
+    if (RunToggle(skater))
+        InterlockedIncrement(&g_toggles);
+    else
+        InterlockedIncrement(&g_errors);
+}
+
+void BmxSecond(void (*log)(const char*, ...))
+{
+    if (!g_ok) return;
+    const LONG t = InterlockedExchange(&g_toggles, 0), e = InterlockedExchange(&g_errors, 0),
+               c = InterlockedExchange(&g_changes, 0);
+    static const char* const kState[] = {"unknown", "off the bike", "ON the bike"};
+    static const char* const kWish[] = {"leave it", "on the bike", "off the bike"};
+    const LONG s = g_state, w = g_wish;
+    if (t || e || c)
+        log("bmx: rider %s (GTA wants: %s) | toggles run %ld, errors %ld (last code 0x%08lX)",
+            (s >= 0 && s <= 2) ? kState[s] : "?", (w >= 0 && w <= 2) ? kWish[w] : "?", t, e,
+            static_cast<unsigned long>(g_lastError));
+    const LONG pl = InterlockedExchange(&g_placed, 0), pe = InterlockedExchange(&g_placeErrors, 0);
+    if (pl || pe)
+        log("bmx: rider placed %ld time(s) for GTA (%ld failed): at %.0f %.0f %.0f, facing %.2f %.2f %.2f", pl, pe,
+            g_placePos[0], g_placePos[1], g_placePos[2], g_placeAt[0], g_placeAt[1], g_placeAt[2]);
+}
+
+} // namespace mp::thaw

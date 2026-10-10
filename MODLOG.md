@@ -2,12 +2,62 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] BMX B3 fix 3: getting off in reTHAWed gets CJ off too
+
+**Changed:** `src/gta/bmxmode.cpp`: while BMX mode is on, GTA no longer asks for the rider to be on the bike (wish "leave it"), so getting off in reTHAWed (L1 + R1) stands. The rider off for 1 s (was 2.5 s) ends BMX mode, and CJ then gets off the GTA bike with GTA's own get-off task (CTaskComplexLeaveCar); logged.
+**Why:** user 01:14: L1 + R1 left CJ sitting on the bike; we had put the rider straight back on.
+**Tested how:** not tested (not compiled yet).
+**Result:** none yet.
+
+## [2026-10-10] BMX B3 fix 2: no GTA idle camera, bails don't end BMX mode, bike onto GTA's ground
+
+**Changed:** `src/gta/padlink.cpp`: while skate / BMX mode blanks GTA's pad, GTA is told the pad was just touched (CPad LastTimeTouched), so it doesn't start its "idle" cinematic camera. `src/gta/bmxmode.cpp`: in BMX mode GTA's cinematic car camera is switched off if it starts (logged once); GTA's replay mode logged if it ever runs; reTHAWed's rider "off the bike" ends BMX mode only after 2.5 s (a bail drops it briefly); when BMX mode ends the bike is put on GTA's ground under it (GTA's ground finder), speed 0, physics woken, logged; when CJ leaves the bike during BMX mode the log says why (in vehicle, which vehicle, ped state, knocked-off flag, bike health, replay mode, control flags). STATUS.md: the analysis.
+Also `src/gta/padlink.cpp`: GTA's replay is blocked while skate / BMX mode is on (its "replay allowed" byte 0x8A6160 cleared, put back afterwards).
+**Why:** test 01:01 (see above and STATUS.md); user 01:06: it's GTA's real replay ("REPLAY" in the corner, a playback of what CJ did) when changing radio station. GTA starts it on the keyboard's F1 (CReplay::Update 0x460500) unless a control flag is set; skate mode sets one, BMX mode doesn't. Something sends F1 then (probably DualSenseX mapping a button). The replay may also explain the floating and CJ leaving the bike (GTA puts things back after a replay).
+**Tested how:** user 01:14: rode, changed stations, F7 / L3 + R3 off and on, L1 + R1 in reTHAWed.
+**Result:** replay and floating gone; stations change; bike put on GTA's ground at each switch-off (0.02-0.05 m). Not working: L1 + R1 (get off in reTHAWed): "CJ just stayed on the bike and didn't move"; thaw.log: rider off, then our toggle put him back on 2 s later (GTA still wished "on the bike"), so BMX mode never saw a lasting "off". No "CJ off the bike" events this time.
+
+## [2026-10-10] BMX B3 fix: bike upright, GTA stunt jumps off, physics woken at the end
+
+**Changed:** `src/gta/bmxmode.cpp`: the GTA bike now stays upright and only turns to the rider's heading (from its facing, or its travel direction when the facing points up a vert wall, or the bike's own when standing still); no more flips / tilt on the GTA bike. GTA's unique stunt jumps (CStuntJumpManager::m_bActive) are switched off while BMX mode is on (not in the middle of one) and put back as they were afterwards. When BMX mode ends, the bike's physics is woken (not static, a small downward speed).
+**Why:** test 00:51 / 00:52: tilting the bike with the rider's flips likely swung GTA's bike camera and made GTA throw CJ off a "tipped over" bike; flying through East LS's unique stunt jumps started GTA's slow-motion stunt replay; after BMX mode GTA kept the bike frozen in the air. Tricks will be shown on CJ's body in B4.
+**Tested how:** user 01:01: rode with the radio wheel, L3 + R3 off.
+**Result:** not fixed: "when using the radio it still tried to do a replay and CJ ended up floating in the air on the bike again". gta.log: CJ "got off the bike" twice mid-ride (cause not logged); a 2 s "rider off" blip (bail) switched BMX mode off. STATUS.md written (two attempts).
+
+## [2026-10-10] BMX step B3: BMX mode (controller to reTHAWed, GTA bike follows the rider)
+
+**Changed:** `src/gta/bmxmode.cpp` rewritten (B1 and B2 kept): when CJ rides a BMX, reTHAWed's rider is on its bike, reTHAWed's level is lined up with GTA's world, and GTA isn't in charge (cutscene, black bars, a script switched player controls off, CJ dead / arrested), the rider is first put at the GTA bike (B2), then BMX mode starts: link `gtaSkateMode` = 2 (the THAW side takes GTA's controller as in skate mode), CJ can't be knocked off the bike, the GTA bike's collision off; each world update the GTA bike is put at the rider (newest sample, up to 50 ms ahead by its speed; facing and tilt from the rider; speed passed on so the wheels turn). Off (all restored) when CJ gets off, GTA takes charge (it starts again by itself afterwards, rider placed again), the level isn't lined up, reTHAWed disconnects, F7 / L3 + R3, or the rider gets off in reTHAWed (the last two: GTA's normal BMX for the rest of this ride; F7 / L3 + R3 switches it back on). GTA menu open: held. Logs every change and once a second while on. `src/gta/skatemode.h`: `BmxModeIsOn`, `RideModeIsOn` (skate or BMX). `src/gta/padlink.cpp`, `radio.cpp`, `hudshow.cpp`: pad blanking, radio wheel, reTHAWed's HUD in BMX mode too. `src/thaw/input.cpp`: GTA's controller goes to reTHAWed when `gtaSkateMode` is 1 or 2.
+**Why:** DESIGN 8.29 B3; user 00:07: radio wheel in BMX mode as in skate mode; missions must stay completable (CJ stays on GTA's bike; GTA in charge = GTA's bike).
+**Tested how:** user 00:51 / 00:52: rode, jumped, radio wheel, L3 + R3 off.
+**Result:** partly: riding and jumping "seemed to work fine"; radio wheel worked (station changed). Problems: "weird camera angles", "kept doing a replay"; CJ came off the GTA bike twice while reTHAWed's rider stayed on (gta.log "CJ got off the bike" at 117 s and 131 s); after L3 + R3 off, CJ "floated in the sky". See fix below.
+
+## [2026-10-10] BMX step B2: reTHAWed's rider moved to the GTA bike
+
+**Changed:** link version 10 (`Local\MyPassthrough_v10`, `src/common/link.h`): `gtaPlacePos` / `gtaPlaceAt` / `gtaPlaceSeq`, `thawPlaceDone`. `src/gta/bmxmode.cpp`: once reTHAWed reports the rider on its bike after CJ got on, and reTHAWed's level is lined up with GTA's world (Los Santos East or our GTA map), sends the GTA bike's spot (ground under it) and facing, turned into reTHAWed's units (inverse of the level mapping); 1 s later logs where the rider ended up in GTA terms and how far from the bike. `src/thaw/bmx.cpp`: does it on reTHAWed's game thread the way reTHAWed's own Obj_SetPosition (0x0042E9E0) does (position at +0x68, then each component's "teleported" function, vtable +0x24), plus facing (+0x88, level, the matrix's own handedness kept) and speed 0; code checks for that function. Logged. The GTA bike doesn't follow the rider yet (B3).
+**Why:** DESIGN 8.29: where GTA (or a mission) puts CJ must count, so the rider goes to the bike, not the other way round.
+**Tested how:** user 00:38: got on a BMX in East LS away from the rider.
+**Result:** works ("worked as intended"); gta.log: rider 0.00 m from the GTA bike, height difference 0.00 m, 1.3 s after getting on.
+
+## [2026-10-10] BMX B1 fix: one toggle per change
+
+**Changed:** `src/thaw/bmx.cpp`: the bike toggle runs once when GTA's wish changes; again only if reTHAWed still hasn't switched 8 s later (was every 1.5 s).
+**Why:** test 00:25: getting off looped (see B1 below).
+**Tested how:** user 00:29: got on and off the BMX in GTA.
+**Result:** works: "the skater got on and off the bike when CJ did". B1 done.
+
+## [2026-10-10] BMX step B1: reTHAWed's rider gets on / off the bike with CJ
+
+**Changed:** link version 9 (`Local\MyPassthrough_v9`, `src/common/link.h`): `gtaBikeWish` (kBike*), `thawBikeState` (kBikeState*). New `src/gta/bmxmode.h/.cpp`: each world update, CJ riding a BMX (model 481, as its rider, skate mode off) -> wish "on the bike"; after getting off -> "off" until reTHAWed reports off; logs changes both ways. New `src/thaw/bmx.h/.cpp`: code checks; on reTHAWed's game thread (our controller hook, every 100 ms) reads the rider's "on bike" byte (component 0x5BD63B29 +0x524, via GetComponent 0x0042E8C0) and, when it differs from GTA's wish (in a level, not paused, at most every 1.5 s), runs reTHAWed's own bike toggle script 0x27065DA5 through 0x004135E0. `main.cpp` (both), `src/thaw/input.cpp`, `CMakeLists.txt`: wiring. Plan: DESIGN 8.29 (mission rules, steps B1-B4).
+**Why:** user 00:07: BMX mode when CJ gets on a BMX; first missions must stay completable; radio wheel as in skate mode (B3).
+**Tested how:** user 00:25: F6 BMX, got on and off.
+**Result:** getting on works (rider on the bike 2.8 s after CJ). Getting off looped: "stuck in a loop getting off the bike" until GTA was closed. thaw.log: a toggle every 1.5 s while the byte stayed "on"; a switch takes about 3 s, so each new toggle restarted the dismount.
+
 ## [2026-10-09] Tags T1 fix 3: reTHAWed's exact tag spot, tag shape from gta3.img, kept fully sprayed
 
 **Changed:** link version 8 (`Local\MyPassthrough_v8`, `src/common/link.h`): new `thawTagPos` / `thawTagNormal` and bit `kTagSpotOk`. `src/thaw/tags.cpp`: the tag-placing call's two vectors are logged; the one of length 1 is the facing direction, the other the spot; both go into the link before the count. `src/gta/skatemode.cpp/.h`: new `SkateModeThawToGta` (a reTHAWed point / direction mapped like CJ). `src/gta/tags.cpp`: the tag goes exactly where reTHAWed put it (wall or ground), else as before; the tag model's shape (facing side, centre) is read once from GTA's own `models\gta3.img` (tag_01.dff, read only, nothing written or copied); its picture layers and the sprayed value right after GTA builds it are logged; our tags are set fully sprayed (255) every frame.
 **Why:** user 23:47: "a couple of wonky versions of the purple ballas tag; it didn't appear in the bowl but sort of showed up in the street standing up; we want the green grove street tag". gta.log: 4 tags placed, all on the ground (no GTA wall where reTHAWed's bowl is), "tag model has no readable vertices" (so the facing was a guess: wrong). Purple Ballas = the Grove layer wasn't faded in.
-**Tested how:** not tested (not compiled yet).
-**Result:** none yet.
+**Tested how:** user 00:03 (10-10): rebuilt, tagged about 9 times in skate mode.
+**Result:** works: "seems to be working perfectly now". Green Grove tags, lying flat. gta.log: the model read from gta3.img (8 vertices, 4 triangles, 2 x 2 m, facing -X, from triangles); all 9 tags went on GTA's ground under CJ. thaw.log: reTHAWed's two vectors are two points 24 units apart straight up and down (a downward line, not spot + direction), so "spot not told apart" every time and GTA used its own ground; reTHAWed's flag said "wall" each time although they were evidently ground tags, so that flag's meaning is probably the other way round. Still open: tags on walls not tried; the picture-layer log line found no geometry (harmless).
 
 ## [2026-10-09] Tags T1 fix 2: count the call that places the tag
 

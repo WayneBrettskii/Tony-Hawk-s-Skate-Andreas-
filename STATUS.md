@@ -1,4 +1,47 @@
-# STATUS: tags (8.28 a): no Grove tag appears in GTA
+# STATUS: BMX mode (8.29 B3): "replay" / camera, CJ off the bike, floating
+
+**Written 2026-10-10 01:10 after two attempts didn't fix it (AGENTS.md rule).**
+The next change is driven by what the logs show, adds logging for what they
+don't, and is not a guess at a third cause.
+
+## What the user sees (tests 00:51 and 01:01)
+- Riding and jumping work.
+- GTA's camera goes to "weird angles" and it "kept doing a replay", noticed while using the radio wheel.
+- After switching BMX mode off (L3 + R3), CJ floats in the air on the bike.
+
+## Update 01:12 (user 01:06): it's GTA's real replay
+"REPLAY" in the corner, then a playback of what CJ did, when changing radio
+station. In gta_sa.exe: CReplay::Update (0x460500) starts a replay on the
+keyboard's F1 (key 1001) when byte 0x8A6160 is set and no control flag is
+set. Skate mode sets a control flag (so no replays there); BMX mode doesn't.
+Something sends F1 at that moment (probably DualSenseX mapping the
+Share/Create button). Fix: 0x8A6160 cleared while skate / BMX mode is on.
+GTA restoring things after a replay may also explain the floating and CJ
+leaving the bike: to see in the next test's log.
+
+## What the logs show
+- gta.log: "CJ got off the bike" while reTHAWed's rider is still on its bike (262 s, 271 s; the 2nd only 2 s after BMX mode started). Cause unknown: nothing logs why GTA took him off.
+- gta.log: "the rider got off the bike in reTHAWed" at 198 s, and on again 2 s later without our asking: probably a bail (the "on bike" byte drops for a moment). BMX mode then switched itself off, which is wrong for a bail.
+- Nothing in our logs mentions a replay. No radio station change was logged in the 01:01 test.
+
+## What was tried (MODLOG)
+1. Bike upright (no flips on GTA's bike), GTA's unique stunt jumps off, bike "not static" at the end. The replay and floating stayed.
+
+## Best explanation now (to confirm with the next log)
+- Our pad blanking makes GTA think nobody has touched the controller. GTA's "idle" cinematic car camera (Obbe camera, TheCamera.m_bObbeCinematicCarCamOn) then starts: dramatic angles that look like a replay. It's independent of the radio; it just takes a while of "no input".
+- Floating: the bike is left at reTHAWed's height (reTHAWed ramps / bowl aren't in GTA), with GTA's physics not picking it up again.
+
+## Next change (fix 2)
+- While skate / BMX mode blanks the pad: tell GTA the pad was just touched (CPad LastTimeTouched); in BMX mode the cinematic car camera is switched off if GTA starts it (logged).
+- A rider "off the bike" only counts after 2.5 s (bails).
+- When BMX mode ends: the bike goes onto GTA's ground under it (GTA's ground finder), speed 0, physics woken.
+- Logging: why CJ left the bike (ped state, knocked-off flag, bike health), GTA replay mode if it ever starts.
+
+---
+
+# (older) # STATUS: tags (8.28 a): no Grove tag appears in GTA
+
+**SOLVED 2026-10-10 00:03:** fix 3 works (user: "working perfectly now"); ground tags tested, wall tags not yet. Kept below for the record.
 
 **Written 2026-10-09 23:45 after two real attempts failed (AGENTS.md rule).**
 Fix 2 (below) is built on what the logs showed, not a guess; waiting for its test.

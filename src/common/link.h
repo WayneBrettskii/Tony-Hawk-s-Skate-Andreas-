@@ -8,7 +8,7 @@
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v8": only programs in the user's own Windows
+// Name "Local\MyPassthrough_v10": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 8;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v8";
+constexpr LONG kLinkVersion = 10;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v10";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -74,6 +74,15 @@ constexpr LONG kPadRawLeft = 8;   // D-pad Left, from the same read
 constexpr LONG kMusicLeave = 0;   // don't touch (skate mode off)
 constexpr LONG kMusicPlay = 1;    // reTHAWed soundtrack station
 constexpr LONG kMusicPause = 2;   // a GTA station or Off
+
+// gtaBikeWish (8.29 BMX)
+constexpr LONG kBikeLeave = 0;    // don't touch reTHAWed's bike
+constexpr LONG kBikeOn = 1;       // CJ is riding a BMX: rider on the bike
+constexpr LONG kBikeOff = 2;      // CJ got off: rider off the bike
+// thawBikeState
+constexpr LONG kBikeStateUnknown = 0;
+constexpr LONG kBikeStateOff = 1;
+constexpr LONG kBikeStateOn = 2;
 
 // reserved[5] (THAW, 8.28 a tags): graffiti tags in reTHAWed
 constexpr LONG kTagCountMask = 0xFFFF;   // bits 0-15: finished tags so far (wraps)
@@ -142,8 +151,19 @@ struct LinkBlock {
     // units) and the direction the tag faces (out of the wall / up from the ground).
     volatile float thawTagPos[3];
     volatile float thawTagNormal[3];
+    // ---- 8.29 BMX (version 9) ----
+    volatile LONG gtaBikeWish;      // GTA: kBike* (is CJ riding a BMX?)
+    volatile LONG thawBikeState;    // THAW: kBikeState* (is reTHAWed's rider on the bike?)
+    // ---- 8.29 B2 (version 10): GTA asks the THAW plugin to put reTHAWed's
+    // rider at a spot (THAW units, feet) facing a direction (THAW world, level).
+    // GTA writes pos / facing first, then bumps gtaPlaceSeq; THAW does it once
+    // and copies the number into thawPlaceDone.
+    volatile float gtaPlacePos[3];
+    volatile float gtaPlaceAt[3];
+    volatile LONG gtaPlaceSeq;
+    volatile LONG thawPlaceDone;
 };
-static_assert(sizeof(LinkBlock) == 484, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 524, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {
