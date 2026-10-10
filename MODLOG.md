@@ -2,12 +2,47 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-09] Tags T1 fix 3: reTHAWed's exact tag spot, tag shape from gta3.img, kept fully sprayed
+
+**Changed:** link version 8 (`Local\MyPassthrough_v8`, `src/common/link.h`): new `thawTagPos` / `thawTagNormal` and bit `kTagSpotOk`. `src/thaw/tags.cpp`: the tag-placing call's two vectors are logged; the one of length 1 is the facing direction, the other the spot; both go into the link before the count. `src/gta/skatemode.cpp/.h`: new `SkateModeThawToGta` (a reTHAWed point / direction mapped like CJ). `src/gta/tags.cpp`: the tag goes exactly where reTHAWed put it (wall or ground), else as before; the tag model's shape (facing side, centre) is read once from GTA's own `models\gta3.img` (tag_01.dff, read only, nothing written or copied); its picture layers and the sprayed value right after GTA builds it are logged; our tags are set fully sprayed (255) every frame.
+**Why:** user 23:47: "a couple of wonky versions of the purple ballas tag; it didn't appear in the bowl but sort of showed up in the street standing up; we want the green grove street tag". gta.log: 4 tags placed, all on the ground (no GTA wall where reTHAWed's bowl is), "tag model has no readable vertices" (so the facing was a guess: wrong). Purple Ballas = the Grove layer wasn't faded in.
+**Tested how:** not tested (not compiled yet).
+**Result:** none yet.
+
+## [2026-10-09] Tags T1 fix 2: count the call that places the tag
+
+**Changed:** `src/thaw/tags.cpp`: instead of the score-script call (0x005F933A) we now go through the call at 0x005F92E0, which puts the finished tag in reTHAWed's world (to 0x005F8680, 12 arguments; the 2nd says wall or ground). Code checks for it. New link bit `kTagOnWall` (`src/common/link.h`). `src/gta/tags.cpp`: looks for a GTA wall only when reTHAWed's tag went on a wall; otherwise straight to the ground. DESIGN 8.28 (a) corrected.
+**Why:** test 23:36 (user 23:38: "The tag still did not show up"): thaw.log "6 tags started, 0 finished"; gta.log "started / stopped spraying" 6 times, no "finished". The score script only runs with a combo going (0x005F92F6), so a standing tag never reached our hook.
+**Tested how:** user 23:47: rebuilt, tagged 4 times (3 on reTHAWed walls, 1 ground).
+**Result:** partly: 4 tags placed in GTA, no crash. But they showed the purple Ballas layer, were placed on the street (no GTA wall at reTHAWed's bowl) and stood up instead of lying flat (see fix 3).
+
+## [2026-10-09] Tags T1 fix: reTHAWed changes one checked call
+
+**Changed:** `src/thaw/tags.cpp`: the code check of the graffiti update no longer checks where its call at 0x005F9B5A goes (only that it is a call); the log now says where it goes.
+**Why:** test 23:32 (user 23:35: "cj did the tag animation but there was no tag"): thaw.log "code check 0x005F9B50 ... DIFFERENT at byte 11": reTHAWed itself points that call somewhere else at start, so our check failed and the tag watch stayed off; GTA never heard of a tag. Our hook wraps the whole update, so that call's target doesn't matter to us.
+**Tested how:** user 23:38: rebuilt, tagged 6 times in skate mode.
+**Result:** the tag watch now runs (starts / stops seen in both logs), but no tag finished was counted and no tag appeared (see fix 2 above).
+
+## [2026-10-09] Tags step T1: Grove Street tag in GTA when the skater finishes a tag
+
+**Changed:** new `src/thaw/tags.h/.cpp`: after code checks, our function sits in the graffiti component's update slot (vtable 0x006EE3C8, calls the original 0x005F9B50 first) and notes "spraying" (component byte +0x1C); the call at 0x005F933A that runs the "Graffiti Tag" score script goes through us (counts, then calls the original 0x004135E0). Published in link `reserved[5]` (`kTag*` bits in `src/common/link.h`). Logs starts / finishes per second. New `src/gta/tags.h/.cpp`: GTA's calls at 0x533DCE and 0x565C5E (tag lookups that would crash on a tag that isn't one of GTA's 100) go through us: GTA's own tags unchanged, ours shown fully sprayed. In skate mode, each finished tag puts GTA's tag model 1490 (Grove tag) on the GTA wall 1.5 m in front of CJ's chest, else on the ground under him; its facing side worked out from the model's vertices (logged once). Max 50, oldest removed; normal objects, not saved. `main.cpp` (both), `CMakeLists.txt`: the new files. Research and plan: DESIGN 8.28 (a). reTHAWed's scripts were decompiled into a scratch folder outside the repo; nothing from them is in the repo.
+**Why:** user 22:08: when the skater tags, CJ should spray the Grove Street tag (the collectible one) in GTA.
+**Tested how:** user 23:35: built, tagged in skate mode.
+**Result:** CJ did the spraying animation, no tag appeared: the THAW side switched itself off (see fix above).
+
+## [2026-10-09] Freak-out on bails: checked, already works
+
+**Changed:** no code. `docs/DESIGN.md` 8.28 (b): result written down.
+**Why:** user 22:08: wanted reTHAWed's freak-out meter and animation in GTA; plan was to test first and fix only what's missing.
+**Tested how:** user 23:16: skate mode in GTA, bailed with reTHAWed's freak-out option switched on.
+**Result:** works: meter and animations all showed in GTA. The freak-out is off by default in reTHAWed's options; players need to switch it on (to go in the README).
+
 ## [2026-10-09] Vehicle spawner (F6)
 
 **Changed:** new `src/gta/spawner.h/.cpp`: F6 (GTA in front, skate mode off) opens a list of all GTA vehicles (models 400-611 that exist; trains 449, 537, 538, 569, 570, 590 left out because they need rails), BMX (481) at the top, the rest A-Z by GTA's own names (model info game name -> TheText). D-pad / left stick up-down (hold to scroll), Cross or Enter spawns in front of CJ through GTA's vehicle-cheat code (CCheat::VehicleCheat), Circle or F6 closes. While open GTA doesn't get the controller; after closing, not until the buttons are let go (no sprint / punch from the same press). Drawn after GTA's HUD (GTA's font, CSprite2d boxes). Logs opens and spawns. `src/gta/padlink.cpp`: calls the list's pad filter each controller frame. `src/gta/main.cpp`: frame and drawing hooks. `CMakeLists.txt`: spawner.cpp. Plan: DESIGN 8.28 (d).
 **Why:** user 22:08 / 22:11: a vehicle spawner with all vehicles, BMX at the top, F6, controller once open; first of the four new features (needed to test BMX).
-**Tested how:** not tested (not compiled yet).
-**Result:** none yet.
+**Tested how:** user 23:07: built, opened with F6, picked and spawned vehicles with the controller.
+**Result:** works: "it worked flawlessly".
 
 ## [2026-10-09] Radio step R3: station and volumes remembered
 

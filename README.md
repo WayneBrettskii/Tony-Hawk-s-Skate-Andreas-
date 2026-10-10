@@ -25,6 +25,11 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Skating on GTA's real streets in East Los Santos** (phase 4-1, tested 2026-10-08): with the "Los Santos East" reTHAWed map (thpsgoat.com mod 598) loaded, skate mode puts CJ at the matching GTA spot, so the skater's ramps, rails and walls are GTA's. Lined up to about half a metre. Only that area so far.
 - **Test helper F8** (tested 2026-10-07): moves CJ to the waypoint marker on the map.
 - **Controller fix** (tested 2026-10-07, menus only): reTHAWed started by our launcher ignores DualSenseX's virtual Xbox 360 controller and uses only the real PS5 controller. Downside for now: a real Xbox 360 controller would be ignored by reTHAWed too; an option for Xbox players is planned before release.
+- **reTHAWed's HUD in GTA** (tested 2026-10-09): score, combo meter, balance meters etc. are copied from the hidden reTHAWed into GTA while skating.
+- **Flips and rolls** (tested 2026-10-09): CJ's body turns with the skater's flips and rolls.
+- **Freak-out on bails** (tested 2026-10-09): the meter and animations show in GTA. Switch the freak-out on in reTHAWed's own options first (it's off by default there).
+- **Radio wheel** (tested 2026-10-09): hold Share / Back to open it; pick the reTHAWed soundtrack, any GTA station, the User Track Player or Off with the right stick; D-pad Up / Down sets the volume of the station you point at. reTHAWed's music only plays in skate mode. Skate sounds stay audible behind GTA. Choices are remembered in `radio-settings.ini`.
+- **Vehicle spawner** (tested 2026-10-09): F6 (skate mode off) opens a list of all GTA vehicles except trains, BMX at the top; D-pad / stick to move, Cross spawns, Circle or F6 closes.
 
 ## What doesn't work / not tested
 

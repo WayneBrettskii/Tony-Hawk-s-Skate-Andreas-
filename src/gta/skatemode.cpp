@@ -744,6 +744,25 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
 
 bool SkateModeIsOn() { return g.on; }
 
+bool SkateModeThawToGta(const float thawPos[3], const float thawDir[3], float gtaPos[3], float gtaDir[3])
+{
+    if (!g.on) return false;
+    const Vec3 p{thawPos[0], thawPos[1], thawPos[2]};
+    Vec3 t;
+    if (g.align) {
+        t = MapAbsolute(p, *g.align); // a ground point lands on GTA's ground
+    } else {
+        t = MapPosition(p, g.thawAnchor, g.gtaAnchor, kMapping);
+        t.z -= g.feetOffset; // the GTA anchor is CJ's middle, not his feet
+    }
+    Vec3 d = ThawDeltaToGta(Vec3{thawDir[0], thawDir[1], thawDir[2]}, kMapping);
+    const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (len < 1e-6f) return false;
+    gtaPos[0] = t.x; gtaPos[1] = t.y; gtaPos[2] = t.z;
+    gtaDir[0] = d.x / len; gtaDir[1] = d.y / len; gtaDir[2] = d.z / len;
+    return true;
+}
+
 void SkateModeFrameSafe(LinkBlock* link, LogFn log)
 {
     __try {

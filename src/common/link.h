@@ -8,7 +8,7 @@
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v7": only programs in the user's own Windows
+// Name "Local\MyPassthrough_v8": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 7;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v7";
+constexpr LONG kLinkVersion = 8;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v8";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -75,6 +75,13 @@ constexpr LONG kMusicLeave = 0;   // don't touch (skate mode off)
 constexpr LONG kMusicPlay = 1;    // reTHAWed soundtrack station
 constexpr LONG kMusicPause = 2;   // a GTA station or Off
 
+// reserved[5] (THAW, 8.28 a tags): graffiti tags in reTHAWed
+constexpr LONG kTagCountMask = 0xFFFF;   // bits 0-15: finished tags so far (wraps)
+constexpr LONG kTagNow = 0x10000;        // bit 16: skater is spraying a tag right now
+constexpr LONG kTagWatchOk = 0x20000;    // bit 17: the THAW side's tag watch is working
+constexpr LONG kTagOnWall = 0x40000;     // bit 18: the last finished tag went on a wall (else the ground)
+constexpr LONG kTagSpotOk = 0x80000;     // bit 19: thawTagPos / thawTagNormal hold the last tag's spot
+
 struct LinkBlock {
     volatile LONG magic;    // kLinkMagic once set up (0 in a brand-new block)
     volatile LONG version;  // kLinkVersion
@@ -112,7 +119,8 @@ struct LinkBlock {
     // reserved[1], [2] (8.27 radio): written by GTA: wanted reTHAWed music
     // (kMusic*) and GTA's GetTickCount() when written.
     // reserved[3] (GTA): wanted reTHAWed music volume 0..100, -1 = leave it.
-    // reserved[4] (THAW): reTHAWed's current music volume 0..100. [5] unused.
+    // reserved[4] (THAW): reTHAWed's current music volume 0..100.
+    // reserved[5] (THAW, 8.28 a): graffiti tags, kTag* bits.
     LONG reserved[6];               // was padding to 128 bytes in version 3
 
     // ---- phase R4-2, written by the THAW plugin under thawSeq ----
@@ -129,8 +137,13 @@ struct LinkBlock {
     // program on the PC) when the THAW plugin first saw this reTHAWed frame;
     // low and high 32 bits. GTA blends between frames by these times.
     volatile LONG thawFrameQpcLo, thawFrameQpcHi;
+    // ---- 8.28 a (version 8), written by the THAW plugin before it bumps the
+    // finished-tag count in reserved[5]: where reTHAWed put the last tag (THAW
+    // units) and the direction the tag faces (out of the wall / up from the ground).
+    volatile float thawTagPos[3];
+    volatile float thawTagNormal[3];
 };
-static_assert(sizeof(LinkBlock) == 460, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 484, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {

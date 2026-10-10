@@ -1,4 +1,48 @@
-# STATUS: radio while skating (8.27): GTA's stations don't play on foot
+# STATUS: tags (8.28 a): no Grove tag appears in GTA
+
+**Written 2026-10-09 23:45 after two real attempts failed (AGENTS.md rule).**
+Fix 2 (below) is built on what the logs showed, not a guess; waiting for its test.
+If it fails too, stop and look at the logs with the user before changing more.
+
+## What the user sees
+- Skate mode, off the board, hold Triangle at a wall: CJ does the spraying
+  animation (body copy), but no tag appears in GTA (tests 23:32 and 23:36).
+
+## What was tried (MODLOG has the details)
+1. **T1 (23:32):** thaw.log: our code check of the graffiti update failed
+   (reTHAWed's rthw.dll points that update's call to its own wrapper at start),
+   so the THAW side switched itself off. GTA side ready ("tag calls go through us").
+2. **Fix 1 (23:36):** check loosened. Both logs: 6 tags *started*, 0 *finished*.
+   Our "finished" hook was the score-script call 0x005F933A, which reTHAWed only
+   runs when a combo score is going (skipped at 0x005F92F6); a standing tag
+   never reaches it.
+
+## Update 23:55: fix 2 worked partly; fix 3 written
+Tags now appear in GTA (4 placed, no crash), but purple Ballas, in the street,
+standing up. Fix 3 (MODLOG): reTHAWed's exact spot, the model's real shape
+read from gta3.img, Grove value set every frame, picture layers logged.
+
+## What fix 2 does
+- Counts the call at 0x005F92E0 instead: it puts every finished tag in
+   reTHAWed's world (0x005F8680, 12 arguments, 2nd = wall/ground). rthw.dll's
+   wrapper (0x6D151970 in the file) calls the original 0x005F8B20 first, so
+   this code still runs.
+
+## What's known to work
+- THAW side: start / stop of spraying reaches GTA (gta.log "started / stopped
+  spraying", ~0.3-0.5 s each).
+- GTA side: its two tag calls are redirected without problems; no crashes.
+
+## Not yet known
+- Whether GTA's tag model shows up, which way it faces, and whether GTA's
+  object placement works at all (no tag has been placed yet).
+
+---
+
+# (older) # STATUS: radio while skating (8.27): GTA's stations don't play on foot
+
+**SOLVED 2026-10-09 21:15:** fix 2 works in game (user: "Radio stations worked
+great"). Kept below for the record.
 
 **Update 2026-10-09 21:05: cause found by the diagnostics.** The stop comes
 from 0x4EA5D2 in GTA's radio code (0x4EA590): with no vehicle radio it asks
