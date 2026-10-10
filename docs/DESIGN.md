@@ -821,7 +821,37 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
 
 **Test:** ride ~1 min with it on, then touchpad + D-pad Right, ride ~1 min with it off. Compare.
 
+**C1 result (user 15:02, logs):** "bmx riding and skating were smooth and the hud was still there". thaw.log: ~1.1-1.6 million of reTHAWed's draws dropped per 10 s, ~27,000 drawn (the HUD): about 98% of its drawing gone. gta.log pacer: 585-600 GTA frames per 10 s (59-60 fps), before C1 440-580. (The pacer's "late" count stays high; it counts any overshoot, even tiny ones, so it isn't a stutter measure.)
+
 **If it isn't enough, next candidates (measure first):** GTA side: the time our own code takes per GTA frame (HUD picture upload, body copy); reTHAWed's resolution (its own settings, the user's file).
+
+### 8.31 Whole-map test fixes: invisible walls, skate mode anywhere, F8, crash log, GPS (user 15:34 + 17:55, written 18:10)
+
+**T4 result (user, two sessions 15:22 and 16:11):** the whole map (798 tiles, 2.25M triangles) loads and skates. Problems: invisible walls on the way to San Fierro and Las Venturas, thrown into the water near SF, F8 to SF fell through the map and the game crashed; one more crash somewhere while skating.
+
+**What the logs and the map file show (read only, map PAK and logs copied to the cloud):**
+- The walls on the bridges are **big boxes in GTA's collision, standing across the road**: at the SF end of the Flint bridge (GTA -953, -274: 29 x 20 m, 16.7 m tall, the skater stopped against it and slid off the edge into the water) and at the start of the bridge to Las Venturas (1694, 395: 40 x 20 m, 10 m tall). A search of the whole map for tall box shapes that a GTA **car road** (the game's own path nodes, `data\Paths\NODES*.DAT`) runs straight through found the same kind on every bridge out of Los Santos (Flint, the two SF ends, the LV bridges, the Red County - Bone County bridges: 5.8 to 16.7 m tall). Cars drive there in GTA, so in the game these boxes are not solid: they are the "region closed" barriers that GTA's story removes. Our converter takes everything from the map files, so it kept them.
+- The other stops in the logs were bails, braking, or a real 1 m kerb (GTA 2360, 331).
+- The F8 crash isn't in any log (gta.log is started fresh on every launch, so that session's log was gone). F8 asked GTA for the ground height before the area's collision was loaded: GTA then answers a default height, CJ lands under the hills of SF and falls.
+- The new GTA log ends in GTA's pause menu with no error; our plugin doesn't log a normal exit or a crash, so a crash can't be told from quitting.
+
+**D1. Converter: leave out the barriers.** `gta_to_thaw_map.py` reads GTA's car roads from `data\Paths\NODES*.DAT` (read only; format checked: 64 files, 30,587 car nodes, 143,622 links, every link valid). A collision **box** of a GTA model is left out when: it is at least 4 m tall, its ground plan is at least 5 m across one way and 12 m the other (so lamp posts and pillars stay), and a car road passes through its ground plan at a height inside the box. Each one left out is listed in `removed_barriers.txt` (model, where, size) next to the map, and counted in `map_info.txt`. Not touched: triangle-mesh collision, small boxes, boxes above or beside roads.
+**Test:** rebuild the map, skate over the Flint bridge to SF and over the bridge to LV (1694, 395).
+
+**D2. Skate mode on anywhere.** Today, turning skate mode on in our GTA map moves CJ to wherever reTHAWed's skater is. New: the skater is moved to CJ instead, with the same request BMX mode uses (link `gtaPlace*`, done by the THAW plugin on reTHAWed's game thread, 8.29 B2): CJ's feet (GTA's ground under him), facing where CJ faces. Skate mode starts when reTHAWed confirms (`thawPlaceDone`), at most 1.5 s later; if it doesn't, the old way (CJ moves to the skater), logged. Skipped when the skater is already within 3 m of CJ (BMX -> skate keeps the board roll-in). Not inside interiors (GTA area code not 0): refused with a log line, since our map has no interiors.
+**Test:** walk somewhere away from the skatepark, L3 + R3: CJ stays, the skater appears there and CJ skates off from that spot; L3 + R3 off and on again somewhere else.
+
+**D3. F8 teleport fixed.** On F8: load the scene and its collision at the waypoint (GTA's `CStreaming::LoadScene` + `LoadSceneCollision`), then ask for the ground from 1000 m down (`FindGroundZFor3DCoord`, which says whether it found ground). Only when ground was found is CJ moved, 1 m above it. If not, it tries again every frame for up to 3 s, then gives up with a log line (CJ stays where he was).
+**Test:** waypoint in SF hills (e.g. near the Gant Bridge), F8: CJ lands on the ground.
+
+**D4. Crash and exit logging.** The GTA plugin keeps the previous log as `gta.prev.log`, logs "GTA closing normally" when it unloads, and installs a last-chance crash handler (Windows' unhandled exception filter, chained to whatever was there before) that writes the error code, the program address and which file it is in (e.g. gta_sa.exe + offset, or another mod), CJ's position and whether skate / BMX mode was on. The THAW plugin keeps `thaw.prev.log` too.
+
+**D5. GPS route to the waypoint (like GTA V).** New `src/gta/gps.cpp`. At start it reads GTA's car roads from `data\Paths\NODES*.DAT` (read only, ~4 MB, the same files GTA ships). While a waypoint is set: the shortest route along the roads (A* search) from the road nearest CJ to the road nearest the waypoint, worked out again when the waypoint changes or CJ is more than 40 m off the route (at most twice a second). Drawn as a purple line on the radar (clipped to the radar's circle, under the blips) and on the pause-menu map, from CJ along the route to the waypoint. Reaching the waypoint (within 15 m) removes it. Boat-only roads (water nodes) are left out. Works on foot, skating, BMX and in cars.
+**Test:** set a waypoint across the city, check the line on the radar and the pause map, follow it; set one in SF and LV.
+
+**Not now (noted):** water: in GTA the skater should splash into water, not ride the sea bed (THAW has no water here); later, from GTA's water level file.
+
+**After the map is right (user wishes, 2026-10-10; each planned here before any code):** grind, stall and skitch every GTA car; reTHAWed's park editor to place skateable ramps, bowls and rails across San Andreas; reTHAWed's board whack hitting GTA peds like a melee weapon; shoot mode for skate and BMX.
 
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 

@@ -1,9 +1,17 @@
-# WHERE WE LEFT OFF (2026-10-10 15:00)
+# WHERE WE LEFT OFF (2026-10-10 18:40)
 
-BMX done (DESIGN 8.29; B12 OK'd by the user 14:47).
-Now: **C1 lean drawing** (reTHAWed doesn't draw its unseen 3D world behind GTA, to fix the stutter
-without lowering graphics; DESIGN 8.30): built, to test (A/B with touchpad + D-pad Right).
-Then the map (T4 with `[Memory] HashItem=100000`, rail budget via `Out set RailPoint`).
+BMX done (DESIGN 8.29). Stutter fixed by C1 (8.30). **Whole map (T4) loads and skates** (798 tiles,
+no HashItem change needed). 8.31 written and coded, **not tested in the game**: D1 bridge barriers
+left out of the map (rebuild needed), D2 skate mode on anywhere, D3 F8 fixed, D4 crash / exit
+logging + prev logs, D5 GPS route. Waiting for the user's build + test. Unknown: where the second
+crash was (D4 will log the next one).
+Then: rail budget across the map, water (skater rides the sea bed).
+
+After the map is right (user requests 2026-10-10, not started, plan in DESIGN first):
+- grind, stall and skitch every GTA car
+- park editor: place skateable ramps, bowls, rails across San Andreas
+- board whack: hit GTA peds with the board like a melee weapon
+- shoot mode for skate and BMX (earlier list)
 
 ---
 

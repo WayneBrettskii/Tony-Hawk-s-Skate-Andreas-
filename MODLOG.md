@@ -2,12 +2,24 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] 8.31 D1-D5: no region barriers in the map, skate mode anywhere, F8 fixed, crash log, GPS
+
+**Changed:**
+- D1 `tools/gta_to_thaw_map.py`: reads GTA's car roads (`data\Paths\NODES*.DAT`, read only) and leaves out collision boxes at least 4 m tall and 5 x 12 m across that a car road runs straight through (the bridge barriers); `removed_barriers.txt`, count in `map_info.txt`.
+- D2 `src/gta/skatemode.cpp`: in our whole-map level, turning skate mode on moves reTHAWed's skater to CJ (link `gtaPlace*`, as BMX mode) instead of CJ to the skater; starts once the skater is there (max 1.5 s, else the old way); not when within 3 m already; refused inside interiors.
+- D3 `src/gta/teleport.cpp`: F8 loads the target's collision too and moves CJ only once real ground was found (tries up to 3 s).
+- D4 `src/gta/main.cpp`: `gta.prev.log` kept; crash handler logs error, address, module, registers, CJ's position, skate mode; normal exit logged. `src/thaw/main.cpp`: `thaw.prev.log` kept.
+- D5 new `src/gta/gps.h/.cpp` (+ `CMakeLists.txt`, `main.cpp`): GTA's car roads read at start, A* route to the waypoint, purple line on the radar (clipped to its circle) and the pause map, rerouted when 40 m off, waypoint removed on arrival (15 m).
+**Why:** user's whole-map test (15:34, 17:55): invisible walls on the bridges to SF and LV (thrown into the water near SF), skate mode always jumped CJ to the skater, F8 to SF fell through the map and crashed, one more crash; asked for a GTA V style GPS and skate mode on anywhere.
+**Tested how:** in the cloud only. Map file (copied, read only): the two walls the skater hit are 12-triangle boxes across the road (SF end of the Flint bridge 29 x 20 x 16.7 m; LV bridge 40 x 20 x 10 m). The barrier rule run on all 25,974 tall boxes of the current map with the real road files picks 15: every bridge out of Los Santos (Flint, both SF ends, LV, Red County - Bone County) plus two 100+ m boxes on the Gant Bridge road; posts and pillars stay. GPS code built on Linux with stand-in GTA headers and run on the real road files: 64 files, 30,587 points, 59,620 links; LS skatepark -> SF route 6.4 km, LS -> LV 3.8 km; radar clip and arrival work. Converter, skate mode, F8, crash log: not tested (need the PC).
+**Result:** not tested in the game yet.
+
 ## [2026-10-10] C1: reTHAWed "lean drawing" (its unseen 3D world not drawn behind GTA)
 
 **Changed:** `src/thaw/drawlog.h/.cpp`: while reTHAWed is in a level and behind GTA, its world draws before the frame's HUD part are dropped (the HUD is drawn as before); switch on by default, touchpad + D-pad Right toggles; 10 s log of dropped / drawn draws. `src/thaw/touchpad.cpp`, `src/common/link.h`: D-pad Right bit. `src/thaw/main.cpp`: passes the toggle.
 **Why:** user 14:47: fix the occasional stutter without lowering graphics; GTA ran at 44-58 fps while both games draw.
-**Tested how:** not tested (not compiled with Visual Studio yet).
-**Result:** none yet.
+**Tested how:** user 15:02: BMX and skating; logs read.
+**Result:** smooth, HUD still there. About 98% of reTHAWed's draws dropped while behind GTA; GTA at 59-60 fps (585-600 frames per 10 s, was 440-580).
 
 ## [2026-10-10] B12: the GTA bike lies where reTHAWed's dropped bike lies
 

@@ -33,6 +33,8 @@
 // safe even while the game is starting up or shutting down.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
+#include "CPlayerPed.h"
+#include "common.h"
 #include <windows.h>
 #include "../common/link.h"
 #include "skatemode.h"
@@ -47,6 +49,7 @@
 #include "spawner.h"
 #include "tags.h"
 #include "bmxmode.h"
+#include "gps.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -133,6 +136,8 @@ void AddHooks()
         mp::gta::TagsFrame(g_link, &Log);
         // 8.29: BMX mode (B1: reTHAWed's rider gets on / off the bike with CJ).
         mp::gta::BmxFrame(g_link, &Log);
+        // 8.31 D5: GPS route to the map waypoint.
+        mp::gta::GpsFrameSafe(&Log);
     });
 
     // Phase 5-1: draw the stand-in board (only while skate mode is on).
@@ -149,6 +154,8 @@ void AddHooks()
     mp::gta::TagsAddHook();
     // 8.29 B4b: the BMX drawn like reTHAWed's bike.
     mp::gta::BmxAddHook();
+    // 8.31 D5: the GPS route drawn on the radar and the pause menu map.
+    mp::gta::GpsAddHook(&Log);
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);
@@ -226,6 +233,12 @@ bool SetUpLogPath()
         return false;
     }
 
+    // 8.31 D4: keep the last launch's log as gta.prev.log (a crash's log was
+    // lost when the game was started again).
+    wchar_t prev[MAX_PATH] = {};
+    if (wcscpy_s(prev, dir) == 0 && wcscat_s(prev, L"\\gta.prev.log") == 0)
+        MoveFileExW(g_logPath, prev, MOVEFILE_REPLACE_EXISTING);
+
     // Start a fresh log on every launch.
     HANDLE f = CreateFileW(g_logPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -256,6 +269,69 @@ void LogHookBytes(const char* label, uintptr_t addr, const HookBytes& h)
 double SecondsSinceStart(ULONGLONG tick)
 {
     return (tick - g_startTick) / 1000.0;
+}
+
+// ---- 8.31 D4: crash logging ----
+// Windows' last-chance handler: runs only when nothing else caught an error
+// (our own code catches its errors itself). Logs what and where, then passes
+// it on to whatever handler was there before (the game then closes as usual).
+LPTOP_LEVEL_EXCEPTION_FILTER g_prevFilter = nullptr;
+volatile LONG g_crashLogged = 0;
+
+LONG WINAPI CrashFilter(EXCEPTION_POINTERS* ep)
+{
+    if (ep && ep->ExceptionRecord && InterlockedExchange(&g_crashLogged, 1) == 0) {
+        __try {
+            const EXCEPTION_RECORD* r = ep->ExceptionRecord;
+            const uintptr_t addr = reinterpret_cast<uintptr_t>(r->ExceptionAddress);
+            HMODULE mod = nullptr;
+            char name[MAX_PATH] = "unknown";
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   reinterpret_cast<LPCWSTR>(r->ExceptionAddress), &mod) && mod) {
+                char full[MAX_PATH] = {};
+                if (GetModuleFileNameA(mod, full, MAX_PATH)) {
+                    const char* slash = strrchr(full, '\\');
+                    strcpy_s(name, slash ? slash + 1 : full);
+                }
+            }
+            const uintptr_t offset = mod ? addr - reinterpret_cast<uintptr_t>(mod) : addr;
+            if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2)
+                Log("CRASH: exception 0x%08lX at 0x%08X = %s+0x%X (%s address 0x%08X)", r->ExceptionCode,
+                    static_cast<unsigned>(addr), name, static_cast<unsigned>(offset),
+                    r->ExceptionInformation[0] == 0 ? "reading" : (r->ExceptionInformation[0] == 1 ? "writing" : "running"),
+                    static_cast<unsigned>(r->ExceptionInformation[1]));
+            else
+                Log("CRASH: exception 0x%08lX at 0x%08X = %s+0x%X", r->ExceptionCode, static_cast<unsigned>(addr),
+                    name, static_cast<unsigned>(offset));
+            if (ep->ContextRecord)
+                Log("CRASH: registers eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX esp %08lX ebp %08lX",
+                    ep->ContextRecord->Eax, ep->ContextRecord->Ebx, ep->ContextRecord->Ecx, ep->ContextRecord->Edx,
+                    ep->ContextRecord->Esi, ep->ContextRecord->Edi, ep->ContextRecord->Esp, ep->ContextRecord->Ebp);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        __try {
+            CPlayerPed* ped = FindPlayerPed();
+            if (ped) {
+                const CVector& p = ped->GetPosition();
+                Log("CRASH: CJ at %.2f %.2f %.2f, %s, area %d", p.x, p.y, p.z,
+                    ped->bInVehicle ? "in a vehicle" : "on foot", static_cast<int>(ped->m_nAreaCode));
+            }
+            Log("CRASH: skate mode %s", mp::gta::SkateModeIsOn() ? "ON" : "off");
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    return g_prevFilter ? g_prevFilter(ep) : EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Put our handler in front (again later: mods loaded after us may set their
+// own; we then pass on to theirs).
+void InstallCrashFilter(const char* when)
+{
+    LPTOP_LEVEL_EXCEPTION_FILTER prev = SetUnhandledExceptionFilter(&CrashFilter);
+    if (prev != &CrashFilter) {
+        g_prevFilter = prev;
+        Log("crash log: handler installed (%s), passes on to %s", when, prev ? "an earlier handler" : "Windows");
+    }
 }
 
 // Open the shared block and put our process id in it.
@@ -357,6 +433,7 @@ DWORD WINAPI MainThread(LPVOID)
     }
 
     Log("process id: %lu", GetCurrentProcessId());
+    InstallCrashFilter("at start"); // 8.31 D4
 
     // plugin-sdk's own version check (reads the game's memory, changes nothing).
     const unsigned int version = plugin::GetGameVersion();
@@ -392,6 +469,7 @@ DWORD WINAPI MainThread(LPVOID)
         if (!loggedFirstProcess && firstProcess != 0) {
             Log("first world update at %.3f s", SecondsSinceStart(firstProcess));
             loggedFirstProcess = true;
+            InstallCrashFilter("in game, after other mods loaded"); // 8.31 D4
         }
 
         const unsigned long draw = g_drawCount.load();
@@ -434,6 +512,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         HANDLE t = CreateThread(nullptr, 0, MainThread, nullptr, 0, nullptr);
         if (t) CloseHandle(t);
     } else if (reason == DLL_PROCESS_DETACH) {
+        // 8.31 D4: a normal exit is logged; a crash logs "CRASH" lines instead
+        // (and may not get here at all).
+        if (g_logPath[0]) Log("GTA closing (plugin unloading)%s", g_crashLogged ? " after a crash" : " normally");
         InterlockedExchange(&g_stop, 1);
         // Tell the other side we're gone (just a memory write; safe here).
         if (g_link) InterlockedExchange(&g_link->gtaPid, 0);

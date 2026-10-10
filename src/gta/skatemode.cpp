@@ -209,6 +209,38 @@ void TurnOff(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char*
     }
 }
 
+// 8.31 D2: skate mode on anywhere. In a level lined up with GTA's world, the
+// skater is moved to CJ (the THAW plugin does it on reTHAWed's game thread, the
+// same request BMX mode uses, 8.29 B2), instead of CJ being moved to the skater.
+// Skate mode starts once the skater is there; if reTHAWed doesn't confirm in
+// time, the old way (CJ goes to the skater).
+constexpr float kPlaceSkipM = 3.0f;      // skater already this close to CJ: no move (BMX -> skate roll-in)
+constexpr float kPlaceLiftM = 0.3f;      // put the skater this far above GTA's ground; he drops onto it
+constexpr float kPlaceArrivedM = 2.0f;   // the skater's sample this close to CJ's feet = arrived
+constexpr ULONGLONG kPlaceWaitMs = 1500;
+struct Pending {
+    bool on = false;
+    LONG seq = 0;
+    ULONGLONG until = 0;
+    const char* how = nullptr;
+    Vec3 feet;
+    bool confirmed = false;
+};
+Pending g_pending;
+
+void Start(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* how, const SkaterShared& s,
+           bool moveCj);
+
+// GTA's ground under CJ (his feet), or about 1 m under his position.
+Vec3 CjFeet(CPlayerPed* ped)
+{
+    const CVector p = ped->GetPosition();
+    Vec3 feet{p.x, p.y, p.z - 1.0f};
+    float gz = 0.0f;
+    if (GroundZ(p.x, p.y, p.z, gz) && p.z - gz > -0.5f && p.z - gz < 2.5f) feet.z = gz;
+    return feet;
+}
+
 void TurnOn(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* how)
 {
     if (const char* b = GtaBlocker(ped, pad)) {
@@ -226,7 +258,85 @@ void TurnOn(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* 
         log("skate mode: can't turn on (%s): %s", how, why);
         return;
     }
+    const LevelAlignment* align = FindLevelAlignment(static_cast<unsigned long>(s.levelId));
+    // only our whole-map level (Los Santos East covers one district: outside it the skater would fall)
+    if (align && align->levelId == kGtaEastLs.levelId) {
+        const Vec3 feet = CjFeet(ped);
+        const Vec3 sk = MapAbsolute(Vec3{s.pos[0], s.pos[1], s.pos[2]}, *align);
+        const float d = Distance(sk, feet);
+        if (d > kPlaceSkipM) {
+            if (ped->m_nAreaCode != 0) {
+                log("skate mode: can't turn on (%s): CJ is inside a building (area %d); the skate map has no "
+                    "interiors", how, static_cast<int>(ped->m_nAreaCode));
+                return;
+            }
+            // inverse of MapAbsolute: GTA (x, y, z) = offset + scale * (tx, ySign * tz, ty)
+            const CVector f = ped->GetForward();
+            link->gtaPlacePos[0] = (feet.x - align->offset.x) / align->scale;
+            link->gtaPlacePos[1] = (feet.z + kPlaceLiftM - align->offset.z) / align->scale;
+            link->gtaPlacePos[2] = (feet.y - align->offset.y) / (align->scale * align->ySign);
+            link->gtaPlaceAt[0] = f.x;
+            link->gtaPlaceAt[1] = 0.0f;
+            link->gtaPlaceAt[2] = f.y * align->ySign;
+            MemoryBarrier();
+            g_pending.seq = InterlockedIncrement(&link->gtaPlaceSeq);
+            g_pending.on = true;
+            g_pending.confirmed = false;
+            g_pending.until = GetTickCount64() + kPlaceWaitMs;
+            g_pending.how = how;
+            g_pending.feet = feet;
+            pad->DisablePlayerControls |= kOurControlBit; // CJ waits where he is
+            log("skate mode: (%s) asked reTHAWed to put its skater at CJ (%.2f %.2f %.2f, %.0f m from the skater)",
+                how, feet.x, feet.y, feet.z, d);
+            return; // Start() once it's there (PendingFrame)
+        }
+    }
+    Start(ped, pad, link, log, how, s, true);
+}
 
+// 8.31 D2: while waiting for reTHAWed to move its skater to CJ.
+void PendingFrame(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log)
+{
+    if (!g_pending.on) return;
+    const char* how = g_pending.how;
+    auto cancel = [&](const char* why) {
+        g_pending.on = false;
+        pad->DisablePlayerControls &= static_cast<unsigned short>(~kOurControlBit);
+        log("skate mode: (%s) not turned on: %s", how, why);
+    };
+    if (const char* b = GtaBlocker(ped, pad)) { cancel(b); return; }
+    if (FrontEndMenuManager.m_bMenuActive || CTimer::m_UserPause || CTimer::m_CodePause) return; // wait
+    pad->DisablePlayerControls |= kOurControlBit;
+    if (ped) ped->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+    SkaterShared s;
+    LONG age = 0;
+    const char* why = nullptr;
+    if (!ReadSample(link, s, age, why)) {
+        if (why != kUnreadable) cancel(why);
+        return;
+    }
+    const LevelAlignment* align = FindLevelAlignment(static_cast<unsigned long>(s.levelId));
+    if (!align) { cancel("reTHAWed changed level"); return; }
+    if (link->thawPlaceDone == g_pending.seq) g_pending.confirmed = true;
+    const Vec3 sk = MapAbsolute(Vec3{s.pos[0], s.pos[1], s.pos[2]}, *align);
+    const float d = Distance(sk, g_pending.feet);
+    if (g_pending.confirmed && d < kPlaceArrivedM) {
+        g_pending.on = false;
+        log("skate mode: (%s) reTHAWed's skater is at CJ (%.2f m off): no move for CJ", how, d);
+        Start(ped, pad, link, log, how, s, false);
+        return;
+    }
+    if (GetTickCount64() > g_pending.until) {
+        g_pending.on = false;
+        log("skate mode: (%s) reTHAWed didn't move its skater in time (%s, %.0f m away); CJ goes to the skater "
+            "instead", how, g_pending.confirmed ? "it said done" : "no answer", d);
+        Start(ped, pad, link, log, how, s, true);
+    }
+}
+
+void Start(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* how, const SkaterShared& s,
+           bool moveCj)
+{
     g.thawAnchor = Vec3{s.pos[0], s.pos[1], s.pos[2]};
     g.gtaAnchor = ToVec(ped->GetPosition());
     float gz = 0.0f;
@@ -238,7 +348,7 @@ void TurnOn(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* 
     }
     g.levelId = s.levelId;
     g.align = FindLevelAlignment(static_cast<unsigned long>(s.levelId));
-    if (g.align) {
+    if (g.align && moveCj) {
         // Phase 4-1: CJ goes to the GTA spot matching the skater (loading that area first).
         Vec3 t = MapAbsolute(g.thawAnchor, *g.align);
         t.z += g.feetOffset;
@@ -366,6 +476,10 @@ void PlaceBoardFromThaw(const SkaterShared& s, const Vec3& t, float scale, LogFn
     BoardUpdatePose(origin, r, f, u, log);
 }
 
+// 8.29 B10: a pending "switch on when possible" (BMX -> skate with L1 + R1)
+const char* g_requestWhy = nullptr;
+ULONGLONG g_requestUntil = 0;
+
 void SkateModeFrame(LinkBlock* link, LogFn log)
 {
     CPlayerPed* ped = FindPlayerPed();
@@ -396,11 +510,37 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     g.keyWasDown = keyDown;
     g.comboWasDown = comboDown;
     if (how) {
+        g_requestWhy = nullptr; // the player decided by hand
         if (g.on) {
             TurnOff(ped, pad, link, log, how);
             return;
         }
+        if (g_pending.on) { // pressed again while waiting: cancel
+            g_pending.on = false;
+            pad->DisablePlayerControls &= static_cast<unsigned short>(~kOurControlBit);
+            log("skate mode: (%s) cancelled while waiting for reTHAWed's skater", how);
+            return;
+        }
         TurnOn(ped, pad, link, log, how);
+    }
+    // 8.31 D2: waiting for reTHAWed to put its skater at CJ
+    if (!g.on && g_pending.on) {
+        PendingFrame(ped, pad, link, log);
+        return;
+    }
+    // 8.29 B10: requested by BMX mode: on once CJ is off the bike (his get-off
+    // animation takes a moment), quietly waiting until then
+    if (g_requestWhy && !g.on) {
+        if (GetTickCount64() > g_requestUntil) {
+            log("skate mode: %s: gave up (GTA didn't let skate mode on in time: %s)", g_requestWhy,
+                GtaBlocker(ped, pad) ? GtaBlocker(ped, pad) : "paused / no reTHAWed sample");
+            g_requestWhy = nullptr;
+        } else if (!GtaBlocker(ped, pad) && !FrontEndMenuManager.m_bMenuActive && !CTimer::m_UserPause &&
+                   !CTimer::m_CodePause) {
+            const char* why = g_requestWhy;
+            g_requestWhy = nullptr;
+            TurnOn(ped, pad, link, log, why);
+        }
     }
     if (!g.on) {
         // GTA's pause menu saves the control flags when it opens and puts them
@@ -609,6 +749,25 @@ bool SkateModeThawToGta(const float thawPos[3], const float thawDir[3], float gt
     return true;
 }
 
+void SkateModeRequestOn(const char* why, unsigned long forMs)
+{
+    g_requestWhy = why;
+    g_requestUntil = GetTickCount64() + forMs;
+}
+
+void SkateModeTurnOffNow(LinkBlock* link, LogFn log, const char* why)
+{
+    g_requestWhy = nullptr;
+    g_pending.on = false; // 8.31 D2: a wait for the skater ends too (the frame code clears our control bit)
+    if (!g.on) return;
+    __try {
+        TurnOff(FindPlayerPed(), CPad::GetPad(0), link, log, why);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g.on = false;
+        if (link) InterlockedExchange(&link->gtaSkateMode, 0);
+    }
+}
+
 void SkateModeFrameSafe(LinkBlock* link, LogFn log)
 {
     __try {
@@ -617,6 +776,7 @@ void SkateModeFrameSafe(LinkBlock* link, LogFn log)
         // Something went wrong in our code: give GTA its controls back and stop.
         const DWORD code = GetExceptionCode();
         g.on = false;
+        g_pending.on = false;
         __try {
             CPad* pad = CPad::GetPad(0);
             if (pad) pad->DisablePlayerControls &= static_cast<unsigned short>(~kOurControlBit);

@@ -152,6 +152,11 @@ bool SetUpLogPath()
         return false;
     }
 
+    // 8.31 D4: keep the last launch's log as thaw.prev.log.
+    wchar_t prev[MAX_PATH] = {};
+    if (wcscpy_s(prev, dir) == 0 && wcscat_s(prev, L"\\thaw.prev.log") == 0)
+        MoveFileExW(g_logPath, prev, MOVEFILE_REPLACE_EXISTING);
+
     // Start a fresh log on every launch.
     HANDLE f = CreateFileW(g_logPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
