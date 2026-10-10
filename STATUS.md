@@ -1,10 +1,10 @@
-# WHERE WE LEFT OFF (2026-10-10 18:40)
+# WHERE WE LEFT OFF (2026-10-10 19:10)
 
-BMX done (DESIGN 8.29). Stutter fixed by C1 (8.30). **Whole map (T4) loads and skates** (798 tiles,
-no HashItem change needed). 8.31 written and coded, **not tested in the game**: D1 bridge barriers
-left out of the map (rebuild needed), D2 skate mode on anywhere, D3 F8 fixed, D4 crash / exit
-logging + prev logs, D5 GPS route. Waiting for the user's build + test. Unknown: where the second
-crash was (D4 will log the next one).
+BMX done (DESIGN 8.29). Stutter fixed by C1 (8.30). **Whole map (T4) loads and skates.**
+8.31 tested once (18:37): GPS gets you there, F8 works, crash log caught the crash. **8.31 fix 1
+written, not tested:** the crash (our removal of CJ's talking-face task), wobbly GPS line, skater
+stopped by walls on its way to CJ (previous position +0x78 = a guess, logged), barriers by model
+name (rebuild the map). Waiting for the user's build + test.
 Then: rail budget across the map, water (skater rides the sea bed).
 
 After the map is right (user requests 2026-10-10, not started, plan in DESIGN first):

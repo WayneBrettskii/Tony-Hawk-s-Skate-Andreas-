@@ -52,6 +52,7 @@ volatile LONG g_toggles = 0, g_errors = 0, g_changes = 0;
 volatile LONG g_lastError = 0;
 volatile LONG g_placed = 0, g_placeErrors = 0;
 float g_placePos[3] = {}, g_placeAt[3] = {}; // last placement (for the log)
+float g_posBefore[3] = {}, g_oldBefore[3] = {}; // the skater's position / previous position just before it
 
 using TeleportedFn = void(__thiscall*)(void*);
 
@@ -62,6 +63,13 @@ bool PlaceRider(unsigned long skater, const float pos[3], const float at[3])
     __try {
         unsigned char* s = reinterpret_cast<unsigned char*>(skater);
         float* p = reinterpret_cast<float*>(s + 0x68);
+        // 8.31 fix: the object's previous position (THUG engine object layout:
+        // position +0x68, previous position +0x78, matrix +0x88, velocity +0xC8).
+        // The skater's collision sweeps from the previous position to the new
+        // one, so a far move without it stopped at the first wall on the
+        // straight line between (user test 18:19: skate mode on in Vinewood put
+        // the skater on a roof 150 m from the skatepark, not at CJ).
+        float* old = reinterpret_cast<float*>(s + 0x78);
         float* v = reinterpret_cast<float*>(s + 0xC8);
         float* m = reinterpret_cast<float*>(s + 0x88); // rows right, up, at (16 bytes each)
         // keep the matrix's own handedness: is right = up x at, or the other way?
@@ -77,7 +85,15 @@ bool PlaceRider(unsigned long skater, const float pos[3], const float at[3])
         m[0] = sign * az; m[1] = 0.0f; m[2] = -sign * ax;
         m[4] = 0.0f;      m[5] = 1.0f; m[6] = 0.0f;
         m[8] = ax;        m[9] = 0.0f; m[10] = az;
+        for (int i = 0; i < 3; ++i) { g_posBefore[i] = p[i]; g_oldBefore[i] = old[i]; }
         p[0] = pos[0]; p[1] = pos[1]; p[2] = pos[2];
+        // only if +0x78 looks like a position near the current one (guard
+        // against a wrong guess about the layout)
+        const float ox = g_posBefore[0] - g_oldBefore[0], oy = g_posBefore[1] - g_oldBefore[1],
+                    oz = g_posBefore[2] - g_oldBefore[2];
+        if (ox * ox + oy * oy + oz * oz < 2000.0f * 2000.0f) {
+            old[0] = pos[0]; old[1] = pos[1]; old[2] = pos[2];
+        }
         v[0] = v[1] = v[2] = 0.0f;
         for (unsigned char* c = *reinterpret_cast<unsigned char**>(s + 0x11C); c;
              c = *reinterpret_cast<unsigned char**>(c + 0x10)) {
@@ -208,8 +224,17 @@ void BmxSecond(void (*log)(const char*, ...))
             static_cast<unsigned long>(g_lastError));
     const LONG pl = InterlockedExchange(&g_placed, 0), pe = InterlockedExchange(&g_placeErrors, 0);
     if (pl || pe)
+    {
         log("bmx: rider placed %ld time(s) for GTA (%ld failed): at %.0f %.0f %.0f, facing %.2f %.2f %.2f", pl, pe,
             g_placePos[0], g_placePos[1], g_placePos[2], g_placeAt[0], g_placeAt[1], g_placeAt[2]);
+        // check of the +0x78 = previous position guess: just before, it should
+        // be within one frame's travel of the position
+        const float dx = g_posBefore[0] - g_oldBefore[0], dy = g_posBefore[1] - g_oldBefore[1],
+                    dz = g_posBefore[2] - g_oldBefore[2];
+        log("bmx: just before: position %.1f %.1f %.1f, +0x78 %.1f %.1f %.1f (%.1f apart)", g_posBefore[0],
+            g_posBefore[1], g_posBefore[2], g_oldBefore[0], g_oldBefore[1], g_oldBefore[2],
+            sqrtf(dx * dx + dy * dy + dz * dz));
+    }
 }
 
 } // namespace mp::thaw

@@ -64,155 +64,63 @@ def qbkey(text):
 
 # ---------------------------------------------------------------- region barriers (DESIGN 8.31 D1)
 #
-# GTA's map files place big boxes across the bridges out of Los Santos (the
-# "region closed" barriers its story removes). In GTA they aren't solid once
-# the regions are open (cars drive there), but our map kept them: invisible
-# walls (user's whole-map test, 2026-10-10: SF end of the Flint bridge, the
-# bridge to Las Venturas). Rule: a collision BOX that is tall and wide and that
-# one of GTA's car roads (data\Paths\NODES*.DAT) runs straight through, at a
-# height inside the box, is left out. Small boxes (posts, pillars) and
-# triangle-mesh collision are never touched.
+# GTA's map files place invisible blocks across the bridges and roads out of
+# Los Santos (the "region closed" barriers its story removes). In GTA they are
+# gone once the regions are open, but our map kept them: invisible walls (user's
+# whole-map test, 2026-10-10). They are GTA's models 4504-4527 in
+# data\maps\leveldes\seabed.ide (cuntw_roadblock*ld, sfw_roadblock*ld,
+# sfn_roadblockld, cn2_roadblock0*ld, CE_Makospan1ld, CE_Fredbar*ld,
+# CE_Flintwat01ld, CE_Flintintld, sfse_roadblock1-5), and only they use the
+# texture sets "roadblkx" and "barrierblk". Every placement of a model with one
+# of those texture sets is left out.
+# (First try, 18:10: "big box a car road runs through" also caught a Las
+# Venturas car park deck (venetiancpark01) and missed CE_Fredbar*, sfse_*: replaced.)
 
-BARRIER_MIN_HEIGHT = 4.0   # m
-BARRIER_MIN_SHORT = 5.0    # m: the box's ground plan, shorter side
-BARRIER_MIN_LONG = 12.0    # m: longer side
-ROAD_CELL = 50.0           # m: grid for looking up road pieces
-REMOVED_BARRIERS = []      # (model, position, size, road height), for removed_barriers.txt
+BARRIER_TXDS = ("roadblkx", "barrierblk")
+REMOVED_BARRIERS = []      # (model, position), for removed_barriers.txt
 
 
-class CarRoads:
-    """GTA's car roads as straight pieces between path nodes (read only).
-    Format (GTA SA nodesN.dat, checked 2026-10-10 on the user's files: every
-    link of all 64 files points at a valid node): u32 node count, car nodes,
-    ped nodes, navi nodes, link count; nodes of 28 bytes (+8: x, y, z as int16
-    / 8; +16: first link; +18: area; +20: node; +24: flags, bits 0-3 = link
-    count, bit 7 = boat road); 14-byte navi nodes; links (u16 area, u16 node).
-    Car nodes come first and link only to car nodes."""
-
-    def __init__(self, gta):
-        self.segs = []
-        folder = gad.find_case_insensitive(gta, "data/Paths")
-        areas = {}
-        for a in range(64):
-            path = gad.find_case_insensitive(folder, "NODES%d.DAT" % a) if folder else None
-            if not path:
+def barrier_models(gta):
+    """Lower-case names of GTA's region-barrier models (by their texture set)."""
+    found = set()
+    ides, _ipls = gad.read_gta_dat(gta)
+    for rel in ides:
+        path = gad.find_case_insensitive(gta, rel)
+        if not path:
+            continue
+        section = None
+        for line in open(path, encoding="latin-1"):
+            s = line.split("#")[0].strip()
+            low = s.lower()
+            if not s:
                 continue
-            b = open(path, "rb").read()
-            n, nv, _np, nn, nl = struct.unpack_from("<5I", b, 0)
-            nodes = [struct.unpack_from("<hhhhHHHBBI", b, 20 + 28 * i + 8) for i in range(n)]
-            p = 20 + 28 * n + 14 * nn
-            links = [struct.unpack_from("<HH", b, p + 4 * i) for i in range(nl)]
-            areas[a] = (nodes, links, nv)
-        self.files = len(areas)
-        for a, (nodes, links, nv) in areas.items():
-            for i in range(nv):
-                x, y, z, _h, first, _area, _node, _w, _ff, flags = nodes[i]
-                if flags & 0x80:
-                    continue  # boats
-                for k in range(flags & 15):
-                    if first + k >= len(links):
-                        break
-                    la, ln = links[first + k]
-                    if la not in areas or ln >= areas[la][2] or (la, ln) < (a, i):
-                        continue
-                    o = areas[la][0][ln]
-                    if o[9] & 0x80:
-                        continue
-                    self.segs.append((x / 8.0, y / 8.0, z / 8.0, o[0] / 8.0, o[1] / 8.0, o[2] / 8.0))
-        self.grid = {}
-        for s, (x1, y1, _z1, x2, y2, _z2) in enumerate(self.segs):
-            for cx in range(int(math.floor(min(x1, x2) / ROAD_CELL)), int(math.floor(max(x1, x2) / ROAD_CELL)) + 1):
-                for cy in range(int(math.floor(min(y1, y2) / ROAD_CELL)), int(math.floor(max(y1, y2) / ROAD_CELL)) + 1):
-                    self.grid.setdefault((cx, cy), []).append(s)
-
-    def near(self, lo, hi):
-        found = set()
-        for cx in range(int(math.floor(lo[0] / ROAD_CELL)), int(math.floor(hi[0] / ROAD_CELL)) + 1):
-            for cy in range(int(math.floor(lo[1] / ROAD_CELL)), int(math.floor(hi[1] / ROAD_CELL)) + 1):
-                found.update(self.grid.get((cx, cy), ()))
-        return [self.segs[s] for s in found]
-
-
-def _cross2(o, a, b):
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
-def _hull2(points):
-    pts = sorted(set((round(p[0], 3), round(p[1], 3)) for p in points))
-    if len(pts) < 3:
-        return pts
-    lower, upper = [], []
-    for p in pts:
-        while len(lower) >= 2 and _cross2(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    for p in reversed(pts):
-        while len(upper) >= 2 and _cross2(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return lower[:-1] + upper[:-1]
-
-
-def road_through(corners, roads):
-    """Height of a car road passing through the box (world corners), or None."""
-    lo = [min(c[i] for c in corners) for i in range(3)]
-    hi = [max(c[i] for c in corners) for i in range(3)]
-    hull = _hull2(corners)
-    if len(hull) < 3:
-        return None
-    for x1, y1, z1, x2, y2, z2 in roads.near(lo, hi):
-        if max(x1, x2) < lo[0] or min(x1, x2) > hi[0] or max(y1, y2) < lo[1] or min(y1, y2) > hi[1]:
-            continue
-        for k in range(41):
-            t = k / 40.0
-            x, y, z = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, z1 + (z2 - z1) * t
-            if all(_cross2(hull[i], hull[(i + 1) % len(hull)], (x, y)) > 0 for i in range(len(hull))):
-                if lo[2] - 1.0 < z < hi[2]:  # node height is about the road surface
-                    return z
-    return None
-
-
-def drop_barriers(inst, model, roads):
-    """The model with its road-blocking boxes left out (DESIGN 8.31 D1)."""
-    if not roads or not model["boxes"]:
-        return model
-    qx, qy, qz, qw = inst["rot"]
-    m = gad.quat_matrix((-qx, -qy, -qz, qw))  # as gad.world_triangles
-    keep = []
-    for box in model["boxes"]:
-        mn, mx, _surf = box
-        sx, sy = mx[0] - mn[0], mx[1] - mn[1]
-        corners = [gad.apply(m, inst["pos"], c) for c in gad.box_triangles(mn, mx)[0]]
-        height = max(c[2] for c in corners) - min(c[2] for c in corners)
-        z = None
-        if height >= BARRIER_MIN_HEIGHT and min(sx, sy) >= BARRIER_MIN_SHORT and max(sx, sy) >= BARRIER_MIN_LONG:
-            z = road_through(corners, roads)
-        if z is None:
-            keep.append(box)
-            continue
-        centre = tuple(sum(c[i] for c in corners) / 8.0 for i in range(3))
-        REMOVED_BARRIERS.append((inst["name"], centre, (sx, sy, mx[2] - mn[2]), z))
-    if len(keep) == len(model["boxes"]):
-        return model
-    return dict(model, boxes=keep)
+            if low in ("objs", "tobj", "anim", "weap", "hier", "cars", "peds", "path", "2dfx", "txdp"):
+                section = low
+                continue
+            if low == "end":
+                section = None
+                continue
+            if section in ("objs", "tobj"):
+                p = [x.strip().lower() for x in s.split(",")]
+                # (one sea bed piece, sbcw_seabed01, shares the texture set: kept)
+                if len(p) >= 3 and p[2] in BARRIER_TXDS and ("roadblock" in p[1] or p[1].endswith("ld")):
+                    found.add(p[1])
+    return found
 
 
 def objects_from_gta(gta, box):
     used, cols = gad.collect(gta, box)
-    try:
-        roads = CarRoads(gta)
-        print("car roads:    %d pieces from %d NODES files (for the barrier check)" % (len(roads.segs), roads.files))
-        if not roads.segs:
-            roads = None
-    except (OSError, struct.error) as e:
-        print("car roads:    could not read data\\Paths\\NODES*.DAT (%s); barriers kept" % e)
-        roads = None
+    barriers = barrier_models(gta)
+    print("barriers:     %d region-barrier models in GTA's IDE files (texture sets %s)" % (
+        len(barriers), ", ".join(BARRIER_TXDS)))
     out = []
     for k, inst in enumerate(used):
+        if inst["name"] in barriers:
+            REMOVED_BARRIERS.append((inst["name"], inst["pos"]))
+            continue
         model = cols.get(inst["name"])
         if not model:
             continue
-        model = drop_barriers(inst, model, roads)
         verts, tris = gad.world_triangles(inst, model)
         out.append(("%s_%d" % (inst["name"], k), verts, [(a, b, c) for a, b, c, _s in tris]))
     return out
@@ -1137,12 +1045,11 @@ def main():
         f.write("spawn (THAW units): %.1f %.1f %.1f\n" % spawn)
         f.write("region barriers left out: %d (removed_barriers.txt)\n" % len(REMOVED_BARRIERS))
     with open(os.path.join(out, "removed_barriers.txt"), "w", newline="\n") as f:
-        f.write("# GTA collision boxes left out because a GTA car road runs through them (DESIGN 8.31 D1)\n")
-        f.write("# model, GTA centre x y z, box size x y z (m), road height\n")
-        for name, c, size, z in REMOVED_BARRIERS:
-            f.write("%s, %.1f %.1f %.1f, %.1f x %.1f x %.1f, %.1f\n" % (name, c[0], c[1], c[2], size[0], size[1],
-                                                                       size[2], z))
-    print("barriers:     %d road-blocking boxes left out (removed_barriers.txt)" % len(REMOVED_BARRIERS))
+        f.write("# GTA region barriers left out of the map (DESIGN 8.31 D1)\n")
+        f.write("# model, GTA position x y z\n")
+        for name, pos in REMOVED_BARRIERS:
+            f.write("%s, %.1f %.1f %.1f\n" % (name, pos[0], pos[1], pos[2]))
+    print("barriers:     %d placements left out (removed_barriers.txt)" % len(REMOVED_BARRIERS))
     print("collision:    %d objects, %d corners, %d triangles, %d BSP nodes" % (
         st["objects"], st["verts"], st["faces"], st["nodes"]))
     nrail = sum(len(r) for r in rails)

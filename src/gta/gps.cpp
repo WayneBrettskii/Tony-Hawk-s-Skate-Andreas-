@@ -320,11 +320,17 @@ void Frame(LogFn log)
         return;
     }
 
-    // how far along: the nearest piece of the next few, never going back
+    // how far along: the nearest piece among the one CJ is on and the next
+    // few, never going back. progress = the next point he heads for, so he is
+    // on the piece (progress - 1 -> progress). (Fix 2026-10-10: the search
+    // started at progress itself, so it skipped the piece he was on and the
+    // line ran away ahead of him every frame: a wobbly line and a new route
+    // every half second.)
     const size_t n = g_route.pts.size();
     float best = 1e30f;
-    size_t bestSeg = g_route.progress;
-    for (size_t i = g_route.progress; i + 1 < n && i < g_route.progress + 12; ++i) {
+    const size_t from = g_route.progress > 0 ? g_route.progress - 1 : 0;
+    size_t bestSeg = from;
+    for (size_t i = from; i + 1 < n && i < from + 12; ++i) {
         const float d = DistToSegment2D(g_cj, g_route.pts[i], g_route.pts[i + 1]);
         if (d < best) { best = d; bestSeg = i; }
     }

@@ -2,6 +2,17 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] 8.31 fix 1: crash on CJ speaking, wobbly GPS line, skater stopped by walls on its way to CJ, barriers by name
+
+**Changed:**
+- `src/gta/skatemode.cpp`: skate mode no longer removes CJ's talking-face task (only look-at); placing the skater at CJ is asked again up to 3 times when reTHAWed's skater ends up elsewhere.
+- `src/thaw/bmx.cpp`: placement also sets the skater's previous position (+0x78, guarded) and logs both before the move.
+- `src/gta/gps.cpp`: progress search starts at the piece CJ is on.
+- `tools/gta_to_thaw_map.py`: barriers left out by model (texture sets roadblkx / barrierblk: 24 models), instead of "big box with a road through it".
+**Why:** user 18:37: GTA crashed twice (once with skate mode off), GPS line wiggly on the radar, skate mode once went to the skatepark and F8 + skate mode jumped CJ back to the skater, walls on a bridge to the countryside. Crash lines (D4's first catch): gta_sa.exe 0x691238 writing 0x10, args 7 / 0xAF0 = speech asking the missing talking-face task to talk.
+**Tested how:** cloud only: GPS code run on the real road files (5.8 km trip, no re-route); barrier list from the user's IDE files (24 models); disassembly of the crash address and its three callers (registers match the 0x4E5E7C call). Not tested in the game.
+**Result:** not tested yet.
+
 ## [2026-10-10] 8.31 D1-D5: no region barriers in the map, skate mode anywhere, F8 fixed, crash log, GPS
 
 **Changed:**

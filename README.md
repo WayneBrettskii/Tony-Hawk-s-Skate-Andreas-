@@ -24,7 +24,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Skate live from GTA** (phase 3, tested 2026-10-07): with skate mode on and reTHAWed behind GTA, your controller drives the hidden skater and CJ follows live. GTA ignores the controller meanwhile: Start pauses only reTHAWed (skate mode waits), L3 + R3 still toggles.
 - **Skating on GTA's real streets in East Los Santos** (phase 4-1, tested 2026-10-08): with the "Los Santos East" reTHAWed map (thpsgoat.com mod 598) loaded, skate mode puts CJ at the matching GTA spot, so the skater's ramps, rails and walls are GTA's. Lined up to about half a metre. Only that area so far.
 - **Test helper F8** (tested 2026-10-07): moves CJ to the waypoint marker on the map. (2026-10-10: now waits for the ground to load first; not tested yet.)
-- **The whole of San Andreas as a skate map** (tested 2026-10-10): `tools\gta_to_thaw_map.py` with `--box -3000 -3000 3000 3000 --no-geometry-nodes` makes a reTHAWed map of all of GTA's collision (in 200 m tiles); it loads and skates. Bridge barriers that GTA's story removes are now left out (not tested yet; rebuild the map).
+- **The whole of San Andreas as a skate map** (tested 2026-10-10): `tools\gta_to_thaw_map.py` with `--box -3000 -3000 3000 3000 --no-geometry-nodes` makes a reTHAWed map of all of GTA's collision (in 200 m tiles); it loads and skates. GTA's region barriers (the invisible blocks on the bridges, which GTA's story removes) are left out by model name (not tested yet; rebuild the map).
 - **Controller fix** (tested 2026-10-07, menus only): reTHAWed started by our launcher ignores DualSenseX's virtual Xbox 360 controller and uses only the real PS5 controller. Downside for now: a real Xbox 360 controller would be ignored by reTHAWed too; an option for Xbox players is planned before release.
 - **reTHAWed's HUD in GTA** (tested 2026-10-09): score, combo meter, balance meters etc. are copied from the hidden reTHAWed into GTA while skating.
 - **Flips and rolls** (tested 2026-10-09): CJ's body turns with the skater's flips and rolls.
@@ -44,6 +44,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - THAW's unit size is not confirmed (probably inches).
 - Pressing Start in reTHAWed also opens GTA's pause menu (both games read the controller). Skate mode holds while it's open, so CJ misses anything skated until you close it. To be fixed in phase 3.
 - CJ's skating poses are GTA's roller-skating animations (phase 5-0, not tested yet). CJ rides a simple stand-in skateboard drawn by the plugin (phase 5-1, not tested yet); reTHAWed's own board is planned.
+- Fixed 2026-10-10 (not tested yet): GTA crashed the first time CJ spoke after a skate session (skate mode removed his talking face, which GTA needs).
 - Water: the skater rides along the sea bed instead of falling into the water (THAW knows nothing of GTA's water). Planned later.
 - F7 sometimes needs an extra Alt+Tab into GTA before it works (found 2026-10-07, not understood yet).
 - Everything else in `docs/DESIGN.md`: not started.

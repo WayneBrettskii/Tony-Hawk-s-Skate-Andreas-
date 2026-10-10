@@ -218,15 +218,34 @@ constexpr float kPlaceSkipM = 3.0f;      // skater already this close to CJ: no 
 constexpr float kPlaceLiftM = 0.3f;      // put the skater this far above GTA's ground; he drops onto it
 constexpr float kPlaceArrivedM = 2.0f;   // the skater's sample this close to CJ's feet = arrived
 constexpr ULONGLONG kPlaceWaitMs = 1500;
+constexpr ULONGLONG kPlaceRetryMs = 400;  // said done but not there after this: ask again
+constexpr int kPlaceTries = 3;
 struct Pending {
     bool on = false;
     LONG seq = 0;
     ULONGLONG until = 0;
+    ULONGLONG askedAt = 0;
+    int tries = 0;
     const char* how = nullptr;
     Vec3 feet;
+    float place[3] = {}, at[3] = {}; // THAW units / direction, as sent
     bool confirmed = false;
 };
 Pending g_pending;
+
+// (Re)send the placement request to the THAW plugin.
+void AskPlace(LinkBlock* link)
+{
+    for (int i = 0; i < 3; ++i) {
+        link->gtaPlacePos[i] = g_pending.place[i];
+        link->gtaPlaceAt[i] = g_pending.at[i];
+    }
+    MemoryBarrier();
+    g_pending.seq = InterlockedIncrement(&link->gtaPlaceSeq);
+    g_pending.confirmed = false;
+    g_pending.askedAt = GetTickCount64();
+    ++g_pending.tries;
+}
 
 void Start(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* how, const SkaterShared& s,
            bool moveCj);
@@ -272,16 +291,15 @@ void TurnOn(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* 
             }
             // inverse of MapAbsolute: GTA (x, y, z) = offset + scale * (tx, ySign * tz, ty)
             const CVector f = ped->GetForward();
-            link->gtaPlacePos[0] = (feet.x - align->offset.x) / align->scale;
-            link->gtaPlacePos[1] = (feet.z + kPlaceLiftM - align->offset.z) / align->scale;
-            link->gtaPlacePos[2] = (feet.y - align->offset.y) / (align->scale * align->ySign);
-            link->gtaPlaceAt[0] = f.x;
-            link->gtaPlaceAt[1] = 0.0f;
-            link->gtaPlaceAt[2] = f.y * align->ySign;
-            MemoryBarrier();
-            g_pending.seq = InterlockedIncrement(&link->gtaPlaceSeq);
+            g_pending.place[0] = (feet.x - align->offset.x) / align->scale;
+            g_pending.place[1] = (feet.z + kPlaceLiftM - align->offset.z) / align->scale;
+            g_pending.place[2] = (feet.y - align->offset.y) / (align->scale * align->ySign);
+            g_pending.at[0] = f.x;
+            g_pending.at[1] = 0.0f;
+            g_pending.at[2] = f.y * align->ySign;
+            g_pending.tries = 0;
+            AskPlace(link);
             g_pending.on = true;
-            g_pending.confirmed = false;
             g_pending.until = GetTickCount64() + kPlaceWaitMs;
             g_pending.how = how;
             g_pending.feet = feet;
@@ -324,6 +342,15 @@ void PendingFrame(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log)
         g_pending.on = false;
         log("skate mode: (%s) reTHAWed's skater is at CJ (%.2f m off): no move for CJ", how, d);
         Start(ped, pad, link, log, how, s, false);
+        return;
+    }
+    // said done but the skater isn't there (e.g. stopped by a wall on the way):
+    // ask again, a few times
+    if (g_pending.confirmed && GetTickCount64() - g_pending.askedAt > kPlaceRetryMs && g_pending.tries < kPlaceTries) {
+        log("skate mode: (%s) reTHAWed's skater ended up %.0f m from CJ (at GTA %.1f %.1f %.1f): asking again (try %d)",
+            how, d, sk.x, sk.y, sk.z, g_pending.tries + 1);
+        AskPlace(link);
+        g_pending.until = GetTickCount64() + kPlaceWaitMs;
         return;
     }
     if (GetTickCount64() > g_pending.until) {
@@ -399,19 +426,24 @@ void ReportIfDue(CPlayerPed* ped, LogFn log)
     ResetStats();
 }
 
-// 5-3f: GTA's own head turning (look-at) and talking face run as "secondary
-// tasks" on CJ; while skate mode is on they are stopped every frame.
+// 5-3f: GTA's own head turning (look-at) runs as a "secondary task" on CJ;
+// while skate mode is on it is stopped every frame.
+// FIX 2026-10-10 (8.31): this used to remove CJ's talking-face task too. GTA
+// gives every ped that task once, at creation, and never again; its speech code
+// then writes into it without checking (gta_sa.exe 0x4E5E7C -> 0x691238). So
+// after the first skate session the next time CJ spoke, GTA crashed (both of
+// the user's crashes, 18:31 and 18:36: same address, writing 0x10, called with
+// arguments 7 and 0xAF0 = "talk for 2.8 s"). The talking face is left alone now.
 void StopLookAndTalk(CPlayerPed* ped)
 {
     if (!ped->m_pIntelligence) return;
     CTaskManager& tm = ped->m_pIntelligence->m_TaskMgr;
-    for (int slot : {static_cast<int>(TASK_SECONDARY_IK), static_cast<int>(TASK_SECONDARY_FACIAL_COMPLEX)}) {
-        CTask* t = tm.GetTaskSecondary(slot);
-        if (!t) continue;
-        t->MakeAbortable(ped, ABORT_PRIORITY_IMMEDIATE, nullptr);
-        tm.SetTaskSecondary(nullptr, slot);
-        ++g.tasksStopped;
-    }
+    const int slot = static_cast<int>(TASK_SECONDARY_IK);
+    CTask* t = tm.GetTaskSecondary(slot);
+    if (!t) return;
+    t->MakeAbortable(ped, ABORT_PRIORITY_IMMEDIATE, nullptr);
+    tm.SetTaskSecondary(nullptr, slot);
+    ++g.tasksStopped;
 }
 
 // Phase 5-3c: turn CJ's whole body like the skater: his matrix gets the
