@@ -161,6 +161,19 @@ void __cdecl OurUpdatePads()
     // 8.28 d: the vehicle list (when open, GTA doesn't get the controller)
     const bool spawnerHolds = SpawnerPadFilter();
     const bool blank = RideModeIsOn(); // 8.29: BMX mode too
+    // 8.29: when skate / BMX mode ends, buttons still held for reTHAWed must not
+    // reach GTA (test 01:48: "gun stuck shooting" after L3 + R3 on the bike).
+    // GTA gets the controller back once everything is let go.
+    static bool releaseGuard = false;
+    if (!blank && g_wasBlanking) releaseGuard = true;
+    if (releaseGuard) {
+        bool held = g_lastButtons.load(std::memory_order_relaxed) != 0;
+        if (g_lastAxes[kAxisL2].load(std::memory_order_relaxed) > 30 ||
+            g_lastAxes[kAxisR2].load(std::memory_order_relaxed) > 30)
+            held = true;
+        if (held) BlankSafe(false);
+        else releaseGuard = false;
+    }
     if (blank || spawnerHolds) BlankSafe(blank);
     BlockReplay(blank);
     if (blank) g_blanked.fetch_add(1, std::memory_order_relaxed);

@@ -769,8 +769,11 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
 - **B2:** move reTHAWed's rider to the GTA bike's spot when BMX mode starts. Found: reTHAWed's Obj_SetPosition (0x0042E9E0) writes the object's position (+0x68) and then calls every component's "teleported" function (component list +0x11C, next +0x10, vtable +0x24); facing is the matrix at +0x88 (rows right, up, at). We do the same from the THAW plugin on reTHAWed's game thread, plus facing and speed 0, when GTA asks through the link (version 10).
 - **B2 result (00:38):** works (rider 0.00 m from the GTA bike).
 - **B3 (written 00:55, not tested):** see MODLOG. Getting off: in reTHAWed with its own get-off-the-board buttons (L1 + R1; since fix 3 CJ then gets off the GTA bike too), or F7 / L3 + R3 then Triangle. While BMX mode is on, GTA doesn't push the rider back on the bike. GTA's replay (F1) is blocked in skate / BMX mode (fix 2). GTA's Triangle can't go straight through in BMX mode (it's a trick button in reTHAWed).
+- **B3 result (01:25):** works: riding, jumps, radio wheel, bails, F7 / L3 + R3, L1 + R1 gets CJ off. Still to check: the first mission ("Big Smoke" bike ride) once the map covers its route.
 - **B3 plan:** BMX mode itself: controller to reTHAWed (as skate mode), GTA's bike + CJ follow the rider (position, facing, lean); radio wheel as in skate mode; the rules above.
 - **B4:** looks: CJ's body copies the rider (tricks), the bike's tilt / spins; the bike's own parts (bars, wheels) if possible.
+  - **B4a (01:30):** CJ's body copies the rider's bones each frame with skate mode's body code (body.cpp), the rider's origin at the GTA spot the bike follows. The GTA bike itself still stays upright.
+  - **B4b (next):** the GTA bike's tilt / flips shown only when drawn (turn its picture right before GTA draws it, put it back after), so GTA's camera and physics keep an upright bike (test 00:51: tilting the real bike swung the camera).
 
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 

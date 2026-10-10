@@ -2,12 +2,47 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] BMX B4b fix 2: the GTA bike drawn exactly where reTHAWed's bike is
+
+**Changed:** `src/gta/bmxmode.cpp`: the GTA bike's picture (drawn turned, real bike untouched) = reTHAWed's bike (board bone): its right, its forward (minus the bone's "up"), its up (the bone's "at"); centre = the bone's position lifted by (GTA bike's wheel-to-centre height - 17.8 THAW units), so at rest the wheels sit as before. Fixed numbers from the research log; no lining up at run time (that was what spoiled both earlier attempts). The once-a-second log keeps the board bone values and how many frames were drawn there.
+**Why:** research log 01:59 (above); STATUS.md.
+**Tested how:** not tested (not compiled yet).
+**Result:** none yet.
+
+## [2026-10-10] BMX: research log for the bike, no false starts, no buttons leaking into GTA
+
+**Changed:** `src/gta/bmxmode.cpp`: turning the GTA bike's picture switched off (bike upright as in B4a) until we know how reTHAWed's bike sits; once a second while BMX mode is on the log gives the board bone's axes and position in the rider's own space, the speed, and how far hips / board turned (research for B4b). BMX mode starts only when CJ is fully seated (GTA ped state "driving") and 3 s after we last asked reTHAWed to switch the rider. `src/gta/padlink.cpp`: when skate / BMX mode ends, GTA gets the controller back only once all buttons and triggers are let go.
+**Why:** STATUS.md (01:55); test 01:48: false start threw CJ off; "gun stuck shooting" after L3 + R3 on the bike (buttons held for reTHAWed reached GTA at once; on a GTA bike one of them fires).
+**Tested how:** user 01:59: rode straight, flips, barspins / tailwhips, wheelies (order not remembered).
+**Result:** "the bike was still not fully staying with CJ" (expected: picture turning was off). Research log (91 lines): riding normally the board bone in the rider's space is right (1, 0, 0), "up" (0, 0, -1) = towards the back, "at" (0, 1, 0) = up, 17.8 units above the feet: exactly the skateboard's set-up, so it IS the bike. In hops it rises to ~33 units and pitches; in spins it turns 90 degrees and more; in bails it flies far off (-280 units).
+
+## [2026-10-10] BMX B4b fix 1: the bike's picture follows the rider's hips
+
+**Changed:** `src/gta/bmxmode.cpp`: the GTA bike's picture now follows the rider's hips and torso (origin the hips; up hips to neck; right left thigh to right thigh) instead of the "board" bone, lined up the same way at the 10th frame. Per second the log says the most the rider's hips and the board bone turned (to see whether the board bone moves on the bike at all).
+**Why:** test 01:40: no change on screen though the swap ran every frame. CJ's body flips correctly, so the rider's bones do carry the tricks.
+**Tested how:** user 01:48: tricks, flips, L3 + R3.
+**Result:** "still janky"; also "when pressing L3 + R3 my gun got stuck shooting". gta.log: lined up 1 s after start, while reTHAWed's get-on animation (~2 s) was still playing; the board bone does turn (56-163 deg). BMX mode once started while CJ was still getting on / reTHAWed still switching (151-160 s) and CJ was thrown off. STATUS.md written (two attempts).
+
+## [2026-10-10] BMX step B4b: the GTA bike drawn where reTHAWed's bike is
+
+**Changed:** `src/gta/bmxmode.cpp/.h`, `main.cpp`: new `BmxAddHook` (GTA's vehicle-draw event, before and after). In BMX mode, the 10th followed frame notes how reTHAWed's bike (the rider's "board" bone, from the link, flips included) sits relative to the GTA bike (both as they are then: rider standing on the bike); after that, each frame works out the GTA bike's picture: the same turn and shift reTHAWed's bike made since then. Right before GTA draws our bike, its matrix is set to that picture; right after drawing, it's put back, so GTA's camera and physics keep the upright bike. Logged: the lining up, and per second how many frames were drawn turned.
+**Why:** test 01:33 (B4a above): CJ flips but the GTA bike doesn't, and it drifts away from CJ in jumps.
+**Tested how:** user 01:40: tricks and flips.
+**Result:** no visible change ("behaved the same way as before"). gta.log: lined up at 47 s, the bike was drawn turned in ~50 frames a second, so the drawing swap ran; most likely reTHAWed's "board" bone doesn't move with its bike in BMX mode (fix 1 logs it).
+
+## [2026-10-10] BMX step B4a: CJ's body does the rider's tricks
+
+**Changed:** `src/gta/bmxmode.cpp`: each BMX-mode frame, the rider's bones (with reTHAWed's flips already applied by the THAW side) go to the same body code skate mode uses (`BodySetTarget`, body.cpp), with the rider's origin at the GTA spot the bike follows; cleared when BMX mode ends (CJ's own riding animation again). The once-a-second BMX log also says how many drawn frames had CJ's body copied. The GTA bike still stays upright (B4b).
+**Why:** DESIGN 8.29 B4; user 01:27: start B4 (first-mission check left to players after release).
+**Tested how:** user 01:33: tricks and flips in BMX mode.
+**Result:** CJ's body does the flips ("he flips but the bike doesn't"); "the bike looked like it was getting away from CJ as he jumped": the GTA bike stays at the rider's feet spot, upright, while the rider (and reTHAWed's bike) move and turn in tricks (B4b).
+
 ## [2026-10-10] BMX B3 fix 3: getting off in reTHAWed gets CJ off too
 
 **Changed:** `src/gta/bmxmode.cpp`: while BMX mode is on, GTA no longer asks for the rider to be on the bike (wish "leave it"), so getting off in reTHAWed (L1 + R1) stands. The rider off for 1 s (was 2.5 s) ends BMX mode, and CJ then gets off the GTA bike with GTA's own get-off task (CTaskComplexLeaveCar); logged.
 **Why:** user 01:14: L1 + R1 left CJ sitting on the bike; we had put the rider straight back on.
-**Tested how:** not tested (not compiled yet).
-**Result:** none yet.
+**Tested how:** user 01:25: bails and L1 + R1 in BMX mode.
+**Result:** works: "bailing did not end BMX mode and L1 + R1 got off the bike". B3 done (riding, jumps, radio wheel, no replay / floating, getting off).
 
 ## [2026-10-10] BMX B3 fix 2: no GTA idle camera, bails don't end BMX mode, bike onto GTA's ground
 

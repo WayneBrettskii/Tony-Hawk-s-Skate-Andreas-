@@ -17,4 +17,7 @@ namespace mp::gta {
 // GTA's main thread, once per world update.
 void BmxFrame(LinkBlock* link, LogFn log);
 
+// Once, from DllMain: B4b, the GTA bike drawn turned like reTHAWed's bike.
+void BmxAddHook();
+
 } // namespace mp::gta

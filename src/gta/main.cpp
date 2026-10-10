@@ -147,6 +147,8 @@ void AddHooks()
     mp::gta::SpawnerAddHook();
     // 8.28 a: GTA's tag calls, so our tags don't crash it.
     mp::gta::TagsAddHook();
+    // 8.29 B4b: the BMX drawn like reTHAWed's bike.
+    mp::gta::BmxAddHook();
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);

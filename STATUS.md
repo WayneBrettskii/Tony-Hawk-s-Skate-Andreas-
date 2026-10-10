@@ -1,4 +1,49 @@
-# STATUS: BMX mode (8.29 B3): "replay" / camera, CJ off the bike, floating
+# STATUS: BMX B4b: the GTA bike doesn't move with reTHAWed's bike
+
+**Written 2026-10-10 01:55 after two attempts didn't work (AGENTS.md rule).**
+No third guess: next is a logging-only test to learn how reTHAWed's bike sits.
+
+## Update 02:10: fix 2 didn't work either (third attempt) - stopped
+User 02:04: "the bike is still not staying with CJ". gta.log: the bike was drawn at reTHAWed's
+bike in ~55 frames a second, with sensible values (lifts to 33 units in hops, pitches up to
+~50 degrees, turns sideways in spins). So either (a) changing the bike's matrix right before
+GTA draws it doesn't change what is seen (GTA may draw the bike from data made earlier in the
+frame, or later than our hook), or (b) it does, and the look is still wrong for another reason.
+No more guesses: a test switch (F5 in BMX mode) draws the bike upside down and 1 m higher.
+If the user sees that: (b), ask what exactly looks wrong. If not: (a), find where GTA really
+draws the bike.
+
+## Update 02:05: research log read
+Riding normally, the board bone in the rider's space is right (1,0,0), "up" (0,0,-1) (towards the back),
+"at" (0,1,0) (up), 17.8 units above the feet: exactly the skateboard set-up. It IS the bike (rises in
+hops, turns in spins, flies off in bails). Fix 2 draws the GTA bike there with these fixed numbers.
+
+## What the user sees
+- B4a works: CJ's body does the rider's tricks and flips.
+- The GTA bike doesn't flip with him and drifts away from him in jumps.
+- Attempt 1 (bike picture follows reTHAWed's "board" bone): "same as before".
+- Attempt 2 (bike picture follows the rider's hips): "still janky".
+
+## What the logs show (test 01:48)
+- The picture swap runs (~50 frames a second drawn turned): drawing isn't the problem.
+- The board bone DOES move on the bike: 56-163 degrees from where it was when we lined up, about 90 degrees most of the time even when just riding.
+- We lined up 1 s after BMX mode started. reTHAWed's get-on-the-bike animation takes about 2 s, so we lined up in the middle of it: the "start" we compare against was a random pose. Both attempts used that start, so both were off.
+- The hips swing 50-170 degrees while riding (leaning, pedalling): a poor guide for the bike anyway.
+
+## Next (research, logging only)
+- Turning the picture switched off again (bike upright, as in B4a) until we know more.
+- While BMX mode is on, twice a second log the board bone's axes and position in the rider's own space, with the rider's speed. Test: ride straight, do a flip, a barspin / tailwhip.
+- From that: which board-bone axis is the bike's forward / up, and where the bike sits, as fixed numbers (no lining up at run time).
+
+## Also found in the 01:48 log (fixed now, see MODLOG)
+- BMX mode could start while CJ was still getting on or reTHAWed was still switching the rider: CJ was thrown off again (151-160 s).
+- After switching BMX mode off, buttons still held for reTHAWed reached GTA at once (likely the "gun stuck shooting": on a GTA bike, a button reTHAWed uses for tricks fires).
+
+---
+
+# (older) # STATUS: BMX mode (8.29 B3): "replay" / camera, CJ off the bike, floating
+
+**SOLVED 2026-10-10 01:14:** no replay, no floating (user test). Kept below for the record.
 
 **Written 2026-10-10 01:10 after two attempts didn't fix it (AGENTS.md rule).**
 The next change is driven by what the logs show, adds logging for what they

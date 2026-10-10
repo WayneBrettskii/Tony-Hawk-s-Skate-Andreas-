@@ -19,6 +19,7 @@
 #include <windows.h>
 
 #include "bmxmode.h"
+#include "body.h"
 #include "padlink.h"
 #include "../common/convert.h"
 
@@ -76,6 +77,49 @@ V3 Norm(V3 a)
 }
 // a THAW direction in GTA terms (no scale)
 V3 Dir(const float* d, float ySign) { return {d[0], d[2] * ySign, d[1]}; }
+V3 Add(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+V3 Sub(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+V3 Mul(V3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+float Dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+// A rotation as its three axes in world space (columns): right, forward, up.
+struct Basis {
+    V3 r, f, u;
+};
+V3 Apply(const Basis& b, V3 v) { return Add(Add(Mul(b.r, v.x), Mul(b.f, v.y)), Mul(b.u, v.z)); } // local -> world
+V3 Local(const Basis& b, V3 w) { return {Dot(b.r, w), Dot(b.f, w), Dot(b.u, w)}; }                 // world -> local
+
+// ---- B4b: the GTA bike drawn where reTHAWed's bike is ----
+// When BMX mode starts (rider standing on the bike) we note how reTHAWed's bike
+// ("board" bone) sits relative to the GTA bike; then each frame the GTA bike's
+// picture gets the same turn and shift as reTHAWed's bike since then. Only the
+// picture: the real GTA bike stays upright (camera, physics; test 00:51).
+constexpr int kCalibrateAfter = 10;   // frames into BMX mode (rider settled)
+int g_calFrames = 0;
+bool g_calibrated = false;
+Basis g_board0, g_bike0;              // at calibration
+V3 g_offLocal{0, 0, 0};               // GTA bike centre in reTHAWed bike's own space
+bool g_haveVisual = false;            // a picture placement for this frame
+Basis g_vis;
+V3 g_visPos{0, 0, 0};
+ULONGLONG g_visTick = 0;
+bool g_swapped = false;               // the bike's matrix is the picture's right now
+float g_saved[12];                    // what it really was (restored after drawing)
+// STATUS 02:10 test switch: F5 in BMX mode draws the GTA bike upside down and
+// 1 m higher, to see whether the drawing swap shows on screen at all.
+constexpr int kDrawTestKey = VK_F5;
+bool g_drawTest = false, g_drawTestKeyWas = false;
+bool g_calLogPending = false;
+unsigned g_drawnTurned = 0;
+// STATUS 01:55: turning the bike's picture is off until we know how reTHAWed's
+// bike sits (both lined-up attempts were off); the research log below decides.
+constexpr bool kTurnBikePicture = true;   // fix 2: from the research log
+constexpr float kBoardRestHeight = 17.8f; // board bone above the rider's feet when riding normally (THAW units, log 01:59)
+float g_lastBoard[12] = {};           // research log: board bone rows in the rider's space
+float g_lastSpeed = 0.0f;
+bool g_haveBoardLog = false;
+Basis g_boardStart;                   // for the log only (fix 1)
+float g_boardTurnMax = 0.0f, g_bodyTurnMax = 0.0f;
 
 bool CjRidesBmxUnsafe()
 {
@@ -247,6 +291,9 @@ void StartUnsafe(LinkBlock* link, LogFn log)
     if (!CStuntJumpManager::mp_Active) CStuntJumpManager::m_bActive = false; // not in the middle of one
     InterlockedExchange(&link->gtaSkateMode, kRideModeBmx); // the THAW side takes GTA's controller now
     g_active = true;
+    g_calibrated = false;
+    g_calFrames = 0;
+    g_haveVisual = false;
     g_frames = g_held = g_skipped = 0;
     g_maxAge = 0;
     g_nextReport = GetTickCount() + 1000;
@@ -257,6 +304,8 @@ void StartUnsafe(LinkBlock* link, LogFn log)
 void EndUnsafe(LinkBlock* link, LogFn log, const char* why)
 {
     g_active = false;
+    g_haveVisual = false;
+    BodyClear(); // B4: CJ's own riding animation again
     if (link && link->gtaSkateMode == kRideModeBmx) InterlockedExchange(&link->gtaSkateMode, 0);
     if (g_stuntsOff) {
         CStuntJumpManager::m_bActive = g_savedStunts;
@@ -299,6 +348,7 @@ void End(LinkBlock* link, LogFn log, const char* why)
         g_active = false;
         g_bike = nullptr;
         g_placeSeqWanted = 0;
+        BodyClear();
         if (g_stuntsOff) {
             CStuntJumpManager::m_bActive = g_savedStunts;
             g_stuntsOff = false;
@@ -306,6 +356,54 @@ void End(LinkBlock* link, LogFn log, const char* why)
         if (link && link->gtaSkateMode == kRideModeBmx) InterlockedExchange(&link->gtaSkateMode, 0);
         log("bmx: BMX mode off (%s; error while restoring GTA's bike)", why);
     }
+}
+
+// reTHAWed's bike ("board" bone, rows right, up, at, position in the rider's
+// own space) in GTA's world: its axes and position. As skate mode's board.
+void BoardFrame(const SkaterShared& s, const LevelAlignment& a, const Vec3& feet, Basis& out, V3& pos)
+{
+    const float* o = s.orient;
+    const float* b = s.board;
+    auto toWorld = [o](const float* v, float* w) {
+        w[0] = v[0] * o[0] + v[1] * o[3] + v[2] * o[6];
+        w[1] = v[0] * o[1] + v[1] * o[4] + v[2] * o[7];
+        w[2] = v[0] * o[2] + v[1] * o[5] + v[2] * o[8];
+    };
+    float w[3];
+    toWorld(b + 0, w);
+    out.r = Norm(Dir(w, a.ySign));
+    toWorld(b + 3, w);
+    out.f = Mul(Norm(Dir(w, a.ySign)), -1.0f); // the bone's "up" points to the tail
+    toWorld(b + 6, w);
+    out.u = Norm(Dir(w, a.ySign));
+    toWorld(b + 9, w);
+    const V3 off = Mul(Dir(w, a.ySign), a.scale);
+    pos = {feet.x + off.x, feet.y + off.y, feet.z + off.z};
+}
+
+// The rider's hips and torso in GTA's world (fix 1, test 01:40: the board bone
+// doesn't move with reTHAWed's bike): origin = hips, up = hips to neck,
+// right = left thigh to right thigh, forward = up x right... made square.
+bool BodyFrame(const SkaterShared& s, const LevelAlignment& a, const Vec3& feet, Basis& out, V3& pos)
+{
+    const float* o = s.orient;
+    auto world = [&](int bone) {
+        const float* v = s.body + bone * 3;
+        float w[3] = {v[0] * o[0] + v[1] * o[3] + v[2] * o[6], v[0] * o[1] + v[1] * o[4] + v[2] * o[7],
+                      v[0] * o[2] + v[1] * o[5] + v[2] * o[8]};
+        const V3 d = Mul(Dir(w, a.ySign), a.scale);
+        return V3{feet.x + d.x, feet.y + d.y, feet.z + d.z};
+    };
+    constexpr int kPelvis = 0, kNeck = 2, kThighL = 10, kThighR = 14; // order: src/thaw/pose.cpp kBodyBones
+    pos = world(kPelvis);
+    const V3 up = Norm(Sub(world(kNeck), pos));
+    V3 side = Sub(world(kThighR), world(kThighL));
+    side = Norm(Sub(side, Mul(up, Dot(side, up))));
+    if ((up.x == 0 && up.y == 0 && up.z == 0) || (side.x == 0 && side.y == 0 && side.z == 0)) return false;
+    out.u = up;
+    out.r = side;
+    out.f = Norm(Cross(up, side));
+    return true;
 }
 
 // One frame: the GTA bike (and so CJ) where reTHAWed's rider is.
@@ -359,6 +457,34 @@ void FollowUnsafe(LinkBlock* link, const LevelAlignment& a)
     const float k = a.scale * 0.02f;
     g_bike->m_vecMoveSpeed = CVector(s.vel[0] * k, s.vel[2] * a.ySign * k, s.vel[1] * k);
     g_bike->m_vecTurnSpeed = CVector(0.0f, 0.0f, 0.0f);
+    // B4b: where the GTA bike's picture goes (reTHAWed's bike's turn and shift
+    // since BMX mode started, applied to the GTA bike as it was then)
+    // B4b fix 2 (research log 01:59): reTHAWed's "board" bone IS its bike, set up
+    // like the skateboard: right = bike's right, its "up" points to the back
+    // wheel, its "at" is the bike's up; riding normally it sits kBoardRestHeight
+    // units above the rider's feet, facing the rider's way. So the GTA bike's
+    // picture = that bone, its centre lifted so the wheels sit where they do at
+    // rest. Fixed numbers, no lining up at run time.
+    if (s.flags & kPoseValid) {
+        Basis bb;
+        V3 bp;
+        BoardFrame(s, a, feet, bb, bp);
+        for (int i = 0; i < 12; ++i) g_lastBoard[i] = s.board[i];
+        g_lastSpeed = std::sqrt(s.vel[0] * s.vel[0] + s.vel[1] * s.vel[1] + s.vel[2] * s.vel[2]) * a.scale;
+        g_haveBoardLog = true;
+        g_vis = bb;
+        g_visPos = Add(bp, Mul(bb.u, g_baseDist - kBoardRestHeight * a.scale));
+        g_visTick = GetTickCount64();
+        g_haveVisual = kTurnBikePicture;
+    } else {
+        g_haveVisual = false;
+    }
+    // B4: CJ's body copies the rider's (tricks, bails), applied when GTA draws
+    // him; the same code as skate mode (body.cpp). Rider's origin = feet.
+    if ((s.flags & kBodyValid) && (s.flags & kPoseValid))
+        BodySetTarget(s.body, s.orient, a.scale, a.ySign, feet.x, feet.y, feet.z);
+    else
+        BodyClear();
     ++g_frames;
 }
 
@@ -399,9 +525,72 @@ void Report(LogFn log, const char* whyNot)
     }
 }
 
+void SetMatrixRows(CVehicle* v, const float* m12)
+{
+    CMatrixLink& m = *v->m_matrix;
+    m.right = CVector(m12[0], m12[1], m12[2]);
+    m.up = CVector(m12[3], m12[4], m12[5]);
+    m.at = CVector(m12[6], m12[7], m12[8]);
+    m.pos = CVector(m12[9], m12[10], m12[11]);
+    m.UpdateRW();
+    v->UpdateRwFrame();
+}
+
+void BeforeDrawUnsafe(CVehicle* v)
+{
+    if (!g_active || !(g_haveVisual || g_drawTest) || v != g_bike || !v->m_matrix) return;
+    if (!g_drawTest && GetTickCount64() - g_visTick > 200) return;
+    const CMatrixLink& m = *v->m_matrix;
+    const float now[12] = {m.right.x, m.right.y, m.right.z, m.up.x, m.up.y, m.up.z,
+                           m.at.x,    m.at.y,    m.at.z,    m.pos.x, m.pos.y, m.pos.z};
+    for (int i = 0; i < 12; ++i) g_saved[i] = now[i];
+    float vis[12] = {g_vis.r.x, g_vis.r.y, g_vis.r.z, g_vis.f.x, g_vis.f.y, g_vis.f.z,
+                     g_vis.u.x, g_vis.u.y, g_vis.u.z, g_visPos.x, g_visPos.y, g_visPos.z};
+    if (g_drawTest) { // upside down (right and up flipped), 1 m higher, the real bike's place
+        const float test[12] = {-m.right.x, -m.right.y, -m.right.z, m.up.x, m.up.y, m.up.z,
+                                -m.at.x,    -m.at.y,    -m.at.z,    m.pos.x, m.pos.y, m.pos.z + 1.0f};
+        for (int i = 0; i < 12; ++i) vis[i] = test[i];
+    }
+    SetMatrixRows(v, vis);
+    g_swapped = true;
+    ++g_drawnTurned;
+}
+
+void AfterDrawUnsafe(CVehicle* v)
+{
+    if (!g_swapped || v != g_bike || !v->m_matrix) return;
+    g_swapped = false;
+    SetMatrixRows(v, g_saved);
+}
+
+void BeforeDraw(CVehicle* v)
+{
+    __try {
+        BeforeDrawUnsafe(v);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_haveVisual = false;
+    }
+}
+
+void AfterDraw(CVehicle* v)
+{
+    __try {
+        AfterDrawUnsafe(v);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_swapped = false;
+    }
+}
+
 } // namespace
 
 bool BmxModeIsOn() { return g_active; }
+
+void BmxAddHook()
+{
+    // B4b: right before / after GTA draws a vehicle
+    plugin::Events::vehicleRenderEvent.before += [](CVehicle* v) { BeforeDraw(v); };
+    plugin::Events::vehicleRenderEvent.after += [](CVehicle* v) { AfterDraw(v); };
+}
 
 void BmxFrame(LinkBlock* link, LogFn log)
 {
@@ -499,6 +688,14 @@ void BmxFrame(LinkBlock* link, LogFn log)
         if (gta) { End(link, log, gta); return; }
         if (!align) { End(link, log, "reTHAWed's level isn't lined up with GTA's world"); return; }
         if (link->thawPid == 0) { End(link, log, "reTHAWed not connected"); return; }
+        {   // STATUS 02:10: F5 = draw test
+            const bool key = GtaInFront() && (GetAsyncKeyState(kDrawTestKey) & 0x8000) != 0;
+            if (key && !g_drawTestKeyWas) {
+                g_drawTest = !g_drawTest;
+                log("bmx: F5 draw test %s (GTA bike drawn upside down and 1 m higher)", g_drawTest ? "ON" : "OFF");
+            }
+            g_drawTestKeyWas = key;
+        }
         // stunt jumps stay off (one that was running at the start has ended by now)
         if (g_stuntsOff && !CStuntJumpManager::mp_Active) CStuntJumpManager::m_bActive = false;
         if (MenuOpen()) {
@@ -509,8 +706,25 @@ void BmxFrame(LinkBlock* link, LogFn log)
         }
         if (static_cast<LONG>(now - g_nextReport) >= 0) {
             g_nextReport = now + 1000;
-            log("bmx: %u frames followed, %u held (menu), %u skipped (sample busy), newest sample up to %ld ms old",
-                g_frames, g_held, g_skipped, g_maxAge);
+            if (g_calLogPending) {
+                g_calLogPending = false;
+                log("bmx: the rider's hips lined up with the GTA bike (GTA bike centre at %.2f %.2f %.2f in its own space; "
+                    "its forward there %.2f %.2f %.2f)", g_offLocal.x, g_offLocal.y, g_offLocal.z,
+                    Local(g_board0, g_bike0.f).x, Local(g_board0, g_bike0.f).y, Local(g_board0, g_bike0.f).z);
+            }
+            if (g_haveBoardLog) {
+                const float* b = g_lastBoard;
+                log("bmx: bike (board bone) in the rider's space: right %.2f %.2f %.2f | up %.2f %.2f %.2f | at %.2f "
+                    "%.2f %.2f | at %.1f %.1f %.1f | speed %.1f m/s | drawn there in %u frames",
+                    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], g_lastSpeed, g_drawnTurned);
+            }
+            g_drawnTurned = 0;
+            g_bodyTurnMax = g_boardTurnMax = 0.0f;
+            unsigned bodySkipped = 0;
+            const unsigned body = BodyFramesAndReset(&bodySkipped);
+            log("bmx: %u frames followed, %u held (menu), %u skipped (sample busy), newest sample up to %ld ms old | "
+                "CJ's body copied in %u drawn frames (%u half-updated samples skipped)",
+                g_frames, g_held, g_skipped, g_maxAge, body, bodySkipped);
             g_frames = g_held = g_skipped = 0;
             g_maxAge = 0;
         }
@@ -528,6 +742,14 @@ void BmxFrame(LinkBlock* link, LogFn log)
     if (whyNot) {
         if (gta) g_placeSeqWanted = 0; // GTA / a mission may move CJ: place the rider again afterwards
         return;
+    }
+    // Not while CJ is still getting on (GTA's ped state "driving"), nor while
+    // reTHAWed may still be switching the rider (test 01:48, 151-160 s: BMX mode
+    // started mid-switch and CJ was thrown off again).
+    {
+        CPlayerPed* ped = FindPlayerPed();
+        if (!ped || ped->m_ePedState != PEDSTATE_DRIVING) return;
+        if (now - g_askedAt < 3000) return;
     }
     if (g_placeSeqWanted == 0) {
         if (!PlaceRider(link, *align, log)) return;
