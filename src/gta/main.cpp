@@ -44,6 +44,7 @@
 #include "pacer.h"
 #include "hudshow.h"
 #include "radio.h"
+#include "spawner.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -124,6 +125,8 @@ void AddHooks()
         mp::gta::MarkFrameSafe(&Log);
         // 8.27: radio while skating (hold Back = next station).
         mp::gta::RadioFrame(g_link, &Log);
+        // 8.28 d: F6 = vehicle spawner.
+        mp::gta::SpawnerFrame(&Log);
     });
 
     // Phase 5-1: draw the stand-in board (only while skate mode is on).
@@ -134,6 +137,8 @@ void AddHooks()
     mp::gta::HudShowAddHook(&Log);
     // 8.27: station name on screen.
     mp::gta::RadioAddHook();
+    // 8.28 d: the vehicle list on screen.
+    mp::gta::SpawnerAddHook();
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);

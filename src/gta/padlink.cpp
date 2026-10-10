@@ -6,6 +6,7 @@
 
 #include "padlink.h"
 #include "radio.h"
+#include "spawner.h"
 #include "skatemode.h"
 
 #include <atomic>
@@ -124,11 +125,11 @@ void __cdecl OurUpdatePads()
     g_next(); // GTA reads the controller (through any mod chained before us)
     g_frames.fetch_add(1, std::memory_order_relaxed);
     PublishSafe();
+    // 8.28 d: the vehicle list (when open, GTA doesn't get the controller)
+    const bool spawnerHolds = SpawnerPadFilter();
     const bool blank = SkateModeIsOn();
-    if (blank) {
-        BlankSafe();
-        g_blanked.fetch_add(1, std::memory_order_relaxed);
-    }
+    if (blank || spawnerHolds) BlankSafe();
+    if (blank) g_blanked.fetch_add(1, std::memory_order_relaxed);
     if (blank != g_wasBlanking) {
         g_wasBlanking = blank;
         if (g_log)

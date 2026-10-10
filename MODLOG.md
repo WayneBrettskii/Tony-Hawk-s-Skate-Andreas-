@@ -2,12 +2,19 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-09] Vehicle spawner (F6)
+
+**Changed:** new `src/gta/spawner.h/.cpp`: F6 (GTA in front, skate mode off) opens a list of all GTA vehicles (models 400-611 that exist; trains 449, 537, 538, 569, 570, 590 left out because they need rails), BMX (481) at the top, the rest A-Z by GTA's own names (model info game name -> TheText). D-pad / left stick up-down (hold to scroll), Cross or Enter spawns in front of CJ through GTA's vehicle-cheat code (CCheat::VehicleCheat), Circle or F6 closes. While open GTA doesn't get the controller; after closing, not until the buttons are let go (no sprint / punch from the same press). Drawn after GTA's HUD (GTA's font, CSprite2d boxes). Logs opens and spawns. `src/gta/padlink.cpp`: calls the list's pad filter each controller frame. `src/gta/main.cpp`: frame and drawing hooks. `CMakeLists.txt`: spawner.cpp. Plan: DESIGN 8.28 (d).
+**Why:** user 22:08 / 22:11: a vehicle spawner with all vehicles, BMX at the top, F6, controller once open; first of the four new features (needed to test BMX).
+**Tested how:** not tested (not compiled yet).
+**Result:** none yet.
+
 ## [2026-10-09] Radio step R3: station and volumes remembered
 
 **Changed:** `src/gta/radio.cpp`: reads `radio-settings.ini` (next to our plugin, `GTA San Andreas\modloader\my-passthrough\`, approved write path) at the first world update: `[Radio] Station` (rethawed / 1-12 / off), `GtaVolume` (0-100, default 50), `RethawedVolume` (0-100 or -1 = leave reTHAWed's own). Writes it (Windows' ini functions) when the wheel closes after a station or volume change. Logs what was loaded / saved. No other file written.
 **Why:** user 21:56: step 1 of the list, remember the radio settings between sessions.
-**Tested how:** not tested.
-**Result:** none yet.
+**Tested how:** user 22:02: changed station and both volumes, restarted both games.
+**Result:** works: "Worked perfectly first try".
 
 ## [2026-10-09] Radio: User Track Player on the wheel; reTHAWed music volume on the wheel
 

@@ -722,6 +722,20 @@ GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src
 
 **Then (maybe):** skip track (SkipMusicTrack).
 
+### 8.28 Next features (user 22:08; key F6 22:11; order as proposed, no objection)
+
+Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails, (c) BMX, (d) vehicle spawner.
+
+**(d) Vehicle spawner (small, first: also needed to test BMX).** F6 (user 22:11) opens a list of all GTA vehicles, BMX at the top; D-pad / left stick to move, Cross to spawn in front of CJ, Circle to close (works with the controller once open; GTA ignores the pad while the list is open). Names from GTA's own text. Spawning through GTA's own vehicle-cheat code (CCheat::VehicleCheat, plugin-sdk), which handles every vehicle type. GTA side only.
+
+**(b) Freak-out (probably small).** Our HUD copy and body copy should already carry it (the meter is part of reTHAWed's HUD, the animation is on the skeleton). First a test with a recording (touchpad + D-pad Up / Down during a freak-out) to see what's missing, then fix only that.
+
+**(a) Tags (medium).** Research: how reTHAWed starts a tag (button, script event) and where the tag goes. GTA side: CJ plays GTA's own spray-can animation and a Grove Street tag appears on the GTA wall in front of him, using GTA's own tag model / texture from its files (the collectible tags), placed by a collision ray to the wall. Read from GTA's files at run time; nothing copied. Doesn't affect the map plan (the tag is placed on GTA's wall where CJ is; reTHAWed's own tag stays in reTHAWed).
+
+**(c) BMX (large, several steps).** When CJ gets on a GTA BMX: switch reTHAWed's skater to its BMX mode, then GTA's bike and CJ follow reTHAWed's bike like CJ follows the skater now (position, facing, bike pose, CJ's body on the bike). Research first: how reTHAWed enters / leaves BMX mode (script command), the bike's bones, whether BMX is available in the user's save. Then the follow, then the animations.
+
+**Proposed order:** (d) spawner, (b) freak-out check, (a) tags, (c) BMX. Each tested before the next.
+
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 
 **Asked:** the slow motion already works in GTA (CJ follows the skater, who moves slower), but it should also look like reTHAWed's: its screen effect. Not planned yet. To find first: how reTHAWed knows Focus is on (a flag or time scale we can read), and what its effect draws (probably a full-screen pass near the end of the frame; the H1 frame log taken during Focus will show it). Then choose: copy the effect's look in GTA with our own full-screen pass, or catch reTHAWed's. Sound (if Focus changes it) to check too.
