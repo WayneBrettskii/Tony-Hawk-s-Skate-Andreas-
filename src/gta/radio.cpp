@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "ole32.lib")
@@ -212,6 +213,87 @@ int ThawVolume()
         if (v >= 0 && v <= 100) return v;
     }
     return 100;
+}
+
+// ---------------------------------------------------------------------------
+// Settings (R3): radio-settings.ini next to our plugin (modloader\my-passthrough\)
+// ---------------------------------------------------------------------------
+
+wchar_t g_iniPath[MAX_PATH] = L"";
+bool g_settingsLoaded = false;
+
+bool IniPath()
+{
+    if (g_iniPath[0]) return true;
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&IniPath), &self))
+        return false;
+    wchar_t p[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(self, p, MAX_PATH);
+    if (!n || n >= MAX_PATH) return false;
+    wchar_t* slash = wcsrchr(p, L'\\');
+    if (!slash) return false;
+    slash[1] = L'\0';
+    if (wcslen(p) + 20 >= MAX_PATH) return false;
+    wcscpy_s(g_iniPath, p);
+    wcscat_s(g_iniPath, L"radio-settings.ini");
+    return true;
+}
+
+void LoadSettings(LogFn log)
+{
+    if (g_settingsLoaded) return;
+    g_settingsLoaded = true;
+    if (!IniPath()) {
+        if (log) log("radio: could not find our plugin's folder; settings not loaded");
+        return;
+    }
+    wchar_t st[16] = L"", tv[16] = L"";
+    GetPrivateProfileStringW(L"Radio", L"Station", L"rethawed", st, 16, g_iniPath);
+    int station = kThaw;
+    if (_wcsicmp(st, L"off") == 0) station = kOff;
+    else if (_wcsicmp(st, L"rethawed") != 0) {
+        const int id = _wtoi(st);
+        if (id >= kFirstGta && id <= kLastGta) station = id;
+    }
+    for (int k = 0; k < g_count; ++k)
+        if (g_list[k] == station) g_sel = k;
+    int gv = static_cast<int>(GetPrivateProfileIntW(L"Radio", L"GtaVolume", 50, g_iniPath));
+    gv = gv < 0 ? 0 : gv > 100 ? 100 : gv;
+    g_radioLevel = gv / 100.0f;
+    GetPrivateProfileStringW(L"Radio", L"RethawedVolume", L"-1", tv, 16, g_iniPath); // (GetPrivateProfileInt can't read -1)
+    const int t = _wtoi(tv);
+    g_thawVolumeWish = (t >= 0 && t <= 100) ? t : -1;
+    char name[64];
+    NameOf(g_list[g_sel], name, sizeof(name));
+    if (log) {
+        if (GetFileAttributesW(g_iniPath) == INVALID_FILE_ATTRIBUTES)
+            log("radio: no radio-settings.ini yet; defaults (reTHAWed station, GTA radio 50%%)");
+        else if (g_thawVolumeWish >= 0)
+            log("radio: settings loaded: station %s, GTA radio %d%%, reTHAWed music %d%%", name, gv, g_thawVolumeWish);
+        else
+            log("radio: settings loaded: station %s, GTA radio %d%%, reTHAWed music as reTHAWed has it", name, gv);
+    }
+}
+
+void SaveSettings(LogFn log)
+{
+    if (!IniPath()) return;
+    wchar_t st[16], gv[16], tv[16];
+    const int station = g_list[g_sel];
+    if (station == kThaw) wcscpy_s(st, L"rethawed");
+    else if (station == kOff) wcscpy_s(st, L"off");
+    else swprintf_s(st, L"%d", station);
+    swprintf_s(gv, L"%d", static_cast<int>(g_radioLevel * 100.0f + 0.5f));
+    swprintf_s(tv, L"%d", static_cast<int>(g_thawVolumeWish));
+    const bool ok = WritePrivateProfileStringW(L"Radio", L"Station", st, g_iniPath) &&
+                    WritePrivateProfileStringW(L"Radio", L"GtaVolume", gv, g_iniPath) &&
+                    WritePrivateProfileStringW(L"Radio", L"RethawedVolume", tv, g_iniPath);
+    if (log) {
+        if (ok) log("radio: settings saved (station %ls, GTA radio %ls%%, reTHAWed music %ls)", st, gv, tv);
+        else log("radio: could not save radio-settings.ini (Windows error %lu)", GetLastError());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +652,7 @@ void RadioFrame(LinkBlock* link, LogFn log)
 {
     g_link = link;
     BuildList();
+    LoadSettings(log); // R3: station and volumes from last time
     PatchGta(log);
     const bool on = SkateModeIsOn();
     if (!on) {
@@ -605,17 +688,22 @@ void RadioFrame(LinkBlock* link, LogFn log)
     }
     if (g_choose) {
         g_choose = false;
+        bool changed = false;
         if (g_hover != g_sel && g_hover >= 0 && g_hover < g_count) {
             g_sel = g_hover;
             NameOf(g_list[g_sel], g_name, sizeof(g_name));
             g_showUntil = now + kShowMs;
             if (log) log("radio: wheel: station %s", g_name);
+            changed = true;
         }
-        if (g_levelChanged && log) {
-            log("radio: volumes now: GTA radio while skating %d%%, reTHAWed music %d%%",
-                static_cast<int>(g_radioLevel * 100.0f + 0.5f), ThawVolume());
+        if (g_levelChanged) {
+            if (log)
+                log("radio: volumes now: GTA radio while skating %d%%, reTHAWed music %d%%",
+                    static_cast<int>(g_radioLevel * 100.0f + 0.5f), ThawVolume());
             g_levelChanged = 0;
+            changed = true;
         }
+        if (changed) SaveSettings(log); // R3
     }
 
     const int station = g_list[g_sel];

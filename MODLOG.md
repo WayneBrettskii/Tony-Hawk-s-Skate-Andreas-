@@ -2,12 +2,19 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-09] Radio step R3: station and volumes remembered
+
+**Changed:** `src/gta/radio.cpp`: reads `radio-settings.ini` (next to our plugin, `GTA San Andreas\modloader\my-passthrough\`, approved write path) at the first world update: `[Radio] Station` (rethawed / 1-12 / off), `GtaVolume` (0-100, default 50), `RethawedVolume` (0-100 or -1 = leave reTHAWed's own). Writes it (Windows' ini functions) when the wheel closes after a station or volume change. Logs what was loaded / saved. No other file written.
+**Why:** user 21:56: step 1 of the list, remember the radio settings between sessions.
+**Tested how:** not tested.
+**Result:** none yet.
+
 ## [2026-10-09] Radio: User Track Player on the wheel; reTHAWed music volume on the wheel
 
 **Changed:** `src/gta/radio.cpp`: the wheel has 14 slots: User Track Player (GTA station 12, GTA's own logo `radio_TPLAYER`) added after WCTR. D-pad Up / Down on the open wheel now change the volume of the station pointed at: a GTA station = GTA radio while skating (default 50%, as before); reTHAWed = reTHAWed's own music volume (0-100 in steps of 10; shows reTHAWed's current value until changed). Sent to reTHAWed through the link (reserved[3]). `src/thaw/music.cpp`: on reTHAWed's game thread, sets its music volume with its own SetMusicVolume (0x004B4F10; 3 more code checks, verified on the cloud copy) when GTA asks; reports the current value back (reserved[4]); puts reTHAWed's own volume back when GTA closes. Music only; sound effects untouched. `src/common/link.h`: reserved[3], [4] described.
 **Why:** user 21:49: keep GTA radio at 50% with the option; make the reTHAWed station's volume adjustable; add the User Track Player for people's own music.
-**Tested how:** not tested.
-**Result:** none yet.
+**Tested how:** user 21:55: wheel volumes for reTHAWed and GTA stations; User Track Player with no songs added.
+**Result:** works ("everything else seemed good"). User Track Player with no songs plays GTA's commercials; to look at only if players report problems with their own songs.
 
 ## [2026-10-09] Sound fix: reTHAWed's sound effects keep playing behind GTA
 

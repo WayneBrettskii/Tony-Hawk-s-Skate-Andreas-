@@ -716,7 +716,11 @@ GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src
 
 **21:49 (user):** sound fix works. GTA radio default stays 50%. Added: User Track Player slot (station 12, GTA's own logo); D-pad Up/Down on the open wheel changes the volume of the pointed station (reTHAWed = its own music volume through SetMusicVolume 0x004B4F10, link reserved[3]/[4]; put back when GTA closes).
 
-**Then:** R3 remember the choice and the volumes between sessions, maybe skip track (SkipMusicTrack).
+**21:55 (user):** works. User Track Player with no songs plays GTA's commercials; not tested with real songs: revisit only if players report problems.
+
+**R3 (user OK 21:56): remember the station and the volumes.** File `radio-settings.ini` next to our plugin (`GTA San Andreas\modloader\my-passthrough\`, an approved write path), section `[Radio]`: `Station` (rethawed / 1-12 / off), `GtaVolume` (0-100, default 50), `RethawedVolume` (0-100, or -1 = leave reTHAWed's own setting). Read once at the first world update; written with Windows' own ini functions when the wheel closes after a change. No other file is written.
+
+**Then (maybe):** skip track (SkipMusicTrack).
 
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 
