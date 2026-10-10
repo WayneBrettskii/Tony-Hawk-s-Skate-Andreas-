@@ -1,7 +1,25 @@
-# STATUS: BMX B4b: the GTA bike doesn't move with reTHAWed's bike
+# WHERE WE LEFT OFF (2026-10-10 12:55)
+
+BMX B4b fix 3 works (user 12:41): the bike stays with CJ and flips with him.
+Now (DESIGN 8.29):
+1. **B5 smooth BMX riding** + **B6 research log** (which reTHAWed bike bones turn in bar spins,
+   crank flips, tabletops, tailwhips): built, to test.
+2. **B7:** turn the GTA bike's parts (fork / bars, cranks / pedals) from what B6 shows.
+3. **Then the map:** T4 rerun with `[Memory] HashItem=100000` (user's rethawed.ini), then the rail
+   budget via `Out set RailPoint` (DESIGN 8.21).
+Working and tested: freak-out (option on), Grove tags (ground), BMX B1-B4b, no replay, gun release guard.
+
+---
+
+# STATUS: BMX B4b: the GTA bike doesn't move with reTHAWed's bike (SOLVED 12:41: fix 3 works)
 
 **Written 2026-10-10 01:55 after two attempts didn't work (AGENTS.md rule).**
 No third guess: next is a logging-only test to learn how reTHAWed's bike sits.
+
+## Update 12:40: cause found
+F5 test (12:30): nothing changed on screen -> case (a). GTA draws the bike from its RenderWare frame;
+our swap called m_matrix->UpdateRW(), which does nothing (that matrix isn't attached to the frame).
+GTA's CEntity::UpdateRW (0x446F90) copies it. Fix 3 uses that. Fix 2's numbers (board bone) stay.
 
 ## Update 02:10: fix 2 didn't work either (third attempt) - stopped
 User 02:04: "the bike is still not staying with CJ". gta.log: the bike was drawn at reTHAWed's

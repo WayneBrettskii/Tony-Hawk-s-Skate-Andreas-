@@ -14,6 +14,8 @@
 #include "CStuntJumpManager.h"
 #include "CTimer.h"
 #include "CVehicle.h"
+#include "CBmx.h"
+#include "NodeName.h"
 #include "CWorld.h"
 #include "common.h"
 #include <windows.h>
@@ -21,6 +23,7 @@
 #include "bmxmode.h"
 #include "body.h"
 #include "padlink.h"
+#include "blend.h"
 #include "../common/convert.h"
 
 #include <cmath>
@@ -31,7 +34,6 @@ namespace {
 constexpr int kBmxModel = 481;
 constexpr int kToggleKey = VK_F7;                 // same keys as skate mode
 constexpr unsigned short kSkateControlBit = 1u << 4; // skate mode's own control flag (not a script's)
-constexpr LONG kMaxExtrapolateMs = 50;
 constexpr LONG kStaleMs = 1000;
 constexpr LONG kRideModeBmx = 2;                  // link gtaSkateMode value while BMX mode is on
 
@@ -65,6 +67,8 @@ const char* g_lastWhyNot = nullptr;
 DWORD g_nextReport = 0;
 unsigned g_frames = 0, g_held = 0, g_skipped = 0;
 LONG g_maxAge = 0;
+unsigned g_blended = 0;          // B5: frames shown blended between two reTHAWed frames
+RiderBlend g_blend;              // B5: skate mode's smoothing (blend.cpp)
 
 struct V3 {
     float x, y, z;
@@ -105,10 +109,7 @@ V3 g_visPos{0, 0, 0};
 ULONGLONG g_visTick = 0;
 bool g_swapped = false;               // the bike's matrix is the picture's right now
 float g_saved[12];                    // what it really was (restored after drawing)
-// STATUS 02:10 test switch: F5 in BMX mode draws the GTA bike upside down and
-// 1 m higher, to see whether the drawing swap shows on screen at all.
-constexpr int kDrawTestKey = VK_F5;
-bool g_drawTest = false, g_drawTestKeyWas = false;
+
 bool g_calLogPending = false;
 unsigned g_drawnTurned = 0;
 // STATUS 01:55: turning the bike's picture is off until we know how reTHAWed's
@@ -272,6 +273,33 @@ void LogWhyOff(LogFn log)
     }
 }
 
+// B6 research (read only): the GTA BMX's moving parts, once per game session:
+// name, parent, position and axes in its parent's space.
+void LogBikeParts(LogFn log)
+{
+    static bool done = false;
+    if (done || !g_bike) return;
+    done = true;
+    static const char* const kWhat[BMX_NUM_NODES] = {"-", "chassis", "forks_front", "forks_rear", "wheel_front",
+                                                     "wheel_rear", "handlebars", "chainset", "pedal_r", "pedal_l"};
+    CBike* bike = static_cast<CBike*>(g_bike);
+    log("bmx parts: the GTA BMX's moving parts (B6 research)");
+    for (int i = 1; i < BMX_NUM_NODES; ++i) {
+        RwFrame* f = bike->m_aBikeNodes[i];
+        if (!f) {
+            log("bmx parts:   %d %s: none", i, kWhat[i]);
+            continue;
+        }
+        RwFrame* parent = static_cast<RwFrame*>(f->object.parent);
+        const char* name = GetFrameNodeName(f);
+        const char* pname = parent ? GetFrameNodeName(parent) : nullptr;
+        const RwMatrix& m = f->modelling;
+        log("bmx parts:   %d %s = '%s' (parent '%s'): pos %.3f %.3f %.3f | right %.2f %.2f %.2f | up %.2f %.2f %.2f | "
+            "at %.2f %.2f %.2f", i, kWhat[i], name ? name : "?", pname ? pname : "-", m.pos.x, m.pos.y, m.pos.z,
+            m.right.x, m.right.y, m.right.z, m.up.x, m.up.y, m.up.z, m.at.x, m.at.y, m.at.z);
+    }
+}
+
 void StartUnsafe(LinkBlock* link, LogFn log)
 {
     CPlayerPed* ped = FindPlayerPed();
@@ -294,9 +322,11 @@ void StartUnsafe(LinkBlock* link, LogFn log)
     g_calibrated = false;
     g_calFrames = 0;
     g_haveVisual = false;
-    g_frames = g_held = g_skipped = 0;
+    g_frames = g_held = g_skipped = g_blended = 0;
     g_maxAge = 0;
+    g_blend.Clear();
     g_nextReport = GetTickCount() + 1000;
+    LogBikeParts(log);
     log("bmx: BMX MODE ON: your controller rides reTHAWed's bike, the GTA bike and CJ follow it (F7 / L3 + R3 or "
         "getting off in reTHAWed = GTA's normal BMX)");
 }
@@ -327,7 +357,7 @@ void EndUnsafe(LinkBlock* link, LogFn log, const char* why)
             m.at = g_bike->m_matrix->at;
             m.pos = CVector(p.x, p.y, ground + g_baseDist + 0.05f);
             g_bike->SetMatrix(m);
-            if (g_bike->m_matrix) g_bike->m_matrix->UpdateRW();
+            g_bike->UpdateRwMatrix(); // GTA's CEntity::UpdateRW
             g_bike->UpdateRwFrame();
             log("bmx: bike put on GTA's ground (%.2f m down)", p.z - (ground + g_baseDist + 0.05f));
         }
@@ -417,9 +447,11 @@ void FollowUnsafe(LinkBlock* link, const LevelAlignment& a)
     }
     const LONG age = static_cast<LONG>(GetTickCount64() & 0xFFFFFFFFu) - s.sampleTick;
     if (age > g_maxAge) g_maxAge = age;
-    const LONG ex = age < 0 ? 0 : (age > kMaxExtrapolateMs ? kMaxExtrapolateMs : age);
-    const Vec3 p{s.pos[0] + s.vel[0] * ex / 1000.0f, s.pos[1] + s.vel[1] * ex / 1000.0f,
-                 s.pos[2] + s.vel[2] * ex / 1000.0f};
+    // B5: no guess ahead any more (speed x sample age: ages are only known in
+    // 16 ms steps, so the guess jumped; the skate stutter, 8.18). Instead skate
+    // mode's cure: reTHAWed shown 40 ms late, blended, at even moments.
+    if (g_blend.Show(s, s) >= 0.0f) ++g_blended;
+    const Vec3 p{s.pos[0], s.pos[1], s.pos[2]};
     const Vec3 feet = MapAbsolute(p, a);
 
     // The GTA bike stays upright and only turns (test 00:51): tilting it with the
@@ -451,7 +483,7 @@ void FollowUnsafe(LinkBlock* link, const LevelAlignment& a)
     m.at = CVector(up.x, up.y, up.z);
     m.pos = CVector(feet.x + up.x * g_baseDist, feet.y + up.y * g_baseDist, feet.z + up.z * g_baseDist);
     g_bike->SetMatrix(m);
-    if (g_bike->m_matrix) g_bike->m_matrix->UpdateRW();
+    g_bike->UpdateRwMatrix(); // GTA's CEntity::UpdateRW
     g_bike->UpdateRwFrame();
     // GTA speed is metres per 1/50 s; this keeps the wheels and CJ's pedalling going
     const float k = a.scale * 0.02f;
@@ -532,25 +564,24 @@ void SetMatrixRows(CVehicle* v, const float* m12)
     m.up = CVector(m12[3], m12[4], m12[5]);
     m.at = CVector(m12[6], m12[7], m12[8]);
     m.pos = CVector(m12[9], m12[10], m12[11]);
-    m.UpdateRW();
+    // GTA's own CEntity::UpdateRW (plugin-sdk UpdateRwMatrix): copies the matrix
+    // into the RenderWare frame the bike is drawn from. (m.UpdateRW() did nothing:
+    // the matrix isn't attached to that frame; F5 test 12:30 showed no change.)
+    v->UpdateRwMatrix();
     v->UpdateRwFrame();
 }
 
 void BeforeDrawUnsafe(CVehicle* v)
 {
-    if (!g_active || !(g_haveVisual || g_drawTest) || v != g_bike || !v->m_matrix) return;
-    if (!g_drawTest && GetTickCount64() - g_visTick > 200) return;
+    if (!g_active || !g_haveVisual || v != g_bike || !v->m_matrix) return;
+    if (GetTickCount64() - g_visTick > 200) return;
     const CMatrixLink& m = *v->m_matrix;
     const float now[12] = {m.right.x, m.right.y, m.right.z, m.up.x, m.up.y, m.up.z,
                            m.at.x,    m.at.y,    m.at.z,    m.pos.x, m.pos.y, m.pos.z};
     for (int i = 0; i < 12; ++i) g_saved[i] = now[i];
     float vis[12] = {g_vis.r.x, g_vis.r.y, g_vis.r.z, g_vis.f.x, g_vis.f.y, g_vis.f.z,
                      g_vis.u.x, g_vis.u.y, g_vis.u.z, g_visPos.x, g_visPos.y, g_visPos.z};
-    if (g_drawTest) { // upside down (right and up flipped), 1 m higher, the real bike's place
-        const float test[12] = {-m.right.x, -m.right.y, -m.right.z, m.up.x, m.up.y, m.up.z,
-                                -m.at.x,    -m.at.y,    -m.at.z,    m.pos.x, m.pos.y, m.pos.z + 1.0f};
-        for (int i = 0; i < 12; ++i) vis[i] = test[i];
-    }
+
     SetMatrixRows(v, vis);
     g_swapped = true;
     ++g_drawnTurned;
@@ -688,14 +719,6 @@ void BmxFrame(LinkBlock* link, LogFn log)
         if (gta) { End(link, log, gta); return; }
         if (!align) { End(link, log, "reTHAWed's level isn't lined up with GTA's world"); return; }
         if (link->thawPid == 0) { End(link, log, "reTHAWed not connected"); return; }
-        {   // STATUS 02:10: F5 = draw test
-            const bool key = GtaInFront() && (GetAsyncKeyState(kDrawTestKey) & 0x8000) != 0;
-            if (key && !g_drawTestKeyWas) {
-                g_drawTest = !g_drawTest;
-                log("bmx: F5 draw test %s (GTA bike drawn upside down and 1 m higher)", g_drawTest ? "ON" : "OFF");
-            }
-            g_drawTestKeyWas = key;
-        }
         // stunt jumps stay off (one that was running at the start has ended by now)
         if (g_stuntsOff && !CStuntJumpManager::mp_Active) CStuntJumpManager::m_bActive = false;
         if (MenuOpen()) {
@@ -722,10 +745,10 @@ void BmxFrame(LinkBlock* link, LogFn log)
             g_bodyTurnMax = g_boardTurnMax = 0.0f;
             unsigned bodySkipped = 0;
             const unsigned body = BodyFramesAndReset(&bodySkipped);
-            log("bmx: %u frames followed, %u held (menu), %u skipped (sample busy), newest sample up to %ld ms old | "
-                "CJ's body copied in %u drawn frames (%u half-updated samples skipped)",
-                g_frames, g_held, g_skipped, g_maxAge, body, bodySkipped);
-            g_frames = g_held = g_skipped = 0;
+            log("bmx: %u frames followed (%u blended), %u held (menu), %u skipped (sample busy), newest sample up "
+                "to %ld ms old | CJ's body copied in %u drawn frames (%u half-updated samples skipped)",
+                g_frames, g_blended, g_held, g_skipped, g_maxAge, body, bodySkipped);
+            g_frames = g_held = g_skipped = g_blended = 0;
             g_maxAge = 0;
         }
         return;

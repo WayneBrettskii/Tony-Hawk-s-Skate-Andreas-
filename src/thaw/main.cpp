@@ -50,6 +50,7 @@
 #include "focus.h"
 #include "input.h"
 #include "pose.h"
+#include "bikeparts.h"
 #include "drawlog.h"
 #include "touchpad.h"
 #include "music.h"
@@ -551,6 +552,14 @@ void SamplePose(unsigned long skater, const char* tag, bool logLine, mp::thaw::P
             Log("pose: read failed (exception 0x%08lX), %lu so far", p.exceptionCode, failures);
         return;
     }
+    static unsigned long lastSkeleton = 0;
+    if (skater == lastSkater && p.skeleton != lastSkeleton && p.boneCount) {
+        // 8.29 B6: the bike may bring its own skeleton
+        Log("pose: skeleton changed 0x%08lX -> 0x%08lX, %d bones, board bone #%d", lastSkeleton, p.skeleton,
+            p.boneCount, p.boardIndex);
+        LogAllBones(skater, false, "skeleton changed");
+    }
+    lastSkeleton = p.skeleton;
     if (skater != lastSkater) {
         lastSkater = skater;
         Log("pose: skater 0x%08lX, skeleton 0x%08lX, %d bones, board bone #%d, pelvis bone #%d, body bones for GTA %s",
@@ -690,7 +699,11 @@ DWORD WINAPI MainThread(LPVOID)
             mp::thaw::DrawLogTick(&Log, combo, inLevel && !ReTHAWedInFrontNow(), hudToggle);
         }
         mp::thaw::PoseSample pose;
-        if (canReadPose && sample.readOk && sample.skater) SamplePose(sample.skater, tag, logLine, pose);
+        if (canReadPose && sample.readOk && sample.skater) {
+            SamplePose(sample.skater, tag, logLine, pose);
+            // 8.29 B6 research (log only): which bike bones turn in tricks
+            mp::thaw::BikePartsTick(sample.skater, g_link && g_link->thawBikeState == mp::kBikeStateOn, &Log);
+        }
         quickSkater = sample.readOk ? sample.skater : 0;
 
         if (g_link) {
@@ -777,6 +790,7 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::MusicSecond(&Log);
         mp::thaw::TagsSecond(&Log);
         mp::thaw::BmxSecond(&Log);
+        mp::thaw::BikePartsSecond(&Log);
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
                         published, g_repeatSamples, g_newFrames);

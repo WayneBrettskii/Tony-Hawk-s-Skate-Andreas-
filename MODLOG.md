@@ -2,12 +2,37 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] BMX B5 + B6: smooth riding; research log of the bike's moving parts
+
+**Changed:**
+- New `src/gta/blend.h/.cpp`: skate mode's smoothing (last 8 reTHAWed frames, shown 40 ms late, blended, on an even frame clock, orientation smoothed), moved out of `skatemode.cpp` unchanged as a class. `skatemode.cpp` uses it (same behaviour).
+- `src/gta/bmxmode.cpp`: BMX mode uses the same smoothing instead of the newest frame plus a guess ahead. Once per game session, when BMX mode starts, logs the GTA BMX's moving parts (`bmx parts:` lines). Per-second line now says how many frames were blended.
+- New `src/thaw/bikeparts.h/.cpp` (log only): while reTHAWed's rider is on the bike, each of the 4 other "board" bones' turn relative to the bike frame (Board_Root), compared with the riding pose; `bike parts:` lines when one turns more than 20 degrees, plus a per-second summary. `src/thaw/main.cpp`: calls it; also logs the bone list again if the skeleton changes.
+- `CMakeLists.txt`: the two new .cpp files.
+**Why:** user 12:41: bike stays with CJ now (fix 3 works), but riding stutters like the old skate stutter, and tricks (tabletops, crank flips, bar spins) don't show. DESIGN 8.29 B5, B6.
+**Tested how:** new files syntax-checked in the cloud (stub Windows headers); angle maths checked (68.8 and 180 degrees right). Not tested in the games; not compiled with Visual Studio yet.
+**Result:** none yet.
+
+## [2026-10-10] BMX B4b fix 3: the bike's picture really updated (GTA's UpdateRW)
+
+**Changed:** `src/gta/bmxmode.cpp`: the drawing swap now calls GTA's own CEntity::UpdateRW (0x446F90, plugin-sdk `UpdateRwMatrix`) to copy the matrix into the RenderWare frame the bike is drawn from; we had called `m_matrix->UpdateRW()`, which does nothing because GTA doesn't attach that matrix to the frame (GTA's physics calls CEntity::UpdateRW itself, which is why the real bike moved fine). Same call now when following and when putting the bike on the ground at the end. F5 test removed (F5 belongs to another mod).
+**Why:** F5 test 12:30: the swap never showed on screen.
+**Tested how:** user 12:41: rode with tricks.
+**Result:** works: the bike stays with CJ and flips with him. Left: stutter; trick moves (B5, B6 above).
+
+## [2026-10-10] BMX: F5 draw test
+
+**Changed:** `src/gta/bmxmode.cpp`: in BMX mode, F5 switches a test on / off: the GTA bike is drawn upside down and 1 m higher than the real bike (logged). Nothing else changed.
+**Why:** STATUS.md 02:10: find out whether changing the bike right before GTA draws it shows on screen at all.
+**Tested how:** user 12:30: F5 in BMX mode (log: test on / off 8 times).
+**Result:** no upside-down bike seen; F5 also opens another mod's white debug text. So changing the bike right before drawing never reached the screen. Also: "when CJ does a back flip on the bike he flips back to the bike, the bike does not flip with him".
+
 ## [2026-10-10] BMX B4b fix 2: the GTA bike drawn exactly where reTHAWed's bike is
 
 **Changed:** `src/gta/bmxmode.cpp`: the GTA bike's picture (drawn turned, real bike untouched) = reTHAWed's bike (board bone): its right, its forward (minus the bone's "up"), its up (the bone's "at"); centre = the bone's position lifted by (GTA bike's wheel-to-centre height - 17.8 THAW units), so at rest the wheels sit as before. Fixed numbers from the research log; no lining up at run time (that was what spoiled both earlier attempts). The once-a-second log keeps the board bone values and how many frames were drawn there.
 **Why:** research log 01:59 (above); STATUS.md.
-**Tested how:** not tested (not compiled yet).
-**Result:** none yet.
+**Tested how:** user 02:04: rode, tricks, L3 + R3.
+**Result:** gun no longer stuck (release guard works); bike "still not staying with CJ". gta.log: drawn at reTHAWed's bike ~55 frames/s, values sensible. Third attempt: stopped (STATUS.md).
 
 ## [2026-10-10] BMX: research log for the bike, no false starts, no buttons leaking into GTA
 
