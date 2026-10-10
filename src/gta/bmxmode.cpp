@@ -27,6 +27,7 @@
 #include "../common/convert.h"
 
 #include <cmath>
+#include <cstddef>
 
 namespace mp::gta {
 namespace {
@@ -115,8 +116,25 @@ unsigned g_drawnTurned = 0;
 // STATUS 01:55: turning the bike's picture is off until we know how reTHAWed's
 // bike sits (both lined-up attempts were off); the research log below decides.
 constexpr bool kTurnBikePicture = true;   // fix 2: from the research log
+constexpr bool kTurnParts = true;         // B7: fork / bars / cranks / pedals like reTHAWed's
 constexpr float kBoardRestHeight = 17.8f; // board bone above the rider's feet when riding normally (THAW units, log 01:59)
 float g_lastBoard[12] = {};           // research log: board bone rows in the rider's space
+// ---- B7: the GTA bike's parts follow reTHAWed's (fork, cranks), CJ's hands and feet on them ----
+RwFrame* g_node[BMX_NUM_NODES] = {};  // the GTA BMX's parts (plugin-sdk eBmxNodes)
+V3 g_nodePos[BMX_NUM_NODES] = {};     // their positions in the parent's space, at the start
+bool g_haveNodes = false;
+V3 g_grip[2] = {};                    // grips (bike's right, left) in chassis_dummy's space, fork straight
+bool g_gripMeasured = false;
+bool g_haveParts = false;             // fork / crank for this frame
+float g_forkG[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // the fork's turn in GTA bike space (rows)
+V3 g_crankG{0, 0, -1};                // axle -> right pedal, GTA bike space
+RwMatrix g_savedNode[BMX_NUM_NODES];  // restored after drawing
+bool g_nodesSwapped = false;
+unsigned g_partsDrawn = 0, g_limbFrames = 0;
+float g_barsDrawnMax = 0.0f;          // log: biggest bars turn GTA really drew this second (degrees, from its world matrices)
+unsigned g_barsChecked = 0;
+float g_onMin[4] = {1, 1, 1, 1};      // log: lowest "on" this second (hands R, L, feet R, L)
+constexpr float kGripGuessX = 0.27f, kGripGuessZ = 0.10f; // if the bars' mesh can't be read
 float g_lastSpeed = 0.0f;
 bool g_haveBoardLog = false;
 Basis g_boardStart;                   // for the log only (fix 1)
@@ -273,6 +291,173 @@ void LogWhyOff(LogFn log)
     }
 }
 
+// B7: the bike's parts and where its grips are (outermost points of the bars'
+// mesh, in chassis_dummy's space with the fork straight). Once per BMX start.
+struct GripScan {
+    float maxX = -1e9f, minX = 1e9f;
+    V3 sumR{0, 0, 0}, sumL{0, 0, 0};
+    int nR = 0, nL = 0;
+};
+
+// a point in `f`'s space -> chassis_dummy's space; forks_front counts without
+// its turn (GTA's steering), so the grips are measured with the fork straight
+bool ToChassis(RwFrame* f, V3& p)
+{
+    for (int depth = 0; f && depth < 16; ++depth) {
+        if (f == g_node[BMX_CHASSIS]) return true;
+        const RwMatrix& m = f->modelling;
+        if (f == g_node[BMX_FORKS_FRONT]) {
+            p = Add(p, V3{m.pos.x, m.pos.y, m.pos.z});
+        } else {
+            p = V3{p.x * m.right.x + p.y * m.up.x + p.z * m.at.x + m.pos.x,
+                   p.x * m.right.y + p.y * m.up.y + p.z * m.at.y + m.pos.y,
+                   p.x * m.right.z + p.y * m.up.z + p.z * m.at.z + m.pos.z};
+        }
+        f = static_cast<RwFrame*>(f->object.parent);
+    }
+    return false;
+}
+
+bool Under(RwFrame* f, RwFrame* top)
+{
+    for (int depth = 0; f && depth < 16; ++depth, f = static_cast<RwFrame*>(f->object.parent))
+        if (f == top) return true;
+    return false;
+}
+
+// pass 0: outermost x; pass 1: average the points near each end
+void ScanAtomics(RpClump* clump, RwFrame* top, GripScan& g, int pass)
+{
+    RwLLLink* end = &clump->atomicList.link;
+    int guard = 0;
+    for (RwLLLink* l = end->next; l && l != end && guard < 256; l = l->next, ++guard) {
+        RpAtomic* at = reinterpret_cast<RpAtomic*>(reinterpret_cast<char*>(l) - offsetof(RpAtomic, inClumpLink));
+        RwFrame* f = static_cast<RwFrame*>(at->object.object.parent);
+        if (!f || !Under(f, top) || !at->geometry || !at->geometry->morphTarget) continue;
+        const RwV3d* v = at->geometry->morphTarget[0].verts;
+        const int n = at->geometry->numVertices;
+        if (!v || n <= 0 || n > 20000) continue;
+        for (int i = 0; i < n; ++i) {
+            V3 p{v[i].x, v[i].y, v[i].z};
+            if (!ToChassis(f, p)) break;
+            if (pass == 0) {
+                if (p.x > g.maxX) g.maxX = p.x;
+                if (p.x < g.minX) g.minX = p.x;
+            } else if (p.x > g.maxX - 0.06f) {
+                g.sumR = Add(g.sumR, p);
+                ++g.nR;
+            } else if (p.x < g.minX + 0.06f) {
+                g.sumL = Add(g.sumL, p);
+                ++g.nL;
+            }
+        }
+    }
+}
+
+void LearnParts(LogFn log)
+{
+    g_haveNodes = false;
+    g_gripMeasured = false;
+    if (!g_bike) return;
+    CBike* bike = static_cast<CBike*>(g_bike);
+    for (int i = 1; i < BMX_NUM_NODES; ++i) {
+        g_node[i] = bike->m_aBikeNodes[i];
+        if (g_node[i]) {
+            const RwV3d& p = g_node[i]->modelling.pos;
+            g_nodePos[i] = V3{p.x, p.y, p.z};
+        }
+    }
+    g_haveNodes = g_node[BMX_CHASSIS] && g_node[BMX_FORKS_FRONT] && g_node[BMX_CHAINSET] && g_node[BMX_PEDAL_R] &&
+                  g_node[BMX_PEDAL_L];
+    if (!g_haveNodes) {
+        log("bmx parts: B7 off: the GTA bike's parts weren't found");
+        return;
+    }
+    RpClump* clump = g_bike->m_pRwClump;
+    GripScan g;
+    const char* from = "guess";
+    for (RwFrame* top : {g_node[BMX_HANDLEBARS], g_node[BMX_FORKS_FRONT]}) {
+        if (!top || !clump) continue;
+        g = GripScan{};
+        ScanAtomics(clump, top, g, 0);
+        if (g.maxX - g.minX < 0.2f) continue; // nothing wide enough there
+        ScanAtomics(clump, top, g, 1);
+        if (g.nR > 0 && g.nL > 0) {
+            g_grip[0] = Mul(g.sumR, 1.0f / g.nR);
+            g_grip[1] = Mul(g.sumL, 1.0f / g.nL);
+            g_gripMeasured = true;
+            from = top == g_node[BMX_HANDLEBARS] ? "the handlebars' mesh" : "the fork's mesh";
+            break;
+        }
+    }
+    if (!g_gripMeasured) {
+        const V3 f = g_nodePos[BMX_FORKS_FRONT];
+        g_grip[0] = V3{kGripGuessX, f.y, f.z + kGripGuessZ};
+        g_grip[1] = V3{-kGripGuessX, f.y, f.z + kGripGuessZ};
+    }
+    log("bmx parts: B7 grips (from %s): right %.3f %.3f %.3f, left %.3f %.3f %.3f (chassis space, m); fork pivot "
+        "%.3f %.3f %.3f; crank axle %.3f %.3f %.3f", from, g_grip[0].x, g_grip[0].y, g_grip[0].z, g_grip[1].x,
+        g_grip[1].y, g_grip[1].z, g_nodePos[BMX_FORKS_FRONT].x, g_nodePos[BMX_FORKS_FRONT].y,
+        g_nodePos[BMX_FORKS_FRONT].z, g_nodePos[BMX_CHAINSET].x, g_nodePos[BMX_CHAINSET].y, g_nodePos[BMX_CHAINSET].z);
+}
+
+// B7: reTHAWed's bike parts -> GTA bike space. reTHAWed's bike frame space is
+// (right, towards the back, up); GTA's bike is (right, forward, up): flip y.
+void PartsFromSample(const SkaterShared& s)
+{
+    g_haveParts = g_haveNodes && (s.flags & kBikeValid);
+    if (!g_haveParts) return;
+    static const float sgn[3] = {1.0f, -1.0f, 1.0f};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) g_forkG[i * 3 + j] = s.bike[kBikeFork + i * 3 + j] * sgn[i] * sgn[j];
+    const float* c = s.bike + kBikeCrank;
+    V3 u{0.0f, -c[1], c[2]}; // the crank turns about the bike's x: keep it in the y-z plane
+    u = Norm(u);
+    g_crankG = (u.y == 0.0f && u.z == 0.0f) ? V3{0, 0, -1} : u;
+}
+
+// a point in chassis_dummy's space (as we draw it: unturned) -> world, on the drawn bike
+V3 ChassisToWorld(V3 p)
+{
+    const V3 local = Add(p, g_nodePos[BMX_CHASSIS]);
+    return Add(g_visPos, Apply(g_vis, local));
+}
+
+// B7: grips and pedals in the world on the drawn bike; CJ's hands / feet go there
+void LimbTargets(const SkaterShared& s)
+{
+    if (!g_haveParts || !g_haveVisual) {
+        BodyClearLimbTargets();
+        return;
+    }
+    const V3 pivot = g_nodePos[BMX_FORKS_FRONT];
+    float t[4][3], w[4];
+    for (int k = 0; k < 2; ++k) {
+        const V3 d = Sub(g_grip[k], pivot);
+        const float* m = g_forkG;
+        const V3 turned{d.x * m[0] + d.y * m[3] + d.z * m[6], d.x * m[1] + d.y * m[4] + d.z * m[7],
+                        d.x * m[2] + d.y * m[5] + d.z * m[8]};
+        const V3 g = ChassisToWorld(Add(pivot, turned));
+        t[k][0] = g.x; t[k][1] = g.y; t[k][2] = g.z;
+    }
+    const V3 axle = g_nodePos[BMX_CHAINSET];
+    const V3 pr = g_nodePos[BMX_PEDAL_R], pl = g_nodePos[BMX_PEDAL_L]; // in the chainset's space: (x, 0, along the crank)
+    const V3 right{1, 0, 0};
+    const V3 pedR = Add(axle, Add(Mul(right, pr.x), Mul(g_crankG, pr.z)));
+    const V3 pedL = Add(axle, Add(Mul(right, pl.x), Mul(g_crankG, pl.z)));
+    const V3 wr = ChassisToWorld(pedR), wl = ChassisToWorld(pedL);
+    t[2][0] = wr.x; t[2][1] = wr.y; t[2][2] = wr.z;
+    t[3][0] = wl.x; t[3][1] = wl.y; t[3][2] = wl.z;
+    for (int k = 0; k < 4; ++k) {
+        w[k] = s.bike[kBikeHandOn + k]; // hands R, L, feet R, L (kBikeFootOn follows kBikeHandOn)
+        if (!(w[k] >= 0.0f)) w[k] = 0.0f;
+        if (w[k] > 1.0f) w[k] = 1.0f;
+        if (w[k] < g_onMin[k]) g_onMin[k] = w[k];
+    }
+    BodySetLimbTargets(t, w);
+    ++g_limbFrames;
+}
+
 // B6 research (read only): the GTA BMX's moving parts, once per game session:
 // name, parent, position and axes in its parent's space.
 void LogBikeParts(LogFn log)
@@ -327,6 +512,8 @@ void StartUnsafe(LinkBlock* link, LogFn log)
     g_blend.Clear();
     g_nextReport = GetTickCount() + 1000;
     LogBikeParts(log);
+    LearnParts(log);
+    g_haveParts = false;
     log("bmx: BMX MODE ON: your controller rides reTHAWed's bike, the GTA bike and CJ follow it (F7 / L3 + R3 or "
         "getting off in reTHAWed = GTA's normal BMX)");
 }
@@ -513,10 +700,15 @@ void FollowUnsafe(LinkBlock* link, const LevelAlignment& a)
     }
     // B4: CJ's body copies the rider's (tricks, bails), applied when GTA draws
     // him; the same code as skate mode (body.cpp). Rider's origin = feet.
-    if ((s.flags & kBodyValid) && (s.flags & kPoseValid))
+    if ((s.flags & kBodyValid) && (s.flags & kPoseValid)) {
         BodySetTarget(s.body, s.orient, a.scale, a.ySign, feet.x, feet.y, feet.z);
-    else
+        // B7: bars and cranks like reTHAWed's; CJ's hands and feet on them
+        PartsFromSample(s);
+        LimbTargets(s);
+    } else {
         BodyClear();
+        g_haveParts = false;
+    }
     ++g_frames;
 }
 
@@ -571,6 +763,43 @@ void SetMatrixRows(CVehicle* v, const float* m12)
     v->UpdateRwFrame();
 }
 
+// B7: set one part's turn (rows), keep its position; RenderWare recomputes it
+// when the bike's frame is updated (SetMatrixRows).
+void SetNodeRows(RwFrame* f, V3 r, V3 u, V3 a)
+{
+    RwMatrix& m = f->modelling;
+    m.right = RwV3d{r.x, r.y, r.z};
+    m.up = RwV3d{u.x, u.y, u.z};
+    m.at = RwV3d{a.x, a.y, a.z};
+    RwMatrixUpdate(&m);       // "changed"
+    RwFrameUpdateObjects(f);  // its world matrix gets recomputed before drawing
+}
+
+// B7: right before GTA draws the bike: chassis unturned (reTHAWed's bike
+// already leans), fork and bars turned like reTHAWed's fork, cranks pointed
+// like reTHAWed's, pedals level. Put back after drawing.
+void TurnParts()
+{
+    for (int i = 1; i < BMX_NUM_NODES; ++i)
+        if (g_node[i]) g_savedNode[i] = g_node[i]->modelling;
+    g_nodesSwapped = true;
+    SetNodeRows(g_node[BMX_CHASSIS], V3{1, 0, 0}, V3{0, 1, 0}, V3{0, 0, 1});
+    const float* m = g_forkG;
+    const V3 fr{m[0], m[1], m[2]}, fu{m[3], m[4], m[5]}, fa{m[6], m[7], m[8]};
+    SetNodeRows(g_node[BMX_FORKS_FRONT], fr, fu, fa);
+    if (g_node[BMX_HANDLEBARS]) SetNodeRows(g_node[BMX_HANDLEBARS], fr, fu, fa);
+    // chainset: its "at" (z) points from the axle to the right pedal (pedal_r sits at +z in it)
+    const V3 a = g_crankG;
+    const V3 r{1, 0, 0};
+    const V3 u{0, a.z, -a.y}; // at x right
+    SetNodeRows(g_node[BMX_CHAINSET], r, u, a);
+    // pedals: the chainset's turn undone, so they stay level
+    const V3 pr{1, 0, 0}, pu{0, u.y, a.y}, pa{0, u.z, a.z};
+    SetNodeRows(g_node[BMX_PEDAL_R], pr, pu, pa);
+    SetNodeRows(g_node[BMX_PEDAL_L], pr, pu, pa);
+    ++g_partsDrawn;
+}
+
 void BeforeDrawUnsafe(CVehicle* v)
 {
     if (!g_active || !g_haveVisual || v != g_bike || !v->m_matrix) return;
@@ -582,7 +811,24 @@ void BeforeDrawUnsafe(CVehicle* v)
     float vis[12] = {g_vis.r.x, g_vis.r.y, g_vis.r.z, g_vis.f.x, g_vis.f.y, g_vis.f.z,
                      g_vis.u.x, g_vis.u.y, g_vis.u.z, g_visPos.x, g_visPos.y, g_visPos.z};
 
+    if (g_haveParts && kTurnParts) TurnParts(); // B7, before the bike's frame update below
     SetMatrixRows(v, vis);
+    // B7 fix 1 check: what GTA will draw: the fork's world matrix vs the bike's
+    if (g_nodesSwapped && g_node[BMX_FORKS_FRONT]) {
+        const RwMatrix* lt = RwFrameGetLTM(g_node[BMX_FORKS_FRONT]);
+        if (lt) {
+            const float c = lt->right.x * g_vis.r.x + lt->right.y * g_vis.r.y + lt->right.z * g_vis.r.z;
+            const float l = std::sqrt(lt->right.x * lt->right.x + lt->right.y * lt->right.y + lt->right.z * lt->right.z);
+            if (l > 1e-4f) {
+                float cc = c / l;
+                if (cc > 1.0f) cc = 1.0f;
+                if (cc < -1.0f) cc = -1.0f;
+                const float deg = std::acos(cc) * 57.29578f;
+                if (deg > g_barsDrawnMax) g_barsDrawnMax = deg;
+                ++g_barsChecked;
+            }
+        }
+    }
     g_swapped = true;
     ++g_drawnTurned;
 }
@@ -591,6 +837,14 @@ void AfterDrawUnsafe(CVehicle* v)
 {
     if (!g_swapped || v != g_bike || !v->m_matrix) return;
     g_swapped = false;
+    if (g_nodesSwapped) { // B7: GTA's own part positions back
+        g_nodesSwapped = false;
+        for (int i = 1; i < BMX_NUM_NODES; ++i)
+            if (g_node[i]) {
+                g_node[i]->modelling = g_savedNode[i];
+                RwFrameUpdateObjects(g_node[i]);
+            }
+    }
     SetMatrixRows(v, g_saved);
 }
 
@@ -609,6 +863,7 @@ void AfterDraw(CVehicle* v)
         AfterDrawUnsafe(v);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_swapped = false;
+        g_nodesSwapped = false;
     }
 }
 
@@ -748,6 +1003,15 @@ void BmxFrame(LinkBlock* link, LogFn log)
             log("bmx: %u frames followed (%u blended), %u held (menu), %u skipped (sample busy), newest sample up "
                 "to %ld ms old | CJ's body copied in %u drawn frames (%u half-updated samples skipped)",
                 g_frames, g_blended, g_held, g_skipped, g_maxAge, body, bodySkipped);
+            log("bmx: B7 bike parts turned in %u drawn frames, CJ's hands / feet put on the bike %u times; lowest "
+                "'on' this second: hands %.1f %.1f, feet %.1f %.1f (bike's right, left); fork %.2f %.2f %.2f, crank "
+                "%.2f %.2f %.2f | bars as drawn: up to %.0f deg turned (%u checks)", g_partsDrawn, BodyReachedAndReset(),
+                g_onMin[0], g_onMin[1], g_onMin[2], g_onMin[3], g_forkG[0], g_forkG[1], g_forkG[2], g_crankG.x,
+                g_crankG.y, g_crankG.z, g_barsDrawnMax, g_barsChecked);
+            g_barsDrawnMax = 0.0f;
+            g_barsChecked = 0;
+            g_partsDrawn = g_limbFrames = 0;
+            for (float& m : g_onMin) m = 1.0f;
             g_frames = g_held = g_skipped = g_blended = 0;
             g_maxAge = 0;
         }

@@ -2,6 +2,25 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] BMX B7 fix 1: feet on the pedals; checks that the parts reach the screen
+
+**Changed:** `src/thaw/bikeparts.cpp`: foot "on the pedal" = keeps its distance from the crank axle and its place along it (as in the riding pose); the crank's angle from the rider's feet while on, from the crank bone while off; per-second log of feet vs crank bone turning. `near` / `far` renamed (Windows macros; build error 13:11). `src/gta/bmxmode.cpp`: per-second log of the bars' turn as GTA will draw it.
+**Why:** test 13:15 (video + logs): feet counted off the pedals nearly all the time; legs looked unnatural; tricks not visible.
+**Tested how:** cloud: compile check with Windows' near/far macros; the made-up bike test still right. Not tested in the games.
+**Result:** none yet.
+
+## [2026-10-10] BMX B7: bars and cranks like reTHAWed's; CJ's hands on the grips, feet on the pedals
+
+**Changed:**
+- `src/common/link.h`: version 11 (`Local\MyPassthrough_v11`, 588 bytes): `thawBike` (16 numbers: the fork's turn, the crank's direction, hand / foot "on" amounts for the bike's right and left), flag `kBikeValid`.
+- `src/thaw/bikeparts.h/.cpp`: besides the log, works those numbers out every pass (riding pose 4 s after getting on: where the hands sit on the bars and the feet on the pedals; then how far they are from there now). `src/thaw/main.cpp`: sends them.
+- `src/gta/blend.cpp`: blends them like the rest.
+- `src/gta/bmxmode.cpp`: at BMX start finds the GTA bike's parts and measures its grips from the bars' mesh (fixed guess if it can't); each frame works out the grips and pedals in the world on the drawn bike and hands them to body.cpp; while the bike is drawn: chassis unturned (no extra GTA lean), fork + handlebars turned like reTHAWed's fork, chainset pointed like reTHAWed's crank, pedals level; all put back after drawing. Per-second log line for it.
+- `src/gta/body.h/.cpp`: after copying the body, bends each arm / leg (two-joint reach, elbow / knee keeps its side) so the hand / foot lands on its grip / pedal, by the "on" amount.
+**Why:** user 12:54: riding smoother, but CJ's hands don't line up with the bars and look unnatural (screenshots: arms hanging beside the bars); trick moves (bar spins, crank flips). Research log (B6): Board_Nose + Trucks_Nose = fork, Board_Tail + Trucks_Tail = cranks. DESIGN 8.29 B7.
+**Tested how:** cloud maths tests; build error 13:11 (`near` / `far` are Windows macros: renamed); user test 13:15 with a video, logs read.
+**Result:** hands better, slightly off at moments; feet / legs unnatural (feet counted off the pedals nearly all the time: fix 1); tricks not visible yet; fork / crank numbers do reach GTA.
+
 ## [2026-10-10] BMX B5 + B6: smooth riding; research log of the bike's moving parts
 
 **Changed:**
@@ -10,8 +29,8 @@ One entry per change, newest at the top. Template: `MODLOG-template.md`.
 - New `src/thaw/bikeparts.h/.cpp` (log only): while reTHAWed's rider is on the bike, each of the 4 other "board" bones' turn relative to the bike frame (Board_Root), compared with the riding pose; `bike parts:` lines when one turns more than 20 degrees, plus a per-second summary. `src/thaw/main.cpp`: calls it; also logs the bone list again if the skeleton changes.
 - `CMakeLists.txt`: the two new .cpp files.
 **Why:** user 12:41: bike stays with CJ now (fix 3 works), but riding stutters like the old skate stutter, and tricks (tabletops, crank flips, bar spins) don't show. DESIGN 8.29 B5, B6.
-**Tested how:** new files syntax-checked in the cloud (stub Windows headers); angle maths checked (68.8 and 180 degrees right). Not tested in the games; not compiled with Visual Studio yet.
-**Result:** none yet.
+**Tested how:** new files syntax-checked in the cloud (stub Windows headers); angle maths checked. User 12:54: rode, tricks, screenshots; logs read.
+**Result:** riding "a lot smoother", slight stutter left in flips. Research log: fork = Board_Nose + Trucks_Nose, cranks = Board_Tail + Trucks_Tail (see DESIGN 8.29). CJ's hands don't reach the bars (screenshots). Next: B7.
 
 ## [2026-10-10] BMX B4b fix 3: the bike's picture really updated (GTA's UpdateRW)
 
