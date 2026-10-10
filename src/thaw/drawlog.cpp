@@ -55,6 +55,27 @@ T Orig(int slot)
     return reinterpret_cast<T>(g_orig[slot]);
 }
 
+// C1 (user 14:47: occasional stutter; GTA runs at 44-58 fps while reTHAWed runs
+// behind it): "lean drawing". While reTHAWed is in a level and behind GTA, its
+// 3D world isn't seen by anyone (only its HUD is shown, in GTA), so its world
+// draws are dropped; the HUD (from the frame's first DrawIndexedPrimitiveUP on,
+// 8.23) is drawn as before. reTHAWed's game, physics and animation don't
+// depend on drawing. Switch: g_lean (touchpad + D-pad Right, temporary).
+volatile LONG g_lean = 1;          // on by default
+volatile LONG g_leanAllowed = 0;   // in a level and reTHAWed not in front (plugin loop)
+bool g_hudPhase = false;           // render thread: the HUD part of this frame has begun
+volatile LONG g_dropped = 0, g_drawn = 0; // draws this second (log)
+
+bool DropThisDraw()
+{
+    if (g_lean && g_leanAllowed && !g_hudPhase) {
+        InterlockedIncrement(&g_dropped);
+        return true;
+    }
+    InterlockedIncrement(&g_drawn);
+    return false;
+}
+
 HRESULT __stdcall HReset(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS* pp)
 {
     HudBeforeReset(); // our picture must be gone or the reset fails
@@ -64,6 +85,7 @@ HRESULT __stdcall HPresent(IDirect3DDevice9* dev, const RECT* a, const RECT* b, 
 {
     if (HudEnd(dev)) Note(K_HUD_END);
     HudNewFrame();
+    g_hudPhase = false; // C1: next frame starts with its 3D world
     if (g_state == 2) g_state = 3;          // the frame we watched is complete
     else if (g_state == 1) { g_count = 0; g_state = 2; HudRequestShot(); }
     Note(S_PRESENT);
@@ -127,22 +149,27 @@ HRESULT __stdcall HSetTexture(IDirect3DDevice9* dev, DWORD st, IDirect3DBaseText
 HRESULT __stdcall HDraw(IDirect3DDevice9* dev, D3DPRIMITIVETYPE p, UINT start, UINT n)
 {
     Note(S_DRAWPRIM, p, start, n);
+    if (DropThisDraw()) return D3D_OK; // C1
     return Orig<HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT)>(S_DRAWPRIM)(dev, p, start, n);
 }
 HRESULT __stdcall HDrawIdx(IDirect3DDevice9* dev, D3DPRIMITIVETYPE p, INT base, UINT minI, UINT nv, UINT si, UINT n)
 {
     Note(S_DRAWINDEXED, p, nv, n);
+    if (DropThisDraw()) return D3D_OK; // C1
     return Orig<HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, INT, UINT, UINT, UINT, UINT)>(S_DRAWINDEXED)(dev, p, base, minI, nv, si, n);
 }
 HRESULT __stdcall HDrawUP(IDirect3DDevice9* dev, D3DPRIMITIVETYPE p, UINT n, const void* v, UINT stride)
 {
     Note(S_DRAWPRIMUP, p, n, stride);
+    if (DropThisDraw()) return D3D_OK; // C1
     return Orig<HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, const void*, UINT)>(S_DRAWPRIMUP)(dev, p, n, v, stride);
 }
 HRESULT __stdcall HDrawIdxUP(IDirect3DDevice9* dev, D3DPRIMITIVETYPE p, UINT minI, UINT nv, UINT n, const void* idx,
                              D3DFORMAT fmt, const void* v, UINT stride)
 {
     if (HudBeforeIdxUP(dev)) Note(K_HUD_START);
+    g_hudPhase = true; // C1: the HUD part has begun: everything from here is drawn
+    InterlockedIncrement(&g_drawn);
     Note(S_DRAWINDEXEDUP, p, nv, n, stride);
     return Orig<HRESULT(__stdcall*)(IDirect3DDevice9*, D3DPRIMITIVETYPE, UINT, UINT, UINT, const void*, D3DFORMAT, const void*, UINT)>(
         S_DRAWINDEXEDUP)(dev, p, minI, nv, n, idx, fmt, v, stride);
@@ -274,8 +301,32 @@ void Write(void (*log)(const char*, ...))
 
 } // namespace
 
-void DrawLogTick(void (*log)(const char*, ...), bool padCombo, bool hudAllowed, bool hudToggle)
+void DrawLogTick(void (*log)(const char*, ...), bool padCombo, bool hudAllowed, bool hudToggle, bool leanToggle)
 {
+    // C1: lean drawing
+    {
+        static bool leanWas = false;
+        static LONG lastAllowed = -1;
+        static ULONGLONG nextLog = 0;
+        if (leanToggle && !leanWas) {
+            const LONG now = InterlockedExchange(&g_lean, g_lean ? 0 : 1) ? 0 : 1;
+            log("lean drawing: %s (touchpad + D-pad Right)", now ? "ON - reTHAWed's 3D world not drawn while behind GTA"
+                                                                 : "OFF - reTHAWed draws everything");
+        }
+        leanWas = leanToggle;
+        const LONG allowed = hudAllowed ? 1 : 0;
+        InterlockedExchange(&g_leanAllowed, allowed);
+        if (allowed != lastAllowed) {
+            lastAllowed = allowed;
+            if (g_lean) log("lean drawing: %s", allowed ? "active (in a level, reTHAWed behind GTA)" : "paused (menus, or reTHAWed in front)");
+        }
+        const ULONGLONG t = GetTickCount64();
+        if (t >= nextLog) {
+            nextLog = t + 10000;
+            const LONG d = InterlockedExchange(&g_dropped, 0), k = InterlockedExchange(&g_drawn, 0);
+            if (d || k) log("lean drawing (10 s): %ld draws dropped, %ld drawn (switch %s)", d, k, g_lean ? "on" : "off");
+        }
+    }
     static bool tried = false, installed = false, keyWasDown = false;
     static ULONGLONG nextTry = 0;
     if (!installed) {

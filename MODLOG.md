@@ -2,12 +2,19 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] C1: reTHAWed "lean drawing" (its unseen 3D world not drawn behind GTA)
+
+**Changed:** `src/thaw/drawlog.h/.cpp`: while reTHAWed is in a level and behind GTA, its world draws before the frame's HUD part are dropped (the HUD is drawn as before); switch on by default, touchpad + D-pad Right toggles; 10 s log of dropped / drawn draws. `src/thaw/touchpad.cpp`, `src/common/link.h`: D-pad Right bit. `src/thaw/main.cpp`: passes the toggle.
+**Why:** user 14:47: fix the occasional stutter without lowering graphics; GTA ran at 44-58 fps while both games draw.
+**Tested how:** not tested (not compiled with Visual Studio yet).
+**Result:** none yet.
+
 ## [2026-10-10] B12: the GTA bike lies where reTHAWed's dropped bike lies
 
 **Changed:** `src/common/link.h`: version 12 (`_v12`, 636 bytes), `thawDroppedBike` + `kDroppedBikeValid`. `src/thaw/bikeparts.h/.cpp`: `DroppedBikeTick` (bike frame in THAW's world while the rider is off the bike; sent only once it's known to stay put). `src/thaw/main.cpp`: sends it. `src/gta/bmxmode.cpp`: in skate mode the GTA bike CJ left mirrors it (collision off meanwhile); Square mount keeps it there.
 **Why:** user 14:37 (clip): getting on with Square looked off: CJ bent down for a bike that wasn't there, then it popped in.
-**Tested how:** cloud syntax check of the THAW file. Not compiled with Visual Studio; not tested in the games.
-**Result:** none yet.
+**Tested how:** user 14:47.
+**Result:** "a lot better, I'm fine with how that works".
 
 ## [2026-10-10] B11: BMX <-> skate the quick way (hop-on copied; Square gets back on the bike)
 

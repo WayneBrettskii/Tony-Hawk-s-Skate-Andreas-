@@ -78,6 +78,7 @@ constexpr LONG kPadRawTouch = 1;  // DualSense touchpad pressed down (clicked)
 constexpr LONG kPadRawUp = 2;     // D-pad Up, from the same read
 constexpr LONG kPadRawDown = 4;   // D-pad Down, from the same read
 constexpr LONG kPadRawLeft = 8;   // D-pad Left, from the same read
+constexpr LONG kPadRawRight = 16; // D-pad Right, from the same read (C1: reTHAWed lean drawing on / off)
 
 // reserved[1]: what GTA wants reTHAWed's music to do (8.27 radio)
 constexpr LONG kMusicLeave = 0;   // don't touch (skate mode off)

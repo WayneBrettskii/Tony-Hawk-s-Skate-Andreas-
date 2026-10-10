@@ -47,6 +47,7 @@ LONG Decode(const BYTE* r, DWORD n)
     if (hat == 7 || hat == 0 || hat == 1) bits |= kPadRawUp;
     if (hat == 3 || hat == 4 || hat == 5) bits |= kPadRawDown;
     if (hat == 5 || hat == 6 || hat == 7) bits |= kPadRawLeft;
+    if (hat == 1 || hat == 2 || hat == 3) bits |= kPadRawRight;
     return bits;
 }
 

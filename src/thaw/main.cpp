@@ -696,7 +696,8 @@ DWORD WINAPI MainThread(LPVOID)
             // phase 6 H2: catch the HUD only in a level, with reTHAWed behind GTA
             const bool inLevel = canReadState && state.readOk && state.inFrontend == 0;
             const bool hudToggle = (pad & mp::kPadRawTouch) && (pad & mp::kPadRawLeft);
-            mp::thaw::DrawLogTick(&Log, combo, inLevel && !ReTHAWedInFrontNow(), hudToggle);
+            const bool leanToggle = (pad & mp::kPadRawTouch) && (pad & mp::kPadRawRight); // C1
+            mp::thaw::DrawLogTick(&Log, combo, inLevel && !ReTHAWedInFrontNow(), hudToggle, leanToggle);
         }
         mp::thaw::PoseSample pose;
         float bikeParts[mp::kLinkBikeFloats] = {};

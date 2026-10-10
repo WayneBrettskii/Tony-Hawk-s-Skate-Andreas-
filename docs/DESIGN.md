@@ -811,6 +811,18 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
   - **B7 result (user 13:18, video + logs):** hands "better but slightly off in some moments"; feet and legs look unnatural on the pedals; trick moves "still not showing". Logs: grips measured from the bars' mesh (+-0.326, 0.342, 0.482 m); fork and crank numbers reach GTA (a 180 degree fork turn at a bar spin); but reTHAWed's feet counted "off the pedals" nearly the whole ride, so CJ's legs mostly kept the copied directions. Cause: the check assumed the feet go round the crank bone's own point; they don't (riding pose: both feet ~16 units below the bike frame, ~9-10 below the crank bone).
   - **B7 fix 1 (13:30):** a foot counts as on its pedal while it keeps its distance from the crank axle and its place along the axle (as in the riding pose), wherever round the circle it is (fully within 3 units, not at all beyond 8). The crank's angle now comes from the rider's feet while they're on (so CJ's feet and the GTA pedals go round together), and from the crank bone (continuing from there) while they're off. Logs added: how far the feet went round vs the crank bone each second (is Board_Tail really the cranks?), and the bars' turn as GTA will draw it (from GTA's own world matrices, to prove the parts reach the screen).
 
+### 8.30 C1: smoother frames without lower graphics (user 14:47, written 15:00)
+
+**Asked:** fix the occasional stutter without lowering graphics or frame rate.
+
+**What we know:** the stutter is GTA not holding 60 frames a second while riding (gta.log pacer: 44-58 fps, most frames late), not the BMX code. Both games run at once on the same PC and graphics card; reTHAWed draws its whole 3D world every frame behind GTA, where nobody sees it (only its HUD is shown, inside GTA).
+
+**C1 step 1: "lean drawing" in reTHAWed.** While reTHAWed is in a level and behind GTA, our THAW plugin drops reTHAWed's 3D world draws (DrawPrimitive, DrawIndexedPrimitive, DrawPrimitiveUP before the frame's first DrawIndexedPrimitiveUP); the HUD part (from the first DrawIndexedPrimitiveUP on, as found in 8.23) is drawn as before, so the HUD in GTA stays. reTHAWed's game, physics and animation don't depend on drawing. In menus, or with reTHAWed in front, it draws everything. On by default; touchpad + D-pad Right switches it (temporary, for an A/B test; to be removed before release). Logged: every 10 s draws dropped / drawn; GTA's pacer line shows the effect (frames per 10 s and how many were late).
+
+**Test:** ride ~1 min with it on, then touchpad + D-pad Right, ride ~1 min with it off. Compare.
+
+**If it isn't enough, next candidates (measure first):** GTA side: the time our own code takes per GTA frame (HUD picture upload, body copy); reTHAWed's resolution (its own settings, the user's file).
+
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 
 **Asked:** the slow motion already works in GTA (CJ follows the skater, who moves slower), but it should also look like reTHAWed's: its screen effect. Not planned yet. To find first: how reTHAWed knows Focus is on (a flag or time scale we can read), and what its effect draws (probably a full-screen pass near the end of the frame; the H1 frame log taken during Focus will show it). Then choose: copy the effect's look in GTA with our own full-screen pass, or catch reTHAWed's. Sound (if Focus changes it) to check too.
@@ -819,7 +831,7 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
 
 ## 11. Before release (to do later)
 
-- **Remove the temporary controller shortcuts** (PS5 touchpad + D-pad Down = frame recorder, touchpad + D-pad Up = draw log; `src/thaw/touchpad.*`, link `reserved[0]`; added 2026-10-09).
+- **Remove the temporary controller shortcuts** (PS5 touchpad + D-pad Down = frame recorder, touchpad + D-pad Up = draw log, touchpad + D-pad Left = HUD catch, touchpad + D-pad Right = lean drawing (keep lean drawing itself on); `src/thaw/touchpad.*`, link `reserved[0]`; added 2026-10-09).
 
 - **Controller fix must become an option** (asked by the user 2026-10-07). Right now the launcher always tells reTHAWed to ignore Xbox 360 controllers (045E:028E) and turns off SDL's raw input reading. That is right for a PS5 controller + DualSenseX, but a player with a **real Xbox 360 controller** would have no controller in reTHAWed at all. Plan: a settings file next to the launcher (for example `my-passthrough.ini`, `[Controller] Mode=`), with at least:
   - `ps-with-dualsensex`: today's behaviour (reTHAWed uses the real PlayStation controller, ignores the virtual Xbox 360 one).

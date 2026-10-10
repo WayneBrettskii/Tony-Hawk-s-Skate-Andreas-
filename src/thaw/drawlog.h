@@ -21,6 +21,8 @@ namespace mp::thaw {
 // touchpad + D-pad Up on the PS5 controller: padCombo).
 // Phase 6 H2 (hud.h): hudAllowed = in a level and reTHAWed not in front;
 // hudToggle = touchpad + D-pad Left (switches the HUD catching on/off).
-void DrawLogTick(void (*log)(const char*, ...), bool padCombo = false, bool hudAllowed = false, bool hudToggle = false);
+// C1: leanToggle = touchpad + D-pad Right: reTHAWed "lean drawing" (its 3D world
+// not drawn while it's in a level behind GTA; on by default) on / off.
+void DrawLogTick(void (*log)(const char*, ...), bool padCombo, bool hudAllowed, bool hudToggle, bool leanToggle);
 
 } // namespace mp::thaw

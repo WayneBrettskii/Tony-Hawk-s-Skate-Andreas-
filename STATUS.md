@@ -1,8 +1,8 @@
-# WHERE WE LEFT OFF (2026-10-10 14:30)
+# WHERE WE LEFT OFF (2026-10-10 15:00)
 
-BMX (DESIGN 8.29): tricks and feet look good (user 14:11). Now: B10, B11 work; **B12** (GTA bike lies where reTHAWed's dropped bike lies, so the Square
-pick-up looks right): built, to test.
-Open: slight stutter = GTA running at 44-60 fps while riding; options in DESIGN 8.29 (user to choose).
+BMX done (DESIGN 8.29; B12 OK'd by the user 14:47).
+Now: **C1 lean drawing** (reTHAWed doesn't draw its unseen 3D world behind GTA, to fix the stutter
+without lowering graphics; DESIGN 8.30): built, to test (A/B with touchpad + D-pad Right).
 Then the map (T4 with `[Memory] HashItem=100000`, rail budget via `Out set RailPoint`).
 
 ---
