@@ -53,6 +53,7 @@ import struct
 import sys
 
 AREAS = {"lse": (1700.0, -1900.0, 2250.0, -1150.0)}
+SKIPPED = []  # (placement, why) inside the area but not used; collect() fills it
 MARGIN = 150.0  # also take models placed up to this far outside the area (big buildings)
 
 
@@ -333,15 +334,32 @@ def collect(gta, box, log=print):
     for inst in text_inst:
         inst["is_lod"] = (inst["source"].lower(), inst["index"]) in lod_refs
     log("far-away:    %d text placements are LOD stand-ins (skipped)" % sum(1 for i in text_inst if i["is_lod"]))
-    def wanted(inst):
+    # The "interior" number of a placement: area code in the low 8 bits, flags
+    # above (seen in the text IPLs: 256, 512, 1024, 2048, 4096). Until
+    # 2026-10-10 the whole number had to be 0 or 13, so every flagged outdoor
+    # placement was left out (DESIGN 8.31 test 3: holes in the map where the
+    # skater bounced back like off a wall). Now only the area code counts.
+    def reason(inst):
         x, y, _z = inst["pos"]
-        if inst["interior"] not in (0, 13):
-            return False
-        if not inst["name"] or inst["name"].startswith("lod") or inst.get("is_lod"):
-            return False
-        return box[0] - MARGIN <= x <= box[2] + MARGIN and box[1] - MARGIN <= y <= box[3] + MARGIN
+        if not (box[0] - MARGIN <= x <= box[2] + MARGIN and box[1] - MARGIN <= y <= box[3] + MARGIN):
+            return "outside"
+        if (inst["interior"] & 0xFF) not in (0, 13):
+            return "interior %d" % (inst["interior"] & 0xFF)
+        if not inst["name"]:
+            return "model id %d not in any IDE" % inst["id"]
+        if inst["name"].startswith("lod") or inst.get("is_lod"):
+            return "far-away stand-in (LOD)"
+        return None
 
-    used = [i for i in text_inst + bin_inst if wanted(i)]
+    used = []
+    for i in text_inst + bin_inst:
+        r = reason(i)
+        if r is None:
+            used.append(i)
+        elif r != "outside":
+            SKIPPED.append((i, r))
+    flagged = sum(1 for i in used if i["interior"] > 0xFF)
+    log("flags:       %d placements used have flag bits in their interior number (kept)" % flagged)
     needed = set(i["name"] for i in used)
     log("in area:     %d placements of %d different models" % (len(used), len(needed)))
 
@@ -356,6 +374,9 @@ def collect(gta, box, log=print):
             if mname in needed and mname not in cols and model:
                 cols[mname] = model
     log("collision:   %d .col archives read; %d of %d models found" % (archives, len(cols), len(needed)))
+    for i in used:
+        if i["name"] not in cols:
+            SKIPPED.append((i, "no collision found for the model"))
     return used, cols
 
 

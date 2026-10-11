@@ -1,10 +1,10 @@
-# WHERE WE LEFT OFF (2026-10-10 19:10)
+# WHERE WE LEFT OFF (2026-10-10 20:05)
 
-BMX done (DESIGN 8.29). Stutter fixed by C1 (8.30). **Whole map (T4) loads and skates.**
-8.31 tested once (18:37): GPS gets you there, F8 works, crash log caught the crash. **8.31 fix 1
-written, not tested:** the crash (our removal of CJ's talking-face task), wobbly GPS line, skater
-stopped by walls on its way to CJ (previous position +0x78 = a guess, logged), barriers by model
-name (rebuild the map). Waiting for the user's build + test.
+BMX done (8.29). Stutter fixed (8.30). Whole map loads and skates; 8.31 fixes 1-2 work (no crashes,
+F8, skate mode at CJ, barriers gone, wall marks). The "invisible walls" are **holes in the map**
+(skater bounces back at the edge of collision). Fix 3 (not tested): our reader dropped every
+placement with flag bits in its interior number; now kept; `skipped.csv` lists anything still left
+out. Waiting for: map rebuild + skate the marked spots (e.g. LV Strip west side, GTA 1820 1500).
 Then: rail budget across the map, water (skater rides the sea bed).
 
 After the map is right (user requests 2026-10-10, not started, plan in DESIGN first):

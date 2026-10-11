@@ -78,6 +78,7 @@ def qbkey(text):
 
 BARRIER_TXDS = ("roadblkx", "barrierblk")
 REMOVED_BARRIERS = []      # (model, position), for removed_barriers.txt
+PLACEMENTS = []            # (model, map file, box min, box max, triangles): placements.csv, to name what a wall is
 
 
 def barrier_models(gta):
@@ -123,6 +124,9 @@ def objects_from_gta(gta, box):
             continue
         verts, tris = gad.world_triangles(inst, model)
         out.append(("%s_%d" % (inst["name"], k), verts, [(a, b, c) for a, b, c, _s in tris]))
+        if verts:
+            PLACEMENTS.append((inst["name"], inst.get("source", ""), [min(v[i] for v in verts) for i in range(3)],
+                               [max(v[i] for v in verts) for i in range(3)], len(tris)))
     return out
 
 
@@ -1050,6 +1054,23 @@ def main():
         for name, pos in REMOVED_BARRIERS:
             f.write("%s, %.1f %.1f %.1f\n" % (name, pos[0], pos[1], pos[2]))
     print("barriers:     %d placements left out (removed_barriers.txt)" % len(REMOVED_BARRIERS))
+    # 8.31: which GTA model each piece of collision came from (the map's tiles
+    # don't keep names), for finding what an invisible wall is
+    if PLACEMENTS:
+        with open(os.path.join(out, "placements.csv"), "w", newline="\n") as f:
+            f.write("model,source,xmin,ymin,zmin,xmax,ymax,zmax,triangles\n")
+            for name, src, lo, hi, n in PLACEMENTS:
+                f.write("%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n" % (name, src, lo[0], lo[1], lo[2], hi[0], hi[1],
+                                                                     hi[2], n))
+        print("placements:   %d GTA placements listed in placements.csv" % len(PLACEMENTS))
+    if gad.SKIPPED:
+        with open(os.path.join(out, "skipped.csv"), "w", newline="\n") as f:
+            f.write("model,id,source,x,y,z,interior,why\n")
+            for inst, why in gad.SKIPPED:
+                f.write("%s,%d,%s,%.2f,%.2f,%.2f,%d,%s\n" % (inst["name"] or "", inst["id"], inst.get("source", ""),
+                                                          inst["pos"][0], inst["pos"][1], inst["pos"][2],
+                                                          inst["interior"], why))
+        print("skipped:      %d GTA placements not used, with the reason, in skipped.csv" % len(gad.SKIPPED))
     print("collision:    %d objects, %d corners, %d triangles, %d BSP nodes" % (
         st["objects"], st["verts"], st["faces"], st["nodes"]))
     nrail = sum(len(r) for r in rails)

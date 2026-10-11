@@ -2,6 +2,20 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] 8.31 fix 3: holes in the map (placements with flag bits were dropped)
+
+**Changed:** `tools/gta_area_dump.py`: placements are kept when the low 8 bits of their interior number are 0 or 13 (flags above them no longer drop them); every placement left out is recorded with its reason. `tools/gta_to_thaw_map.py`: writes `skipped.csv`.
+**Why:** user 19:41, 11 wall marks: every "invisible wall" was the skater bouncing back at the edge of the map's collision, with nothing beyond (thaw.log path + map collision); the whole-map picture shows big holes inside the land.
+**Tested how:** cloud: wall marks matched to the 9-per-second skater path and the map's collision (all 11 at a collision edge or a real step); text map files show flagged interior numbers. The fix itself needs the user's rebuild (gta3.img is on the PC). Not tested.
+**Result:** not tested yet.
+
+## [2026-10-10] 8.31 fix 2: wall marks, placements list, GPS start fix
+
+**Changed:** `src/gta/skatemode.cpp`: touchpad click alone in skate mode logs "WALL MARK #n" (CJ's and the skater's position, speed). `tools/gta_to_thaw_map.py`: writes `placements.csv` (model, map file, box, triangles for every GTA placement in the map). `src/gta/gps.cpp`: no re-routing while CJ hasn't reached the route's first road point yet (he may start far from a road).
+**Why:** user 19:13: still some invisible walls (no crash, F8 fine); logs: every stop / bounce found had real GTA collision there, so the walls need marking and naming. gta.log: GPS re-routed every 0.5 s while CJ stood 45 m from a road.
+**Tested how:** cloud: GPS run on the real road files from that same spot (no re-route; full trip finishes); converter compiles. Earlier fix 1 confirmed in the game: no crash, placement and barriers work (see DESIGN 8.31 test 2).
+**Result:** not tested yet.
+
 ## [2026-10-10] 8.31 fix 1: crash on CJ speaking, wobbly GPS line, skater stopped by walls on its way to CJ, barriers by name
 
 **Changed:**
