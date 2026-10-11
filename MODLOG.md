@@ -6,8 +6,8 @@ One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
 **Changed:** `tools/gta_area_dump.py`: placements are kept when the low 8 bits of their interior number are 0 or 13 (flags above them no longer drop them); every placement left out is recorded with its reason. `tools/gta_to_thaw_map.py`: writes `skipped.csv`.
 **Why:** user 19:41, 11 wall marks: every "invisible wall" was the skater bouncing back at the edge of the map's collision, with nothing beyond (thaw.log path + map collision); the whole-map picture shows big holes inside the land.
-**Tested how:** cloud: wall marks matched to the 9-per-second skater path and the map's collision (all 11 at a collision edge or a real step); text map files show flagged interior numbers. The fix itself needs the user's rebuild (gta3.img is on the PC). Not tested.
-**Result:** not tested yet.
+**Tested how:** cloud: wall marks matched to the 9-per-second skater path and the map's collision (all 11 at a collision edge or a real step); text map files show flagged interior numbers. User 20:07: map rebuilt, skated LS -> LV and back.
+**Result:** works: no invisible walls. Map now 855 tiles, 2.58M triangles (+335k). skipped.csv: only far-away stand-ins and interiors left out.
 
 ## [2026-10-10] 8.31 fix 2: wall marks, placements list, GPS start fix
 
