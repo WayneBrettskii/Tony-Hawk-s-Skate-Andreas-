@@ -50,6 +50,7 @@
 #include "tags.h"
 #include "bmxmode.h"
 #include "gps.h"
+#include "testrail.h"
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -138,6 +139,8 @@ void AddHooks()
         mp::gta::BmxFrame(g_link, &Log);
         // 8.31 D5: GPS route to the map waypoint.
         mp::gta::GpsFrameSafe(&Log);
+        // 8.32 R3b test: show the F5 test rail as a row of lights.
+        mp::gta::TestRailFrame(g_link, &Log);
     });
 
     // Phase 5-1: draw the stand-in board (only while skate mode is on).

@@ -2,6 +2,41 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-10] 8.32 R3b test 2: show the test rail in GTA, detect grinding it
+
+**Changed:** `src/common/link.h` (version 13: test rail ends + on flag), `src/thaw/railscan.cpp/.h`, `src/thaw/main.cpp`: F5 rail now 6 m ahead, 25 m long, 50 cm up; its ends go to GTA; the log marks samples with the skater on it and sums them up. New `src/gta/testrail.h/.cpp` (+ `main.cpp`, `CMakeLists.txt`): a row of 13 orange lights along the test rail while skate mode is on.
+**Why:** test 1 (user 21:07 "I was able to grind with f5"): the log shows the skater rolled under the invisible test rail and ground a real map rail ~4 m beside it, so the test didn't show yet whether a moved rail can be ground.
+**Tested how:** THAW and GTA files clang syntax-checked (Windows target, stand-in headers). Not run yet.
+**Result:** not tested yet.
+
+## [2026-10-10] 8.32 R3b test: F5 moves one rail in front of the skater
+
+**Changed:** `src/thaw/railscan.cpp/.h`, `src/thaw/main.cpp`: the rail scan now only finds reTHAWed's block of rail node records (no more saving / pointer search), again after every level load, and forgets it when the level goes. New `RailTestTick`: F5 in our level moves one far-away 2-node rail (positions + boxes in its 2 records) to just in front of the skater and logs the skater's distance to it for 20 s.
+**Why:** R3a-2 (user 20:55) decoded every rail node record: sorted by name, boxes = node to next node, links all correct, the "packed bits" are left-over bytes. So moving a rail should only need new positions and boxes; this tests that before building the pool.
+**Tested how:** decoding: cloud script, all 8,999 records matched to rails_in_map.csv (links, boxes, sort order). Code: clang syntax check (Windows target, stand-in headers). User 21:07: F5 twice in the game.
+**Result:** F5 works (rail moved, no crash), but the log shows the grinds were on a real map rail ~4 m beside the test rail; the skater passed under the test rail. Grinding a moved rail not shown yet: test 2.
+
+## [2026-10-10] 8.32 R3a-2: save reTHAWed's rail node block (research, read only)
+
+**Changed:** `src/thaw/railscan.cpp`: after finding the rail positions, walks to the start and end of reTHAWed's block of 0x60-byte rail node records, saves it to `logs\rails_array.bin`, and logs pointers to its start / end. Pointer search near single hits removed.
+**Why:** R3a (user 20:49) found the record layout (positions, boxes, next / previous links, name checksum) but also packed bits that look like spatial sort keys; all records are needed to decode them before rails can be moved.
+**Tested how:** clang syntax check (Windows target, stand-in headers). R3a itself ran fine in the game (no problems, 11 s on its own thread). User 20:55: ran it in the game.
+**Result:** worked: 8,999 records saved (= every rail node), the holding object found; decoded (see the R3b test entry and DESIGN 8.32).
+
+## [2026-10-10] 8.32 R3a: find reTHAWed's rail list in memory (research, read only)
+
+**Changed:** `tools/gta_to_thaw_map.py`: writes `rails_in_map.csv` (node number, rail, point, exact THAW position as stored). New `src/thaw/railscan.h/.cpp` (+ `main.cpp`, `CMakeLists.txt`): 15 s after our GTA map level is up, on its own thread, finds 6 of those rail node positions in reTHAWed's memory and logs each place with the bytes around it, plus pointers into the first two. Reads only.
+**Why:** user 20:40: go with the rail pool (R3) so every rail can be ground; 30,000 rail nodes froze reTHAWed after loading (not a pool limit), so the pool must be filled at run time, which needs reTHAWed's rail node layout.
+**Tested how:** rail scanner syntax-checked with clang (Windows target, stand-in headers). Not run yet.
+**Result:** not tested yet.
+
+## [2026-10-10] 8.32 R1: rail totals and reTHAWed pool sizes from the converter
+
+**Changed:** `tools/gta_to_thaw_map.py`: prints all rails found before the budget (rails, nodes, km); `--rail-budget 0` = no limit; prints the `rethawed.ini` `[Memory]` values the built map needs (RailPoint, RailString, HashItem, CStruct, CComponent, CVector).
+**Why:** user 20:10: get around the 9,000-node rail cap; the cap is most likely reTHAWed's memory pools, which its own ini can raise (DESIGN 8.21 / 8.32).
+**Tested how:** compiles; needs a run on the PC (gta3.img).
+**Result:** not tested yet.
+
 ## [2026-10-10] 8.31 fix 3: holes in the map (placements with flag bits were dropped)
 
 **Changed:** `tools/gta_area_dump.py`: placements are kept when the low 8 bits of their interior number are 0 or 13 (flags above them no longer drop them); every placement left out is recorded with its reason. `tools/gta_to_thaw_map.py`: writes `skipped.csv`.

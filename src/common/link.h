@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 12;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2); 11: bike parts (8.29 B7); 12: dropped bike (8.29 B12)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v12";
+constexpr LONG kLinkVersion = 13;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2); 11: bike parts (8.29 B7); 12: dropped bike (8.29 B12); 13: test rail (8.32 R3b)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v13";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -179,8 +179,13 @@ struct LinkBlock {
     // the rider is off the bike, reTHAWed's bike frame in THAW's world (rows
     // right, up (towards the back), at (up), position), same convention as thawBoard.
     volatile float thawDroppedBike[12];
+    // ---- 8.32 R3b test (version 13): the F5 test rail, so GTA can show it.
+    // THAW writes the two ends (THAW units) first, then thawTestRailOn = 1;
+    // 0 = no test rail (none placed yet, or the level went away).
+    volatile float thawTestRail[6];
+    volatile LONG thawTestRailOn;
 };
-static_assert(sizeof(LinkBlock) == 636, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 664, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {

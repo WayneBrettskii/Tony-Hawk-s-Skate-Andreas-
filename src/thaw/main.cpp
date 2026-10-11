@@ -56,6 +56,7 @@
 #include "music.h"
 #include "tags.h"
 #include "bmx.h"
+#include "railscan.h"
 #include <tlhelp32.h>
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
@@ -662,6 +663,7 @@ DWORD WINAPI MainThread(LPVOID)
     bool changeSeen = false;          // new reTHAWed frame noticed, full pass pending
     long long changeQpc = 0, frameQpc = 0;
     ULONGLONG nextFull = 0;
+    bool inOurLevelNow = false; // 8.32 R3a: reTHAWed is in our GTA map level
     while (!g_stop) {
         Sleep(1);
         LARGE_INTEGER qn;
@@ -703,6 +705,7 @@ DWORD WINAPI MainThread(LPVOID)
             const bool hudToggle = (pad & mp::kPadRawTouch) && (pad & mp::kPadRawLeft);
             const bool leanToggle = (pad & mp::kPadRawTouch) && (pad & mp::kPadRawRight); // C1
             mp::thaw::DrawLogTick(&Log, combo, inLevel && !ReTHAWedInFrontNow(), hudToggle, leanToggle);
+            inOurLevelNow = inLevel && state.levelId == 0x9F014B98ul; // load_MPGTALSE (src/common/convert.h)
         }
         mp::thaw::PoseSample pose;
         float bikeParts[mp::kLinkBikeFloats] = {};
@@ -728,6 +731,10 @@ DWORD WINAPI MainThread(LPVOID)
                                                       pose.orient, sample.pos, &Log, droppedBike);
         }
         quickSkater = sample.readOk ? sample.skater : 0;
+        // 8.32 R3b test: F5 = move one rail in front of the skater
+        mp::thaw::RailTestTick(g_link, inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
+                                   pose.readOk ? pose.orient + 8 : nullptr,
+                                   sample.readOk && sample.skater ? sample.vel : nullptr, logLine, &Log);
 
         if (g_link) {
             mp::SkaterShared shared;
@@ -823,6 +830,7 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::TagsSecond(&Log);
         mp::thaw::BmxSecond(&Log);
         mp::thaw::BikePartsSecond(&Log);
+        mp::thaw::RailScanSecond(inOurLevelNow, &Log); // 8.32 R3a: find the rail records
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
                         published, g_repeatSamples, g_newFrames);
