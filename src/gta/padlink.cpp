@@ -113,14 +113,23 @@ void PublishSafe()
 }
 
 // Phase 3-4: all buttons up, sticks centred, for the rest of this frame.
-void BlankSafe(bool touched)
+// 8.32 (user 2026-10-12): with `camera`, the right stick is kept so GTA's camera
+// can still be moved while skate / BMX mode is on ("can't move the camera on foot").
+// reTHAWed still gets the stick through the link, so its side is unchanged.
+void BlankSafe(bool touched, bool camera)
 {
     __try {
         if (CPad* pad = CPad::GetPad(0)) {
+            const short rx = pad->NewState.RightStickX;
+            const short ry = pad->NewState.RightStickY;
             std::memset(&pad->NewState, 0, sizeof(pad->NewState));
+            if (camera) {
+                pad->NewState.RightStickX = rx;
+                pad->NewState.RightStickY = ry;
+            }
             // 8.29: the player IS playing (in reTHAWed): without this GTA thinks the
             // controller is idle and starts its cinematic "idle" camera (test 01:01)
-            if (touched) pad->LastTimeTouched = CTimer::m_snTimeInMilliseconds;
+            if (touched || camera) pad->LastTimeTouched = CTimer::m_snTimeInMilliseconds;
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
@@ -171,10 +180,12 @@ void __cdecl OurUpdatePads()
         if (g_lastAxes[kAxisL2].load(std::memory_order_relaxed) > 30 ||
             g_lastAxes[kAxisR2].load(std::memory_order_relaxed) > 30)
             held = true;
-        if (held) BlankSafe(false);
+        if (held) BlankSafe(false, false);
         else releaseGuard = false;
     }
-    if (blank || spawnerHolds) BlankSafe(blank);
+    // 8.32: the right stick keeps GTA's camera moveable while skate / BMX mode is on,
+    // but not while the radio wheel is open (the stick picks the station there).
+    if (blank || spawnerHolds) BlankSafe(blank, blank && !RadioWheelIsOpen());
     BlockReplay(blank);
     if (blank) g_blanked.fetch_add(1, std::memory_order_relaxed);
     if (blank != g_wasBlanking) {

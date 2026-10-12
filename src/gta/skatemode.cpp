@@ -5,7 +5,9 @@
 //   - CJ's speed (m_vecMoveSpeed set to zero each frame)
 //   - one bit of CPad::DisablePlayerControls (bit 4, marked unused in
 //     plugin-sdk), so CJ ignores the player's buttons. Missions use other bits;
-//     we only ever set and clear our own.
+//     we only ever set and clear our own. 8.32: it is only kept set while waiting
+//     for reTHAWed to place its skater; during normal skate mode it is cleared so
+//     GTA's camera keeps working (the pad is blanked regardless).
 //   - CJ's animation: a skating pose while skate mode is on (phase 5-0,
 //     skateanim.cpp; GTA's own roller-skating animations)
 //   - a stand-in skateboard drawn under CJ (phase 5-1, board.cpp); CJ is
@@ -624,7 +626,12 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         TurnOff(ped, pad, link, log, "reTHAWed changed level");
         return;
     }
-    pad->DisablePlayerControls |= kOurControlBit; // keep ours set
+    // 8.32: do NOT keep our control bit set here: while any DisablePlayerControls bit
+    // is set, GTA's camera ignores the right stick (user 2026-10-12: "can't move the
+    // camera in skate mode"). The pad is blanked every frame anyway, so CJ still gets
+    // no input; the bit is only needed while waiting for reTHAWed to place its skater
+    // (Start / PendingFrame), where CJ must not move.
+    pad->DisablePlayerControls &= static_cast<unsigned short>(~kOurControlBit);
     ++g.frames;
     // 5-3f: keep this reTHAWed frame and show the skater 40 ms ago,
     // blended between frames (position, facing, board, body).

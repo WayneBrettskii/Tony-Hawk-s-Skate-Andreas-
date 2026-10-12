@@ -20,6 +20,10 @@ namespace mp::gta {
 // kAxis* order; the right stick is zeroed for reTHAWed while the wheel is open).
 void RadioFilterPad(LONG& buttons, short* axes);
 
+// 8.32: is the radio wheel open? (padlink keeps the right stick for GTA's camera
+// except while the wheel is open, when the stick picks the station.)
+bool RadioWheelIsOpen();
+
 // GTA's main thread, once per world update.
 void RadioFrame(LinkBlock* link, LogFn log);
 

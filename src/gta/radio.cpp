@@ -582,6 +582,8 @@ void DrawSafe()
 
 } // namespace
 
+bool RadioWheelIsOpen() { return g_wheelOpen; }
+
 void RadioFilterPad(LONG& buttons, short* axes)
 {
     if (!RideModeIsOn()) { // 8.29: BMX mode too
