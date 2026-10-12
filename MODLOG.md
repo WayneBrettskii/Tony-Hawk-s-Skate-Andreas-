@@ -2,6 +2,14 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.32 research: Natas spins (ruled out; needs THAW objects) + rail terrain/flag options
+
+**Changed:** `tools/gta_to_thaw_map.py`: new `--rail-terrain NAME` and `--rail-flag NAME` (write a TerrainType / an extra flag item on every rail node; defaults unchanged). `src/thaw/railscan.cpp`: F4 places a degenerate "point" rail (~10 cm, hydrant/pole height) beside the existing F5 25 m rail.
+
+**Why:** user 2026-10-12: make Natas spins work (essential for the full THAW feel). A Natas spin = ollie onto a vertical pole/narrow object, hold Flip + press Grind.
+
+**Tested how / result:** all three rail-side guesses failed in the game (user): a degenerate rail gives a normal "bonk grind"; `TERRAIN_METALPOLE` on every rail changes nothing; a `Spinnable` flag on every rail changes nothing. The user's park object (`pole` piece) IS spinnable, so Natas is a **THAW-object** mechanic — and our map (GTA collision) has no THAW objects. Park saves (`reTHAWed\save\*-Park`) are a fixed-size, mostly-zero binary with hashed fields and no per-object toggle, so the marker can't be read off cheaply. **Blocked:** needs THAW object/scene nodes in the map (a real `pole` model), which is project-sized. Documented in DESIGN 8.32 F.
+
 ## [2026-10-12] 8.32 source D: a rail along GTA's railroad tracks
 
 **Changed:** `tools/gta_to_thaw_map.py`: new `read_tracks(gta, centre)`, called from `main` when not `--no-rails`, appended to the rail list (so it lands in the map's rails and in `all_rails.csv`). It reads `data\Paths\tracks*.dat` (text: a count, then `x y z flag` lines) and, per file, emits the whole node list as **one rail**, twice over: offset left and right by half the 1.435 m gauge so the rails sit on the **two steel rails** (not down the middle). Logs `tracks:  N rails, M nodes`.

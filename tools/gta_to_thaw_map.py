@@ -272,6 +272,8 @@ RAIL_MIN_LENGTH = 1.0        # m: shorter chains are dropped (tree / pole rings,
 # loading (2026-10-08 23:52); LSE has 11,574 rail nodes (12,524 nodes) and
 # loads fine, so we stay below that until we know the real limit.
 RAIL_NODE_BUDGET = 9000
+RAIL_TERRAIN = "TERRAIN_GRINDCONC"  # rail nodes' TerrainType (see --rail-terrain)
+RAIL_FLAG = ""                      # extra flag written on every rail node (see --rail-flag)
 GROUND_MIN_UP = 0.7          # faces counted as ground for the drop check
 GROUND_CELL = 2.0            # m: grid cell for ground lookups
 
@@ -885,11 +887,13 @@ def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True):
                 ("checksum", "Class", qbkey("RailNode")),
                 ("checksum", "Type", qbkey("Concrete")),
                 ("checksum", "CollisionMode", qbkey("Geometry")),
-                ("checksum", "TerrainType", qbkey("TERRAIN_GRINDCONC")),
+                ("checksum", "TerrainType", qbkey(RAIL_TERRAIN)),
                 ("flag", "", qbkey("CreatedAtStart")),
             ]
             if i < len(chain) - 1:
                 items.append(("link", "Links", len(nodes) + 1))  # the next node of this rail
+            if RAIL_FLAG:
+                items.append(("flag", "", qbkey(RAIL_FLAG)))
             nodes.append(items)
     # Attempt 3 (4-2d): attempt 2 crashed on loading this file. LSE's level
     # script also has empty scripts the game may call while loading, and two
@@ -1052,6 +1056,7 @@ def write_pak(files):
 # ---------------------------------------------------------------- main
 
 def main():
+    global RAIL_TERRAIN, RAIL_FLAG
     project = os.path.dirname(HERE)
     ap = argparse.ArgumentParser(description="Make a reTHAWed user map from GTA SA collision.")
     ap.add_argument("gta", nargs="?", help="GTA San Andreas folder")
@@ -1077,7 +1082,13 @@ def main():
     ap.add_argument("--rail-drop-max", type=float, default=RAIL_DROP[1], metavar="M",
                     help="rails only where the drop is at most M m (default %.1f); 0 = no limit, so building and "
                          "structure tops get rails too" % RAIL_DROP[1])
+    ap.add_argument("--rail-terrain", default=RAIL_TERRAIN, metavar="NAME",
+                    help="TerrainType written on every rail node (default %s)" % RAIL_TERRAIN)
+    ap.add_argument("--rail-flag", default=RAIL_FLAG, metavar="NAME",
+                    help="extra flag written on every rail node (e.g. Spinnable; default none)")
     args = ap.parse_args()
+    RAIL_TERRAIN = args.rail_terrain
+    RAIL_FLAG = args.rail_flag
     if not args.gta and not args.from_obj:
         ap.error("give the GTA folder or --from-obj")
 

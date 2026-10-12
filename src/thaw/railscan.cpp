@@ -242,7 +242,8 @@ DWORD WINAPI ScanThread(LPVOID)
 
 // ---- R3b test: move one rail ----------------------------------------------
 
-constexpr int kTestKey = VK_F5;
+constexpr int kTestKey = VK_F5;   // place the 25 m test rail
+constexpr int kPointKey = VK_F4;  // place a degenerate "point" rail (Natas spin test)
 constexpr float kAhead = 250.0f;   // the rail starts this far in front of the skater (about 6 m)
 constexpr float kLength = 1000.0f; // and is this long (about 25 m)
 constexpr float kHeight = 20.0f;   // this high above the skater's feet (about 50 cm, higher than kerbs)
@@ -476,10 +477,13 @@ void PoolFill(const float* pos, void (*log)(const char*, ...))
 void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float* at, const float* vel,
                   bool logLine, void (*log)(const char*, ...))
 {
-    static bool wasDown = false;
+    static bool wasDown = false, wasDown2 = false;
     const bool down = (GetAsyncKeyState(kTestKey) & 0x8000) != 0;
     const bool pressed = down && !wasDown;
     wasDown = down;
+    const bool down2 = (GetAsyncKeyState(kPointKey) & 0x8000) != 0;
+    const bool pressed2 = down2 && !wasDown2;
+    wasDown2 = down2;
     if (!inOurLevel) {
         // the level's records are freed when it goes: forget them at once
         if (g_blockBase) {
@@ -493,7 +497,12 @@ void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const floa
         return;
     }
     const ULONGLONG now = GetTickCount64();
-    if (pressed) {
+    if (pressed || pressed2) {
+        // F4 = a degenerate "point" rail (Natas spin test): ~10 cm long, at hydrant /
+        // pole-top height, just in front of the skater.
+        const float ahead = pressed2 ? 60.0f : kAhead;
+        const float rlen = pressed2 ? 4.0f : kLength;
+        const float rhgt = pressed2 ? 25.0f : kHeight;
         const unsigned long base = static_cast<unsigned long>(g_blockBase);
         const unsigned long count = static_cast<unsigned long>(g_blockCount);
         if (!base || !pos) {
@@ -517,9 +526,9 @@ void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const floa
             log("rail test (F5): found no far-away 2-node rail to move");
             return;
         }
-        const float y = pos[1] + kHeight;
-        const float pa[3] = {pos[0] + fx * kAhead, y, pos[2] + fz * kAhead};
-        const float pb[3] = {pa[0] + fx * kLength, y, pa[2] + fz * kLength};
+        const float y = pos[1] + rhgt;
+        const float pa[3] = {pos[0] + fx * ahead, y, pos[2] + fz * ahead};
+        const float pb[3] = {pa[0] + fx * rlen, y, pa[2] + fz * rlen};
         const float* old = F(g_testA, 0x20);
         const float oldA[3] = {old[0], old[1], old[2]};
         if (!MoveRail(g_testA, g_testB, pa, pb)) {
