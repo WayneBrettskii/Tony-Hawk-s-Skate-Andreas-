@@ -446,9 +446,13 @@ def find_rails(objs, budget=RAIL_NODE_BUDGET):
         segments += rail_edges(o, ground)
     chains = chain_rails(segments)
     chains.sort(key=lambda c: -sum(math.dist(c[k], c[k + 1]) for k in range(len(c) - 1)))
+    # 8.32 R1: how big would "all rails" be?
+    total = sum(len(c) for c in chains)
+    metres = sum(math.dist(c[k], c[k + 1]) for c in chains for k in range(len(c) - 1)) / K
+    print("rails found:  %d rails, %d rail nodes, %.0f km (before the budget)" % (len(chains), total, metres / 1000))
     kept, used = [], 0
     for c in chains:
-        if used + len(c) > budget:
+        if budget > 0 and used + len(c) > budget:  # budget 0 = no limit
             continue
         kept.append(c)
         used += len(c)
@@ -969,7 +973,7 @@ def main():
     ap.add_argument("--no-geometry-nodes", action="store_true",
                     help="no LevelGeometry node per collision object (map size tests)")
     ap.add_argument("--rail-budget", type=int, default=RAIL_NODE_BUDGET,
-                    help="at most this many rail nodes, longest rails first (default %d)" % RAIL_NODE_BUDGET)
+                    help="at most this many rail nodes, longest rails first (default %d; 0 = no limit)" % RAIL_NODE_BUDGET)
     args = ap.parse_args()
     if not args.gta and not args.from_obj:
         ap.error("give the GTA folder or --from-obj")
@@ -1010,9 +1014,20 @@ def main():
         [o for o in objs if not o.name.startswith("extra_")], budget)
     rails = extra_rails + rails
     print("extras:       %d hand-made walls (gta_extras.py), %d rails along them" % (len(extras), len(extra_rails)))
-    print("rails:        %d rails, %d rail nodes, %.0f m in all (found %d rails; longest kept, at most %d nodes)" % (
+    print("rails:        %d rails, %d rail nodes, %.0f m in all (found %d rails; longest kept, at most %s nodes)" % (
         len(rails), sum(len(r) for r in rails),
-        sum(math.dist(r[k], r[k + 1]) for r in rails for k in range(len(r) - 1)) / K, found, args.rail_budget))
+        sum(math.dist(r[k], r[k + 1]) for r in rails for k in range(len(r) - 1)) / K, found,
+        args.rail_budget if args.rail_budget > 0 else "unlimited"))
+    # 8.32: reTHAWed's memory pools these rails need (rethawed.ini [Memory]; its defaults:
+    # RailPoint 20000, RailString 5000, HashItem 30000, CStruct 100000, CComponent 360000,
+    # CVector 30000). Each rail node is one struct of about 8 items with 2 vectors (position,
+    # angles) in the level script, plus a rail point; the defaults are kept as room for the game.
+    nn = sum(len(r) for r in rails)
+    print("rethawed.ini: this map needs at least, under [Memory]:")
+    for key, value in (("Out set RailPoint", nn + 20000), ("Out set RailString", len(rails) + 5000),
+                       ("HashItem", nn + 40000), ("CStruct", nn + 100000), ("CComponent", 10 * nn + 360000),
+                       ("CVector", 2 * nn + 30000)):
+        print("                %s=%d" % (key, value))
 
     if not args.no_merge:
         before = len(objs)
@@ -1022,6 +1037,18 @@ def main():
     spawn = to_thaw(DEFAULT_SPAWN, centre)
     spawn = (spawn[0], spawn[1] + 10.0, spawn[2])  # a little above the ground
     qb, nnodes = write_level_qb(args.prefix, objs, spawn, rails, not args.no_geometry_nodes)
+    # 8.32 R3a: the rail nodes as written (node number in the level's node list,
+    # rail, point, THAW position), so the THAW plugin can find reTHAWed's rail
+    # list in memory by these exact positions.
+    first = 1 + (len(objs) if not args.no_geometry_nodes else 0)
+    with open(os.path.join(out, "rails_in_map.csv"), "w", newline="\n") as f:
+        f.write("node,rail,point,x,y,z\n")
+        n = first
+        for r, chain in enumerate(rails):
+            for i, p in enumerate(chain):
+                f32 = struct.unpack("<3f", struct.pack("<3f", *p))  # exactly as stored in the level
+                f.write("%d,%d,%d,%.9g,%.9g,%.9g\n" % (n, r, i, f32[0], f32[1], f32[2]))
+                n += 1
     base = "worlds\\worldzones\\%s\\%s" % (args.prefix.lower(), args.prefix.lower())
     named_qb = "worlds\\worldzones\\%s\\%s.qb.wpc" % (args.prefix, args.prefix)
     # Order and parents as in Los Santos East: tex, scene (parent tex),
