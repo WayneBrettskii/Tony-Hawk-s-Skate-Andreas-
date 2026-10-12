@@ -21,6 +21,15 @@ void SkateModeFrameSafe(LinkBlock* link, LogFn log);
 // True while skate mode is on (used by the F8 teleport helper to refuse).
 bool SkateModeIsOn();
 
+// 8.29 B10: switch skate mode on as soon as GTA allows it (CJ off the bike,
+// no script holding him), trying for `forMs` milliseconds. BMX mode calls this
+// when the rider gets off the bike in reTHAWed (L1 + R1). GTA's main thread.
+void SkateModeRequestOn(const char* why, unsigned long forMs);
+
+// 8.29 B11: switch skate mode off right now (BMX mode takes over: reTHAWed's
+// rider got on his bike with Square). Also drops a pending request.
+void SkateModeTurnOffNow(LinkBlock* link, LogFn log, const char* why);
+
 // 8.29 B3: true while BMX mode is on (bmxmode.cpp).
 bool BmxModeIsOn();
 
