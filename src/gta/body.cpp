@@ -56,8 +56,8 @@ enum GtaBone {
     // looking up").
     G_PELVIS1 = 1, G_SPINE1 = 3, G_NECK = 4, G_HEAD = 5,
     G_R_CLAVICLE = 21, G_L_CLAVICLE = 31,
-    G_R_SHOULDER = 22, G_R_ELBOW = 23, G_R_WRIST = 24,
-    G_L_SHOULDER = 32, G_L_ELBOW = 33, G_L_WRIST = 34,
+    G_R_SHOULDER = 22, G_R_ELBOW = 23, G_R_WRIST = 24, G_R_HAND = 25,
+    G_L_SHOULDER = 32, G_L_ELBOW = 33, G_L_WRIST = 34, G_L_HAND = 35,
     G_L_HIP = 41, G_L_KNEE = 42, G_L_ANKLE = 43, G_L_FOOT = 44,
     G_R_HIP = 51, G_R_KNEE = 52, G_R_ANKLE = 53, G_R_FOOT = 54,
 };
@@ -194,6 +194,15 @@ struct Target {
     ULONGLONG tick = 0;
     V3 pos[T_COUNT];  // GTA world positions of the skater's bones
 } g_target;
+// 8.29 B7: where CJ's hands / feet should be (GTA world): 0 grip on the bike's
+// right, 1 grip on its left, 2 right pedal, 3 left pedal; how much (0..1)
+struct LimbTargets {
+    bool valid = false;
+    ULONGLONG tick = 0;
+    V3 pos[4];
+    float weight[4] = {};
+} g_limbs;
+unsigned g_reached = 0; // limbs bent onto a target since the last log
 unsigned g_frames = 0;
 unsigned g_skipped = 0; // samples skipped as half-updated
 float g_segRef[7] = {};  // usual bone lengths of the skater
@@ -208,6 +217,59 @@ bool g_infoReady = false, g_infoLogged = false;
 void Recompute(const M43* local, const int* parent, int n, const M43& root, M43* world)
 {
     for (int i = 0; i < n; ++i) world[i] = parent[i] < 0 ? Mul(local[i], root) : Mul(local[i], world[parent[i]]);
+}
+
+// 8.29 B7: bend a two-joint limb (A = shoulder / hip, B = elbow / knee,
+// C = wrist / ankle, E = hand / foot) so E lands on `target`, by `w` (0..1).
+// Solved for E itself (elbow-to-hand counts as the forearm), so the hand /
+// foot keeps its turn relative to the forearm / shin. The elbow / knee keeps
+// bending to the side it already bends to. Returns false if left alone.
+bool Reach(M43* local, M43* world, const int* parent, int n, const M43& root, int iA, int iB, int iC, int iE,
+           V3 target, float w)
+{
+    if (iA < 0 || iB < 0 || iC < 0 || !(w > 0.001f)) return false;
+    if (iE < 0) iE = iC;
+    Recompute(local, parent, n, root, world);
+    const V3 A = world[iA].p, B = world[iB].p, E = world[iE].p;
+    const V3 goal = E + (target - E) * (w > 1.0f ? 1.0f : w);
+    const float l1 = Len(B - A), l2 = Len(E - B);
+    if (!(l1 > 1e-4f) || !(l2 > 1e-4f)) return false;
+    V3 dir = goal - A;
+    float d = Len(dir);
+    if (!Unit(dir)) return false;
+    const float dMin = std::fabs(l1 - l2) + 1e-3f, dMax = (l1 + l2) * 0.999f;
+    if (d < dMin) d = dMin;
+    if (d > dMax) d = dMax;
+    V3 bend = (B - A) - dir * Dot(B - A, dir);
+    if (!Unit(bend)) { // straight now: bend the way the joint's "up" points
+        bend = world[iB].r[1] - dir * Dot(world[iB].r[1], dir);
+        if (!Unit(bend)) return false;
+    }
+    const float along = (l1 * l1 + d * d - l2 * l2) / (2.0f * d);
+    const float h2 = l1 * l1 - along * along;
+    const V3 newB = A + dir * along + bend * (h2 > 0.0f ? std::sqrt(h2) : 0.0f);
+    // upper part: A turned so B goes to newB
+    {
+        V3 from = B - A, to = newB - A;
+        if (!Unit(from) || !Unit(to)) return false;
+        const M43 q = FromTo(from, to);
+        M43 wa = world[iA];
+        for (int k = 0; k < 3; ++k) wa.r[k] = RotateRow(wa.r[k], q);
+        local[iA] = Mul(wa, InverseRigid(parent[iA] < 0 ? root : world[parent[iA]]));
+        Recompute(local, parent, n, root, world);
+    }
+    // lower part: B turned so E goes to the goal
+    {
+        const V3 b2 = world[iB].p;
+        V3 from = world[iE].p - b2, to = goal - b2;
+        if (!Unit(from) || !Unit(to)) return false;
+        const M43 q = FromTo(from, to);
+        M43 wb = world[iB];
+        for (int k = 0; k < 3; ++k) wb.r[k] = RotateRow(wb.r[k], q);
+        local[iB] = Mul(wb, InverseRigid(parent[iB] < 0 ? root : world[parent[iB]]));
+        Recompute(local, parent, n, root, world);
+    }
+    return true;
 }
 
 void Apply(CPed* ped)
@@ -309,6 +371,30 @@ void Apply(CPed* ped)
         }
         const M43 parentWorld = parent[i] < 0 ? root : world[parent[i]];
         local[i] = Mul(w, InverseRigid(parentWorld));
+    }
+    // 8.29 B7: hands onto the bike's grips, feet onto its pedals, as much as
+    // reTHAWed's rider has his on them. Which grip / pedal for which hand /
+    // foot: the one on CJ's side (so the level's mirror doesn't matter).
+    if (g_limbs.valid && GetTickCount64() - g_limbs.tick <= kStaleMs) {
+        Recompute(local, parent, n, root, world);
+        V3 lt[4];
+        for (int k = 0; k < 4; ++k) lt[k] = worldSpace ? g_limbs.pos[k] : RotateRow(g_limbs.pos[k], toSpace) + toSpace.p;
+        struct Limb { int a, b, c, e; };
+        const Limb rightArm{idx(G_R_SHOULDER), idx(G_R_ELBOW), idx(G_R_WRIST), idx(G_R_HAND)};
+        const Limb leftArm{idx(G_L_SHOULDER), idx(G_L_ELBOW), idx(G_L_WRIST), idx(G_L_HAND)};
+        const Limb rightLeg{idx(G_R_HIP), idx(G_R_KNEE), idx(G_R_ANKLE), idx(G_R_FOOT)};
+        const Limb leftLeg{idx(G_L_HIP), idx(G_L_KNEE), idx(G_L_ANKLE), idx(G_L_FOOT)};
+        for (int pair = 0; pair < 2; ++pair) { // 0: hands / grips 0, 1; 1: feet / pedals 2, 3
+            const Limb& r = pair == 0 ? rightArm : rightLeg;
+            const Limb& l = pair == 0 ? leftArm : leftLeg;
+            if (r.a < 0 || l.a < 0) continue;
+            const V3 cjRight = world[r.a].p - world[l.a].p;
+            const int t0 = pair * 2, t1 = pair * 2 + 1;
+            const bool straight = Dot(lt[t0] - lt[t1], cjRight) >= 0.0f; // target 0 on CJ's right
+            const int forRight = straight ? t0 : t1, forLeft = straight ? t1 : t0;
+            if (Reach(local, world, parent, n, root, r.a, r.b, r.c, r.e, lt[forRight], g_limbs.weight[forRight])) ++g_reached;
+            if (Reach(local, world, parent, n, root, l.a, l.b, l.c, l.e, lt[forLeft], g_limbs.weight[forLeft])) ++g_reached;
+        }
     }
     Recompute(local, parent, n, root, world);
     for (int i = 0; i < n; ++i)
@@ -412,9 +498,29 @@ void BodySetTarget(const float* body, const float* orient, float scale, float yS
     }
 }
 
+void BodySetLimbTargets(const float (*pos)[3], const float* weight)
+{
+    for (int k = 0; k < 4; ++k) {
+        g_limbs.pos[k] = V3(pos[k][0], pos[k][1], pos[k][2]);
+        g_limbs.weight[k] = weight[k];
+    }
+    g_limbs.tick = GetTickCount64();
+    g_limbs.valid = true;
+}
+
+void BodyClearLimbTargets() { g_limbs.valid = false; }
+
+unsigned BodyReachedAndReset()
+{
+    const unsigned r = g_reached;
+    g_reached = 0;
+    return r;
+}
+
 void BodyClear()
 {
     g_target.valid = false;
+    g_limbs.valid = false;
     for (float& r : g_segRef) r = 0.0f; // next skater may be built differently
     g_tornRun = 0;
     g_haveLock = false; // fix 3: take a fresh calm head pose next time

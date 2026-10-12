@@ -125,6 +125,22 @@ float RiderBlend::At(long long when, SkaterShared& out) const
     }
     if ((a.flags & kBodyValid) && (b.flags & kBodyValid))
         for (int k = 0; k < kLinkBodyBones * 3; ++k) out.body[k] = Lerp(a.body[k], b.body[k], t);
+    if ((a.flags & kBikeValid) && (b.flags & kBikeValid)) {
+        // 8.29 B7: bike parts. The fork's turn squared up again, the crank kept unit length.
+        for (int k = 0; k < kLinkBikeFloats; ++k) out.bike[k] = Lerp(a.bike[k], b.bike[k], t);
+        float* r0 = out.bike + kBikeFork;
+        float* r1 = r0 + 3;
+        float* r2 = r0 + 6;
+        Norm3(r0);
+        const float d = r1[0] * r0[0] + r1[1] * r0[1] + r1[2] * r0[2];
+        for (int k = 0; k < 3; ++k) r1[k] -= r0[k] * d;
+        Norm3(r1);
+        // keep the handedness the rows came with
+        const float c[3] = {r0[1] * r1[2] - r0[2] * r1[1], r0[2] * r1[0] - r0[0] * r1[2], r0[0] * r1[1] - r0[1] * r1[0]};
+        const float sgn = (c[0] * r2[0] + c[1] * r2[1] + c[2] * r2[2]) < 0.0f ? -1.0f : 1.0f;
+        for (int k = 0; k < 3; ++k) r2[k] = c[k] * sgn;
+        Norm3(out.bike + kBikeCrank);
+    }
     return t * 100.0f;
 }
 

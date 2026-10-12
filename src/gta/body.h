@@ -31,7 +31,17 @@ void BodySetTarget(const float* body, const float* orient, float scale, float yS
 // 5-3f: F10 switches copying on / off (to compare). Returns the new state.
 bool BodyToggle();
 
-// No body this frame (skate mode off, or reTHAWed didn't send it).
+// 8.29 B7 (BMX): after copying the body, bend CJ's arms / legs so his hands
+// and feet land on these GTA world spots: [0] grip on the bike's right, [1]
+// grip on its left, [2] right pedal, [3] left pedal; weight 0..1 = how much
+// (reTHAWed's rider's hand / foot on it). Each frame while wanted.
+void BodySetLimbTargets(const float (*pos)[3], const float* weight);
+void BodyClearLimbTargets();
+// For the log: limbs bent onto a target since the last call.
+unsigned BodyReachedAndReset();
+
+// No body this frame (skate mode off, or reTHAWed didn't send it). Also
+// clears the limb targets.
 void BodyClear();
 
 // For the once-per-second log: frames the body was copied since the last call
