@@ -2,6 +2,16 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.32: learn the camera offset; rotate the left stick to match GTA's camera
+
+**Changed:** `src/gta/padlink.cpp`: new `RotateStickForCamera`. While skate mode is on, it compares the direction the player pushes (rotated into GTA world by `TheCamera.m_fCamFrontXNorm/YNorm`) with the skater's actual movement direction (the link's `thawVel` mapped by `FindLevelAlignment`), learns the signed offset (low-passed), and rotates the left-stick value published to reTHAWed by it. GTA's camera is untouched. Logs `pad: camera offset learned: N deg` once a second.
+
+**Why:** user 2026-10-12: reTHAWed moves the skater relative to its own camera, but the player sees GTA's camera, so "forward" could come out backwards/sideways on foot. Hunting the camera object failed (see the entry below), so the offset is learned from behaviour instead.
+
+**Tested how:** builds clean with MSVC. Not run in the game yet.
+
+**Result (user 2026-10-12): tried, then REMOVED (a dead end, kept here for the record).** First the correction never armed: `vlen` is metres/second (thawVel * scale), but the gate compared it against 120, so it never passed. With that fixed the offset did learn and settled at only ~0-10 deg during normal walking — meaning the two cameras largely agree — spiking to 30-147 deg only when the view was turned. Applying it made on-foot movement feel *stiff and randomly misdirected*: the skater's velocity lags the stick during turns, so the estimate is unreliable mid-turn even with a steady-stick gate and a deadband. **The stick is now sent to reTHAWed unchanged again** (`RotateStickForCamera` removed); the camera keeps the right-stick behaviour the user likes. The learned offset being ~0 also suggests reTHAWed's camera and GTA's camera mostly agree, so little was lost.
+
 ## [2026-10-12] 8.32 research: find reTHAWed's on-foot state (log only)
 
 **Changed:** new `src/thaw/statefind.{h,cpp}` (+ `main.cpp`, `CMakeLists.txt`): F3 while **on foot** and F4 while **on the board** dump the skater object's first 0x400 bytes, and each of its components' first 0x40 bytes, to `thaw.log`. Read only.
