@@ -663,6 +663,24 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         const LONG pad = PadRawButtons(link);
         const bool combo = (pad & kPadRawTouch) && (pad & kPadRawDown);
         RecorderFrameBegin(log, combo);
+        // 8.31: a touchpad click on its own (no D-pad while held) = "wall here"
+        // mark in gta.log, so invisible walls can be found on the map.
+        static bool touchHeld = false, dpadUsed = false;
+        static int wallMarks = 0;
+        const LONG dpad = kPadRawUp | kPadRawDown | kPadRawLeft | kPadRawRight;
+        if (pad & kPadRawTouch) {
+            if (!touchHeld) dpadUsed = false;
+            touchHeld = true;
+            if (pad & dpad) dpadUsed = true;
+        } else if (touchHeld) {
+            touchHeld = false;
+            if (!dpadUsed) {
+                const CVector& p = ped->GetPosition();
+                log("WALL MARK #%d (touchpad): CJ at %.2f %.2f %.2f | skater (THAW) %.1f %.1f %.1f, speed %.0f, "
+                    "vel %.0f %.0f %.0f", ++wallMarks, p.x, p.y, p.z, s.pos[0], s.pos[1], s.pos[2],
+                    std::sqrt(s.vel[0] * s.vel[0] + s.vel[2] * s.vel[2]), s.vel[0], s.vel[1], s.vel[2]);
+            }
+        }
     }
     RecSet(REC_FRAME, static_cast<float>(CTimer::m_FrameCounter));
     RecSet(REC_SAMPLE, static_cast<float>(s.sampleCount));

@@ -64,6 +64,7 @@ struct Route {
     float tx = 0.0f, ty = 0.0f, tz = 0.0f;
     std::vector<CVector> pts; // road nodes then the waypoint
     size_t progress = 0;      // the line runs CJ -> pts[progress] -> ... -> waypoint
+    float startGap = 0.0f;    // CJ's distance from the first road point when the route was made
     ULONGLONG nextCheck = 0;
 };
 Route g_route;
@@ -257,6 +258,8 @@ void MakeRoute(const CVector& cj, LogFn log)
         for (int i : path) g_route.pts.push_back(CVector(g_nodes[i].x, g_nodes[i].y, g_nodes[i].z));
     g_route.pts.push_back(CVector(g_route.tx, g_route.ty, g_route.tz)); // no road route: a straight line
     g_lastSearchMs = static_cast<float>(GetTickCount64() - t0);
+    g_route.startGap = std::sqrt((g_route.pts[0].x - cj.x) * (g_route.pts[0].x - cj.x) +
+                                 (g_route.pts[0].y - cj.y) * (g_route.pts[0].y - cj.y));
     if (ok) ++g_routesFound; else ++g_routesFailed;
     float length = 0.0f;
     for (size_t i = 1; i < g_route.pts.size(); ++i) {
@@ -336,7 +339,12 @@ void Frame(LogFn log)
     }
     if (bestSeg + 1 < n && best < 1e29f) g_route.progress = bestSeg + 1;
     if (n == 1) best = 0.0f; // straight line only
-    if (best > kOffRouteM && now >= g_route.nextCheck) {
+    // Fix 2026-10-10 (test 18:52): CJ standing 45 m from the nearest road
+    // (Vinewood house) re-routed every half second: until he reaches the road,
+    // allow his starting distance from it.
+    float limit = kOffRouteM;
+    if (g_route.progress <= 1 && g_route.startGap + 20.0f > limit) limit = g_route.startGap + 20.0f;
+    if (best > limit && now >= g_route.nextCheck) {
         g_route.nextCheck = now + kRecheckMs;
         log("gps: CJ %.0f m off the route: working it out again", best);
         MakeRoute(g_cj, log);
