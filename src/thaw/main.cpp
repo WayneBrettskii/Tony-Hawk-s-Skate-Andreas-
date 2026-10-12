@@ -57,6 +57,7 @@
 #include "tags.h"
 #include "bmx.h"
 #include "railscan.h"
+#include "statefind.h"
 #include <tlhelp32.h>
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
@@ -735,6 +736,11 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::RailTestTick(g_link, inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
                                    pose.readOk ? pose.orient + 8 : nullptr,
                                    sample.readOk && sample.skater ? sample.vel : nullptr, logLine, &Log);
+        // 8.32 R3c: fill the rail pool with the GTA rails near the skater (pool maps only)
+        mp::thaw::RailPoolTick(inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
+                               sample.readOk && sample.skater ? sample.vel : nullptr, &Log);
+        // 8.32 research: F3 (on foot) / F4 (on board) dump the skater's state fields
+        mp::thaw::StateFindTick(quickSkater, &Log);
 
         if (g_link) {
             mp::SkaterShared shared;

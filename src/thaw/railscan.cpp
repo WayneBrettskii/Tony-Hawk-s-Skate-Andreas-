@@ -11,6 +11,9 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <vector>
+#include <algorithm>
+#include <utility>
 
 namespace mp::thaw {
 namespace {
@@ -51,8 +54,7 @@ bool Readable(const MEMORY_BASIC_INFORMATION& m)
 bool LoadTargets()
 {
     char path[MAX_PATH];
-    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\my-passthrough GTA East LS\\rails_in_map.csv",
-                MP_LOG_DIR);
+    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\_railpool\\rails_in_map.csv", MP_LOG_DIR);
     HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) {
         g_log("rail scan: can't open %s (error %lu); rebuild the map with the current map tool", path, GetLastError());
@@ -298,6 +300,177 @@ bool MoveRail(unsigned long a, unsigned long b, const float* pa, const float* pb
     }
 }
 
+
+// ---- 8.32 R3c: the rail pool -------------------------------------------------
+//
+// A pool map's level holds only parked spare rails (the map tool's --rail-pool).
+// Here we copy the GTA rails near the skater — read once from
+// _railpool\all_rails.csv — into those records. Only positions and boxes are
+// written (R3a-2); the record order, names and links stay. A rail is only ever
+// moved into a slot the skater is far from, so a grind is never disturbed.
+
+constexpr float kUnitsPerM = 39.3701f;    // THAW units per metre (the map tool's K)
+constexpr float kPoolRadiusM = 150.0f;    // place the GTA rails within this of the skater
+constexpr float kPoolMoveM = 40.0f;       // re-fill once the skater has moved this far
+constexpr float kPoolParkX = -30000.0f;   // spare rails park here, below the map
+constexpr float kPoolParkY = -6000.0f;
+
+struct RealRail { float a[3], b[3]; };
+struct PoolSlot { unsigned long a = 0, b = 0; int rail = -1; };
+
+std::vector<RealRail> g_realRails;
+int g_realSkipped = 0;
+bool g_realTried = false, g_realOk = false;
+
+std::vector<PoolSlot> g_slots;
+std::vector<int> g_mark, g_held;
+int g_fillId = 0;
+bool g_poolBuilt = false, g_poolOff = false;
+unsigned long g_builtBase = 0;
+LONG g_poolRailCount = 0;
+float g_lastFill[3] = {};
+bool g_haveLastFill = false;
+int g_onRail = -1; // the placed rail the skater is on (index into g_realRails), or -1
+
+bool LoadRealRails(void (*log)(const char*, ...))
+{
+    g_realTried = true;
+    char path[MAX_PATH];
+    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\_railpool\\all_rails.csv", MP_LOG_DIR);
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "r") != 0 || !f) {
+        log("rail pool: can't open %s; the pool stays off (build a pool map with --rail-pool)", path);
+        return false;
+    }
+    char path2[MAX_PATH];
+    _snprintf_s(path2, sizeof(path2), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\_railpool\\rails_in_map.csv", MP_LOG_DIR);
+    FILE* g = nullptr;
+    if (fopen_s(&g, path2, "r") == 0 && g) {
+        LONG rows = -1; // header only
+        char line[256];
+        while (fgets(line, sizeof(line), g)) ++rows;
+        if (rows > 0) g_poolRailCount = rows / 2;
+        fclose(g);
+    }
+    char line[256];
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return false; } // header
+    // 8.32 R3c: a long GTA rail (3+ nodes) is placed as consecutive two-node
+    // pieces that share their endpoints, so the grind carries along the whole
+    // rail the way a Tony Hawk rail chain does (if reTHAWed connects rails whose
+    // ends touch). The CSV lists a rail's points in order, so consecutive rows
+    // are adjacent points.
+    int curRail = -1, rails = 0;
+    float prev[3] = {};
+    bool havePrev = false;
+    while (fgets(line, sizeof(line), f)) {
+        int node = 0, rail = 0, point = 0;
+        float x = 0, y = 0, z = 0;
+        if (sscanf_s(line, "%d,%d,%d,%f,%f,%f", &node, &rail, &point, &x, &y, &z) != 6) continue;
+        if (rail != curRail) { curRail = rail; havePrev = false; ++rails; }
+        if (havePrev) {
+            RealRail r;
+            for (int k = 0; k < 3; ++k) r.a[k] = prev[k];
+            r.b[0] = x; r.b[1] = y; r.b[2] = z;
+            g_realRails.push_back(r);
+        }
+        prev[0] = x; prev[1] = y; prev[2] = z;
+        havePrev = true;
+    }
+    fclose(f);
+    g_realOk = !g_realRails.empty();
+    log("rail pool: %d GTA rails -> %zu two-node pieces (long rails split into pieces that share their ends); "
+        "the pool map file lists %ld pool rails", rails, g_realRails.size(), (long)g_poolRailCount);
+    return g_realOk;
+}
+
+bool BuildSlots(void (*log)(const char*, ...))
+{
+    g_slots.clear();
+    const unsigned long base = static_cast<unsigned long>(g_blockBase);
+    const unsigned long count = static_cast<unsigned long>(g_blockCount);
+    if (!base || count < 2 || count > 0x1000000) return false;
+    for (unsigned long i = 0; i < count; ++i) {
+        const unsigned long r = base + i * 0x60;
+        if (P(r, 0x54)) continue;                 // has a previous node: not a rail start
+        const unsigned long n = P(r, 0x50);
+        if (!n || n < base || n >= base + count * 0x60) continue;
+        if (P(n, 0x54) != r || P(n, 0x50)) continue;  // must be exactly two nodes
+        PoolSlot s;
+        s.a = r;
+        s.b = n;
+        g_slots.push_back(s);
+    }
+    log("rail pool: %zu pool rails in the block (0x%08lX..0x%08lX)", g_slots.size(), base, base + count * 0x60);
+    return !g_slots.empty();
+}
+
+void WriteRail(unsigned long a, unsigned long b, const float* pa, const float* pb)
+{
+    float mn[3], mx[3];
+    for (int k = 0; k < 3; ++k) { mn[k] = pa[k] < pb[k] ? pa[k] : pb[k]; mx[k] = pa[k] < pb[k] ? pb[k] : pa[k]; }
+    __try {
+        SetVec(F(a, 0x20), pa); SetVec(F(a, 0x00), mn); SetVec(F(a, 0x10), mx);
+        SetVec(F(b, 0x20), pb); SetVec(F(b, 0x00), pb); SetVec(F(b, 0x10), pb);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void ParkRail(unsigned long a, unsigned long b, int slot)
+{
+    const float p[3] = {kPoolParkX, kPoolParkY, 50.0f * slot};
+    WriteRail(a, b, p, p);
+}
+
+void PoolFill(const float* pos, void (*log)(const char*, ...))
+{
+    const size_t slots = g_slots.size();
+    const float R = kPoolRadiusM * kUnitsPerM, R2 = R * R;
+    static std::vector<std::pair<float, int>> cand;
+    cand.clear();
+    for (int i = 0; i < static_cast<int>(g_realRails.size()); ++i) {
+        const RealRail& r = g_realRails[i];
+        const float mx = (r.a[0] + r.b[0]) * 0.5f, mz = (r.a[2] + r.b[2]) * 0.5f;
+        const float dx = pos[0] - mx, dz = pos[2] - mz;
+        const float d2 = dx * dx + dz * dz;
+        if (d2 <= R2) cand.push_back(std::make_pair(d2, i));
+    }
+    std::sort(cand.begin(), cand.end());
+    const size_t keep = cand.size() < slots ? cand.size() : slots;
+    ++g_fillId;
+    if (g_mark.size() != g_realRails.size()) { g_mark.assign(g_realRails.size(), 0); g_held.assign(g_realRails.size(), 0); }
+    for (size_t i = 0; i < keep; ++i) g_mark[cand[i].second] = g_fillId;
+    // free the slots whose rail is no longer wanted (they are over the radius away, so never
+    // under the skater: the wanted set is the nearest rails, which always contains his own)
+    for (size_t s = 0; s < slots; ++s) {
+        PoolSlot& sl = g_slots[s];
+        if (sl.rail >= 0 && g_mark[sl.rail] != g_fillId) {
+            ParkRail(sl.a, sl.b, static_cast<int>(s));
+            sl.rail = -1;
+        }
+    }
+    for (size_t s = 0; s < slots; ++s)
+        if (g_slots[s].rail >= 0) g_held[g_slots[s].rail] = g_fillId; // still held
+    // place the wanted rails that no slot holds yet
+    size_t freeAt = 0;
+    int moved = 0;
+    for (size_t i = 0; i < keep; ++i) {
+        const int idx = cand[i].second;
+        if (g_held[idx] == g_fillId) continue;
+        while (freeAt < slots && g_slots[freeAt].rail >= 0) ++freeAt;
+        if (freeAt >= slots) break;
+        PoolSlot& sl = g_slots[freeAt++];
+        WriteRail(sl.a, sl.b, g_realRails[idx].a, g_realRails[idx].b);
+        sl.rail = idx;
+        g_held[idx] = g_fillId;
+        ++moved;
+    }
+    int placed = 0;
+    for (size_t s = 0; s < slots; ++s)
+        if (g_slots[s].rail >= 0) ++placed;
+    log("rail pool: %d rails placed of %zu slots (%zu within %.0f m; %d changed)", placed, slots, cand.size(),
+        kPoolRadiusM, moved);
+}
+
 } // namespace
 
 void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float* at, const float* vel,
@@ -401,6 +574,83 @@ void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const floa
     if (dist > 600.0f) return; // far away: no line
     log("rail test #%d: skater %.1f from the rail (%.1f above it), %.0f%% along it, speed %.0f%s", g_moves, dist,
         off[1], t * 100.0f, speed, on ? " | ON THE TEST RAIL" : "");
+}
+
+
+void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*log)(const char*, ...))
+{
+    if (!inOurLevel) {
+        if (g_poolBuilt || !g_slots.empty()) {
+            g_slots.clear();
+            g_poolBuilt = false;
+            g_poolOff = false;
+            g_haveLastFill = false;
+            g_onRail = -1;
+        }
+        return;
+    }
+    if (g_poolOff) return;
+    if (!g_realTried) {
+        if (!LoadRealRails(log)) { g_poolOff = true; return; }
+    }
+    if (g_realRails.empty() || !pos) return;
+    const unsigned long base = static_cast<unsigned long>(g_blockBase);
+    if (!base) return; // the scan has not found the block yet
+    if (!g_poolBuilt || g_builtBase != base) {
+        if (!BuildSlots(log)) return;
+        if (g_poolRailCount > 0 && static_cast<LONG>(g_slots.size()) != g_poolRailCount) {
+            log("rail pool: the level has %zu two-node rails but the pool map file lists %ld; pool off (load the "
+                "matching pool map)", g_slots.size(), static_cast<long>(g_poolRailCount));
+            g_slots.clear();
+            g_poolBuilt = true;
+            g_poolOff = true;
+            return;
+        }
+        g_builtBase = base;
+        g_poolBuilt = true;
+        g_haveLastFill = false;
+    }
+    if (g_slots.empty()) return;
+    float d2 = 0.0f;
+    for (int k = 0; k < 3; ++k) { const float e = pos[k] - g_lastFill[k]; d2 += e * e; }
+    const float move = kPoolMoveM * kUnitsPerM;
+    if (!g_haveLastFill || d2 > move * move) {
+        PoolFill(pos, log);
+        memcpy(g_lastFill, pos, sizeof(g_lastFill));
+        g_haveLastFill = true;
+    }
+    // 8.32: which placed rail is the skater on? (same test as the R3b probe: close
+    // sideways, not below the rail, part way along, moving) - logs on / off, so a
+    // grind that stops (e.g. at a palm in the middle of a hedge) can be seen.
+    if (vel && !g_slots.empty()) {
+        const float speed = sqrtf(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+        int on = -1;
+        float best = 1e9f;
+        for (size_t s = 0; s < g_slots.size(); ++s) {
+            const int ri = g_slots[s].rail;
+            if (ri < 0) continue;
+            const RealRail& r = g_realRails[ri];
+            float d[3], sv[3];
+            for (int k = 0; k < 3; ++k) { d[k] = r.b[k] - r.a[k]; sv[k] = pos[k] - r.a[k]; }
+            const float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            const float t = dd > 0.0f ? (sv[0] * d[0] + sv[1] * d[1] + sv[2] * d[2]) / dd : 0.0f;
+            if (t <= 0.0f || t >= 1.0f) continue;
+            float off[3];
+            for (int k = 0; k < 3; ++k) off[k] = pos[k] - (r.a[k] + d[k] * t);
+            const float side = sqrtf(off[0] * off[0] + off[2] * off[2]);
+            if (side < 10.0f && off[1] > -4.0f && off[1] < 12.0f && speed > 50.0f) {
+                const float dist = side + fabsf(off[1]);
+                if (dist < best) { best = dist; on = ri; }
+            }
+        }
+        if (on != g_onRail) {
+            if (on >= 0)
+                log("rail pool: ON a placed rail (%.0f speed, at %.0f %.0f %.0f)", speed, pos[0], pos[1], pos[2]);
+            else
+                log("rail pool: left the placed rail");
+            g_onRail = on;
+        }
+    }
 }
 
 

@@ -2,7 +2,8 @@
 //
 // R3a: once our GTA map has been loaded for 15 s, finds reTHAWed's block of rail
 // node records (one 0x60-byte record per node, see railscan.cpp) on its own
-// thread, using a rail position from rails_in_map.csv (written by the map tool).
+// thread, using a rail position from _railpool\rails_in_map.csv (the map tool
+// writes that folder for whatever map it last built).
 //
 // R3b test: F5 in the level moves one far-away 2-node rail to just in front of
 // the skater (6 m ahead, 25 m long, 50 cm up) (writes only that rail's two records: positions and boxes), then
@@ -25,5 +26,13 @@ void RailScanSecond(bool inOurLevel, void (*log)(const char*, ...));
 // which shows them as a row of lights.
 void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float* at, const float* vel,
                   bool logLine, void (*log)(const char*, ...));
+
+// 8.32 R3c: the rail pool. On a pool map (DESIGN 8.32 R3c) the level's rails are
+// parked spare rails; this copies the GTA rails near the skater into them, so the
+// whole map can be ground with only a few thousand nodes loaded. pos / vel = the
+// skater's THAW position and velocity (nullptr = no skater). Call every pass; it
+// fills only when the skater has moved a little, and logs the moments the skater
+// is on a placed rail (so grinds that stop - e.g. at a palm in a hedge - show).
+void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*log)(const char*, ...));
 
 } // namespace mp::thaw

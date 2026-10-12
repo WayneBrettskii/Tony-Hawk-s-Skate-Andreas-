@@ -261,7 +261,8 @@ def mark_wallride(obj):
 
 RAIL_TOP_MIN_UP = 0.9        # the top face: nearly flat
 RAIL_SIDE_MAX_UP = 0.5       # kind (a): the side face is steeper than this (coping lip: 0.42)
-RAIL_DROP = (0.08, 1.6)      # m: kerb .. ledge
+RAIL_DROP = (0.08, 5.0)      # m: kerb .. ledge (raised 1.6 -> 5.0 on 2026-10-12: a wallride-top
+                             # ledge over 1.6 m had no rail at all; roof edges stay above 5 m)
 RAIL_PROBE = 0.3             # m: where beyond the edge the ground is looked at
 RAIL_MAX_SLOPE = 0.5         # rise / run of the edge itself (about 27 degrees)
 RAIL_MAX_TURN = 35.0         # degrees: sharper bends start a new rail
@@ -322,8 +323,10 @@ class Ground:
         return best
 
 
-def rail_edges(obj, ground):
-    """Rail edges of one object, as (point, point) in THAW units."""
+def rail_edges(obj, ground, hi_m):
+    """Rail edges of one object, as (point, point) in THAW units. hi_m = the
+    largest drop (metres) an edge may have; 1e9 = no limit, so building and
+    structure tops get rails too (Tony Hawk style)."""
     pts = {}
     tri = []
     for a, b, c in obj.faces:
@@ -340,7 +343,7 @@ def rail_edges(obj, ground):
         for e in ((keys[0], keys[1]), (keys[1], keys[2]), (keys[2], keys[0])):
             edges.setdefault(tuple(sorted(e)), []).append(t)
     out = []
-    lo, hi = RAIL_DROP[0] * K, RAIL_DROP[1] * K
+    lo, hi = RAIL_DROP[0] * K, hi_m * K
     for e, ts in edges.items():
         if e[0] == e[1]:
             continue
@@ -437,13 +440,13 @@ def chain_rails(segments):
     return chains
 
 
-def find_rails(objs, budget=RAIL_NODE_BUDGET):
+def find_rails(objs, budget=RAIL_NODE_BUDGET, hi_m=RAIL_DROP[1]):
     """Rail chains, longest first, at most `budget` nodes in all.
-    Returns (chains, number found before the budget)."""
+    Returns (chains, number found before the budget). hi_m = largest edge drop (m)."""
     ground = Ground(objs)
     segments = []
     for o in objs:
-        segments += rail_edges(o, ground)
+        segments += rail_edges(o, ground, hi_m)
     chains = chain_rails(segments)
     chains.sort(key=lambda c: -sum(math.dist(c[k], c[k + 1]) for k in range(len(c) - 1)))
     # 8.32 R1: how big would "all rails" be?
@@ -457,6 +460,43 @@ def find_rails(objs, budget=RAIL_NODE_BUDGET):
         kept.append(c)
         used += len(c)
     return kept, len(chains)
+
+
+def write_rail_csv(path, rails, node0=1):
+    """node,rail,point,x,y,z — positions exactly as stored in the level (the
+    plugin reads these to find the rail block and to place rails; 8.32 R3a/R3c)."""
+    with open(path, "w", newline="\n") as f:
+        f.write("node,rail,point,x,y,z\n")
+        n = node0
+        for r, chain in enumerate(rails):
+            for i, p in enumerate(chain):
+                f32 = struct.unpack("<3f", struct.pack("<3f", *p))  # exactly as stored in the level
+                f.write("%d,%d,%d,%.9g,%.9g,%.9g\n" % (n, r, i, f32[0], f32[1], f32[2]))
+                n += 1
+
+
+# ---- 8.32 R3c: the rail pool -------------------------------------------------
+#
+# A pool map keeps a fixed set of spare rails instead of the map's own rails: N
+# two-node rails parked far below the map (nothing can reach them). At run time
+# our THAW plugin copies the GTA rails near the skater into these records (see
+# DESIGN 8.32 R3c), so the whole of San Andreas grinds with only a few thousand
+# nodes loaded. The tool also writes all_rails.csv: every rail it found, for the
+# plugin to place. Both files are also copied to extracted/thaw_maps/_railpool, a
+# fixed path the plugin reads whatever the map is called.
+POOL_Y = -6000.0       # THAW units (~150 m) below the map: safely out of reach, not absurd
+POOL_SPACING = 50.0    # units (~1.3 m) between parked rails, so each is distinct
+POOL_RAIL_LEN = 40.0   # units (~1 m): every parked rail is one short 2-node piece
+
+
+def make_pool_rails(n):
+    """n two-node rails parked far below the map, on a grid (for 8.32 R3c)."""
+    out = []
+    for r in range(n):
+        x = -30000.0 + (r % 200) * POOL_SPACING
+        z = -30000.0 + (r // 200) * POOL_SPACING
+        out.append([(x, POOL_Y, z), (x + POOL_RAIL_LEN, POOL_Y, z)])
+    return out
 
 
 def mark_vert(obj, centre):
@@ -974,6 +1014,12 @@ def main():
                     help="no LevelGeometry node per collision object (map size tests)")
     ap.add_argument("--rail-budget", type=int, default=RAIL_NODE_BUDGET,
                     help="at most this many rail nodes, longest rails first (default %d; 0 = no limit)" % RAIL_NODE_BUDGET)
+    ap.add_argument("--rail-pool", type=int, default=0, metavar="N",
+                    help="8.32 R3c: build a rail-pool map — N spare two-node rails parked below the map instead of "
+                         "this map's rails, plus all_rails.csv (every real rail) for the plugin; 0 = off")
+    ap.add_argument("--rail-drop-max", type=float, default=RAIL_DROP[1], metavar="M",
+                    help="rails only where the drop is at most M m (default %.1f); 0 = no limit, so building and "
+                         "structure tops get rails too" % RAIL_DROP[1])
     args = ap.parse_args()
     if not args.gta and not args.from_obj:
         ap.error("give the GTA folder or --from-obj")
@@ -985,6 +1031,9 @@ def main():
     box = tuple(args.box) if args.box else area
     out = args.out or os.path.join(project, "extracted", "thaw_maps", args.folder)
     os.makedirs(out, exist_ok=True)
+    for name in os.listdir(out):  # drop stale paks from an earlier build with another prefix
+        if name.endswith(".pak.wpc") and not name.startswith(args.prefix):
+            os.remove(os.path.join(out, name))
     print("output to:   ", out)
 
     raw = objects_from_obj(args.from_obj) if args.from_obj else objects_from_gta(args.gta, box)
@@ -1009,15 +1058,27 @@ def main():
     # looks at GTA's collision.
     extra_rails = [] if (args.no_rails or args.no_extras) else [
         [to_thaw(p, centre) for p in chain] for chain in gta_extras.wall_rails()]
-    budget = args.rail_budget - sum(len(c) for c in extra_rails)
+    budget = 0 if args.rail_pool > 0 else args.rail_budget - sum(len(c) for c in extra_rails)
+    rail_hi = args.rail_drop_max if args.rail_drop_max > 0 else 1.0e9
+    print("rail drop:    edges up to %s m%s" % (args.rail_drop_max if args.rail_drop_max > 0 else "no limit",
+                                                 "" if args.rail_drop_max > 0 else " (building / structure tops too)"))
     rails, found = ([], 0) if args.no_rails else find_rails(
-        [o for o in objs if not o.name.startswith("extra_")], budget)
-    rails = extra_rails + rails
+        [o for o in objs if not o.name.startswith("extra_")], budget, rail_hi)
+    rails = extra_rails + rails  # every real rail (with --rail-pool the finder ran with no budget)
     print("extras:       %d hand-made walls (gta_extras.py), %d rails along them" % (len(extras), len(extra_rails)))
     print("rails:        %d rails, %d rail nodes, %.0f m in all (found %d rails; longest kept, at most %s nodes)" % (
         len(rails), sum(len(r) for r in rails),
         sum(math.dist(r[k], r[k + 1]) for r in rails for k in range(len(r) - 1)) / K, found,
         args.rail_budget if args.rail_budget > 0 else "unlimited"))
+    pool_copy = os.path.join(project, "extracted", "thaw_maps", "_railpool")
+    if args.rail_pool > 0:
+        os.makedirs(pool_copy, exist_ok=True)
+        write_rail_csv(os.path.join(out, "all_rails.csv"), rails, 0)
+        write_rail_csv(os.path.join(pool_copy, "all_rails.csv"), rails, 0)
+        print("pool:         %d two-node rails = %d nodes parked below the map (the level's rails); all_rails.csv "
+              "has all %d rail nodes for the plugin" % (args.rail_pool, 2 * args.rail_pool,
+                                                        sum(len(r) for r in rails)))
+        rails = make_pool_rails(args.rail_pool)
     # 8.32: reTHAWed's memory pools these rails need (rethawed.ini [Memory]; its defaults:
     # RailPoint 20000, RailString 5000, HashItem 30000, CStruct 100000, CComponent 360000,
     # CVector 30000). Each rail node is one struct of about 8 items with 2 vectors (position,
@@ -1041,14 +1102,10 @@ def main():
     # rail, point, THAW position), so the THAW plugin can find reTHAWed's rail
     # list in memory by these exact positions.
     first = 1 + (len(objs) if not args.no_geometry_nodes else 0)
-    with open(os.path.join(out, "rails_in_map.csv"), "w", newline="\n") as f:
-        f.write("node,rail,point,x,y,z\n")
-        n = first
-        for r, chain in enumerate(rails):
-            for i, p in enumerate(chain):
-                f32 = struct.unpack("<3f", struct.pack("<3f", *p))  # exactly as stored in the level
-                f.write("%d,%d,%d,%.9g,%.9g,%.9g\n" % (n, r, i, f32[0], f32[1], f32[2]))
-                n += 1
+    write_rail_csv(os.path.join(out, "rails_in_map.csv"), rails, first)
+    # the plugin reads the loaded map's rails from this fixed path, whatever the map is called
+    os.makedirs(pool_copy, exist_ok=True)
+    write_rail_csv(os.path.join(pool_copy, "rails_in_map.csv"), rails, first)
     base = "worlds\\worldzones\\%s\\%s" % (args.prefix.lower(), args.prefix.lower())
     named_qb = "worlds\\worldzones\\%s\\%s.qb.wpc" % (args.prefix, args.prefix)
     # Order and parents as in Los Santos East: tex, scene (parent tex),
