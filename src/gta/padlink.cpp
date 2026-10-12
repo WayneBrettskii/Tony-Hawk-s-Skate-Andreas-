@@ -9,8 +9,11 @@
 #include "radio.h"
 #include "spawner.h"
 #include "skatemode.h"
+#include "CCamera.h"
+#include "../common/convert.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -60,6 +63,67 @@ short Clamp16(int v)
     return static_cast<short>(v);
 }
 
+// 8.32: reTHAWed moves the skater relative to ITS camera, but the player sees GTA's
+// camera, so "forward" can come out wrong. We learn the angle between the direction
+// the player pushes (GTA camera frame) and where the skater actually goes, and rotate
+// the left stick by it, so the stick matches the screen. Approximate: it settles while
+// moving and can lag during fast camera spins. GTA's camera is left exactly as it is.
+float g_camPhi = 0.0f;
+bool g_camPhiInit = false;
+
+void RotateStickForCamera(LinkBlock* link, short* axes)
+{
+    if (!link || link->gtaSkateMode != 1) {
+        g_camPhiInit = false;
+        return;
+    }
+    if (!(link->thawFlags & kSkaterValid)) return;
+    const LevelAlignment* align = FindLevelAlignment(static_cast<unsigned long>(link->thawLevelId));
+    if (!align) return;
+
+    float side = axes[kAxisLX] / 128.0f;
+    float fwd = -axes[kAxisLY] / 128.0f;
+
+    const float vx = link->thawVel[0] * align->scale;
+    const float vy = link->thawVel[2] * align->scale * align->ySign;
+    const float vlen = std::sqrt(vx * vx + vy * vy);
+    const float slen = std::sqrt(side * side + fwd * fwd);
+
+    const float fx = TheCamera.m_fCamFrontXNorm, fy = TheCamera.m_fCamFrontYNorm;
+    const float rx = fy, ry = -fx; // camera right
+
+    if (slen > 0.35f && vlen > 120.0f) {
+        const float ix = fx * fwd + rx * side;
+        const float iy = fy * fwd + ry * side;
+        const float ilen = std::sqrt(ix * ix + iy * iy);
+        if (ilen > 1e-3f) {
+            const float ax = vx / vlen, ay = vy / vlen;
+            const float idot = (ix / ilen) * ax + (iy / ilen) * ay;
+            const float icross = (ix / ilen) * ay - (iy / ilen) * ax;
+            const float phi = std::atan2(icross, idot);
+            if (!g_camPhiInit) {
+                g_camPhi = phi;
+                g_camPhiInit = true;
+            } else {
+                float d = phi - g_camPhi;
+                while (d > 3.14159265f) d -= 6.28318531f;
+                while (d < -3.14159265f) d += 6.28318531f;
+                g_camPhi += 0.03f * d;
+                while (g_camPhi > 3.14159265f) g_camPhi -= 6.28318531f;
+                while (g_camPhi < -3.14159265f) g_camPhi += 6.28318531f;
+            }
+        }
+    }
+    if (!g_camPhiInit) return;
+
+    // rotate the stick by -phi (keep its length)
+    const float c = std::cos(g_camPhi), s = std::sin(g_camPhi);
+    const float side2 = side * c + fwd * s;
+    const float fwd2 = -side * s + fwd * c;
+    axes[kAxisLX] = Clamp16(static_cast<int>(side2 * 128.0f));
+    axes[kAxisLY] = Clamp16(static_cast<int>(-fwd2 * 128.0f));
+}
+
 // Copy pad 0, as GTA just read it, into the link.
 void Publish()
 {
@@ -93,6 +157,8 @@ void Publish()
     in.axes[kAxisR2] = Clamp16(s.RightShoulder2);
     // 8.27: Back hold = radio wheel (right stick picks), tap = passed on to reTHAWed
     RadioFilterPad(in.buttons, in.axes);
+    // 8.32: rotate the left stick so reTHAWed moves the skater where GTA's camera points
+    RotateStickForCamera(link, in.axes);
 
     g_lastButtons.store(b, std::memory_order_relaxed);
     for (int i = 0; i < kAxisCount; ++i) g_lastAxes[i].store(in.axes[i], std::memory_order_relaxed);
@@ -292,6 +358,8 @@ void PadLinkSecond(PadLogFn log)
     lastPublished = published;
     lastFrames = frames;
     lastBlanked = blanked;
+    if (g_camPhiInit)
+        log("pad: camera offset learned: %.0f deg (the left stick is rotated to match GTA's camera)", g_camPhi * 57.29578f);
 }
 
 } // namespace mp::gta
