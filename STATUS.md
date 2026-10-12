@@ -1,11 +1,19 @@
-# WHERE WE LEFT OFF (2026-10-10 21:30)
+# WHERE WE LEFT OFF (2026-10-12 10:45)
 
 Whole map done (8.31). **Rails (8.32):** whole map = 101,404 rails / 245,951 nodes; 30,000 nodes froze
 reTHAWed after loading. User chose **R3, a rail pool** that follows the skater.
-R3a / R3a-2 done: reTHAWed's rail node records fully decoded. R3b test 1 (F5 moves one rail in front of
-the skater): moving works, but the grinds were on a real rail beside it (log). **R3b test 2 coded:** the
-test rail shows in GTA as a row of orange lights; the log says "ON THE TEST RAIL" / "GROUND IT".
-Waiting for: build, F5, grind along the lights. Then: the pool itself (R3b/R3c). After rails: water.
+R3a / R3a-2 done: reTHAWed's rail node records fully decoded. **R3b proven (user 2026-10-12):** a
+*moved* rail is grindable. F5's test rail (shown in GTA as 13 orange lights) was ground 10 of 182
+samples in test 1 ("GROUND IT": 0.0 from the rail, 0.0 above, 4->86% along it) and 10 more samples in
+test 2 (27->93%). reTHAWed keeps nothing that blocks grinding a relocated rail, so the pool can be
+built. **Next:** the pool itself — R3b (the map tool writes the full rail list and the level keeps a
+fixed ~9,000-node pool, parked below the map) and R3c (our plugin fills the pool with the GTA rails
+near the skater). **Whole-map pool tested 2026-10-12: it works** — 4,500 pool rails, 172-430 placed
+within 150 m as the skater moved; some rails that could not be ground before now can be. **Still missing
+(rail supply, not the pool):** long rails (3+ nodes, 25% of rail nodes) are skipped because the pool only
+places two-node rails; and ledges taller than ~1.6 m get no rail from the finder (so a wallride-top has
+nothing to grind). Next: fix the long rails, then the tall ledges. Then the extra sources (bridges, power
+lines, railroad tracks, Natas points). After rails: water.
 
 After the map is right (user requests 2026-10-10, not started, plan in DESIGN first):
 - grind, stall and skitch every GTA car

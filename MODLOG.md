@@ -2,12 +2,56 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.32 research: find reTHAWed's on-foot state (log only)
+
+**Changed:** new `src/thaw/statefind.{h,cpp}` (+ `main.cpp`, `CMakeLists.txt`): F3 while **on foot** and F4 while **on the board** dump the skater object's first 0x400 bytes, and each of its components' first 0x40 bytes, to `thaw.log`. Read only.
+
+**Why:** user 2026-10-12: GTA's camera should be moveable only while the skater is on foot in skate mode; nothing reads an on-foot/on-board state yet (the skater reader is position/velocity only), so we need to find the field.
+
+**Tested how:** builds clean with MSVC. Not run yet.
+
+**Result:** camera hunt so far (user 2026-10-12). The two dumps show the camera is not a field of the skater (identical skater position; only timers/pointers changed), so it is a separate object. Memory scans did not separate it either: restricted to near the skater only timers/pointers changed; a full scan found 52 "movers" that were all copies of the **skater's own position** (they move whenever he does) plus a scratch buffer. Rotating reTHAWed's camera apparently requires moving, which floods the scan with the skater's own data. Not solved. Next options: (a) a runtime-learned stick correction - infer the camera offset from how the skater's actual movement differs from the stick + GTA's camera - with no camera object needed; (b) leave it. Awaiting the user's choice.
+
+## [2026-10-12] 8.32 controls: keep GTA's camera (right stick) in skate / BMX mode
+
+**Changed:** `src/gta/padlink.cpp`: `BlankSafe(touched, camera)` now keeps the right stick in GTA's pad while the rest is blanked; `OurUpdatePads` passes the camera through in skate / BMX mode, except while the radio wheel is open. `src/gta/radio.cpp/.h`: new `RadioWheelIsOpen()`. `src/gta/skatemode.cpp`: the DisablePlayerControls bit (kOurControlBit) is no longer kept set during normal skate mode (only while waiting for reTHAWed to place its skater), because GTA's camera ignores the right stick while any such bit is set; the pad is blanked regardless, so CJ still gets no input.
+
+**Why:** user 2026-10-12: "not really able to move the camera around while on foot in skate mode"; asked to keep the skating side the same. reTHAWed still gets the right stick through the link, so its side is unchanged; only GTA's camera additionally receives it.
+
+**Tested how:** builds clean with MSVC. First attempt (right stick only) did not work: `gta.log` showed the right stick reaching the games (RX 125 etc.) but the camera still would not move, which points at the control bit. Second change (clear the bit) built. Not run in the game yet.
+
+**Result:** retest pending.
+
+## [2026-10-12] 8.32 R3c: the rail pool (map tool + plugin)
+
+**Changed:**
+- `tools/gta_to_thaw_map.py`: new `--rail-pool N` (DESIGN 8.32 R3c). With it the finder runs with no budget, every real rail is written to `all_rails.csv` (node,rail,point,x,y,z), and the level instead gets N two-node rails parked far below the map (`make_pool_rails`). Both csv files are also copied to the fixed `extracted/thaw_maps/_railpool/`, which the plugin reads whatever the map is called. The inline rail-csv writer is factored out as `write_rail_csv`. `_railpool/rails_in_map.csv` is now written for every map build.
+- `src/thaw/railscan.cpp/.h`: the scan now reads its targets from `_railpool/rails_in_map.csv` (was a hard-coded map folder). New `RailPoolTick`: on a pool map it builds the pool's 2-node rails from the block's own links, loads `_railpool/all_rails.csv` (2-node rails only; longer ones counted and skipped for now), and whenever the skater has moved 40 m copies the GTA rails within 150 m into the nearest pool slots (positions + boxes only, R3a-2), parking the rest far below and aside the map. It refuses to run if the level's 2-node rails don't match `_railpool/rails_in_map.csv`, so a normal map is left alone.
+- `src/thaw/main.cpp`: calls `RailPoolTick` each pass.
+
+**Why:** R3b (user 2026-10-12) proved a moved rail is grindable, so build the pool: the whole map can then be ground with only about 9,000 nodes loaded.
+
+**Tested how:** tool `py_compile` plus a pool build of East LS (`--rail-pool 4500`, prefix MPGTALSP): level script 9,037 nodes (1 + 36 geometry + 9,000 RailNode), `_railpool/all_rails.csv` 21,309 rail nodes. Plugin builds clean with MSVC. Not run in the game yet.
+
+**Result (test 1, user 2026-10-12 11:10): failed to start — my mistake, fixed.** The pool map was built with a new prefix (MPGTALSP, level ID 0xF2DCAF73), but the plugin only knows `load_MPGTALSE` = 0x9F014B98 (every one of our maps uses that prefix, including the whole-map build). So `inOurLevelNow` was false: no rail scan, and skate mode had no level alignment, which is what sent CJ "under the map" and made a flat road feel like a bowl. Fix: build the pool map with the normal prefix (MPGTALSE). Also parked the pool rails less extremely (about 150 m below the map instead of 1,500 m). Retest pending.
+
+**Result (test 2, whole-map pool, user 2026-10-12): the pool works.** `_railpool/all_rails.csv` has the whole map (101,425 rails / 246,032 nodes); the plugin loaded 92,467 two-node rails, found all 4,500 pool rails, and placed 172-430 rails of 4,500 slots within 150 m as the skater moved around (never near the limit). The user could grind rails that were not grindable before. Still missing, and both are rail *supply*, not the pool:
+- **(a) long rails (3+ nodes):** 8,958 of them (25% of all rail nodes, up to 116 nodes each) are skipped, because the pool only places two-node rails. So long kerbs / walls get no rail at all here — a visible gap versus the old map, whose rails were the *longest* ones.
+- **(b) ledges taller than about 1.6 m:** the map tool's rail finder refuses to make a rail where the drop is over `RAIL_DROP` (1.6 m), so the top of a high ledge has no rail to grind even with a wallride (user 2026-10-12).
+Next: fix (a) (long rails in the pool), then (b) (taller ledges in the finder).
+
+**Fix 3 (2026-10-12, builds; not run yet):** (a) the plugin now splits each long GTA rail (3+ nodes) into consecutive two-node pieces that **share their endpoints**, so the pool places the whole chain and a grind should carry along it the way a Tony Hawk rail does (if reTHAWed connects rails whose ends touch). (b) the map tool's `RAIL_DROP` upper bound is raised from 1.6 m to 5.0 m, so a wallride-top ledge gets a rail (roof edges stay above 5 m).
+
+**Fix 4 (2026-10-12, built; not run yet):** new map-tool option `--rail-drop-max M` (0 = no limit); the whole map now generates 193,945 rails / 443,029 nodes (was 147,329 / 343,976), so **building and structure tops** get rails (Tony Hawk style). A capacity check (grid sample of the map) found at most 3,460 rail pieces within 150 m anywhere — under the pool's 4,500 slots, so headroom remains. Note: no limit also adds some odd high rails (the highest is at 512 m — likely a mountain ridge); tune later if it feels wrong.
+
+**Fix 5 (2026-10-12, built; not run yet):** the pool now logs when the skater is on a placed rail (`rail pool: ON a placed rail (speed, pos)` / `left the placed rail`), so grinds that stop can be seen in `thaw.log` (user: a grind through bushes stopped at a palm). Data check: palms and round trees have no rails on them (0 of 298 `sm_veg_tree4`, 0 of 60 `veg_palmkb1`), while solid bushes/hedges/planters do (`sm_bushytree` 101/101, hedges, planters 26/41) — so a palm in a hedge line is a real gap in the rail.
+
 ## [2026-10-10] 8.32 R3b test 2: show the test rail in GTA, detect grinding it
 
 **Changed:** `src/common/link.h` (version 13: test rail ends + on flag), `src/thaw/railscan.cpp/.h`, `src/thaw/main.cpp`: F5 rail now 6 m ahead, 25 m long, 50 cm up; its ends go to GTA; the log marks samples with the skater on it and sums them up. New `src/gta/testrail.h/.cpp` (+ `main.cpp`, `CMakeLists.txt`): a row of 13 orange lights along the test rail while skate mode is on.
 **Why:** test 1 (user 21:07 "I was able to grind with f5"): the log shows the skater rolled under the invisible test rail and ground a real map rail ~4 m beside it, so the test didn't show yet whether a moved rail can be ground.
-**Tested how:** THAW and GTA files clang syntax-checked (Windows target, stand-in headers). Not run yet.
-**Result:** not tested yet.
+**Tested how:** THAW and GTA files clang syntax-checked (Windows target, stand-in headers). Built and run in the game 2026-10-12 (user).
+**Result (2026-10-12, user): PASSED — a moved rail is grindable.** The orange lights showed in GTA ("test rail: showing it in GTA ..."), F5 twice (rail moved, checksum 668276D2, no crash), and the log marks "ON THE TEST RAIL" 10 of 182 samples in test 1 = "GROUND IT" (0.0 from the rail, 0.0 above it, 4% -> 86% along it, speed 842-934) and 10 more samples in test 2 (27% -> 93%, speed 857; its 20 s summary line was not written: the game closed first). So reTHAWed keeps no hidden note of where rails are that would stop a relocated rail being ground: R3c (the rail pool) can go ahead. One user note: the test rail is placed from the skater's heading and does not snap to GTA ledges, as designed — that is the pool's job.
 
 ## [2026-10-10] 8.32 R3b test: F5 moves one rail in front of the skater
 
