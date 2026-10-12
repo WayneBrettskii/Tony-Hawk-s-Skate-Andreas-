@@ -71,6 +71,14 @@ PoseSample ReadPose(unsigned long skater);
 // Every bone (up to `max`); returns how many were read, -1 on a read failure.
 int ReadAllBones(unsigned long skater, BoneMatrix* out, int max);
 
+// 8.29 B9: every bone of any skeleton with the same layout (e.g. reTHAWed's
+// bike, found by FindBikeSkeleton); same space and maths as ReadAllBones.
+int ReadSkeletonBones(unsigned long skeleton, BoneMatrix* out, int max);
+
+// 8.29 B9 fix 1: the same skeleton's bones in its default (bind) pose (the bike:
+// fork straight), same space.
+int ReadSkeletonBind(unsigned long skeleton, BoneMatrix* out, int max);
+
 // THPS checksum of a name (CRC32 of the lower-case text, as the game uses).
 unsigned long NameChecksum(const char* name);
 

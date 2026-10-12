@@ -273,6 +273,35 @@ int ReadAllUnprotected(unsigned long skater, BoneMatrix* out, int max)
     return count;
 }
 
+// the bone in the skeleton's default (bind) pose: what BoneAt gives when the
+// current matrix is the identity
+void BindAt(unsigned long skel, int i, BoneMatrix& out)
+{
+    out.name = Read<unsigned long>(Read<unsigned long>(skel + kSkelBones) + i * kBoneInfoSize);
+    float bindInv[16];
+    const unsigned long bindArr = Read<unsigned long>(Read<unsigned long>(Read<unsigned long>(skel + kSkelBind) + 4) + 0x28);
+    ReadMatrix(bindArr + i * 64, bindInv);
+    InverseRigid(bindInv, out.m);
+}
+
+int ReadSkeletonBindUnprotected(unsigned long skel, BoneMatrix* out, int max)
+{
+    const int n = Read<int>(skel + kSkelCount);
+    if (n <= 0 || n > kMaxBones) return 0;
+    const int count = n > max ? max : n;
+    for (int i = 0; i < count; ++i) BindAt(skel, i, out[i]);
+    return count;
+}
+
+int ReadSkeletonUnprotected(unsigned long skel, BoneMatrix* out, int max)
+{
+    const int n = Read<int>(skel + kSkelCount);
+    if (n <= 0 || n > kMaxBones) return 0;
+    const int count = n > max ? max : n;
+    for (int i = 0; i < count; ++i) BoneAt(skel, i, out[i]);
+    return count;
+}
+
 const unsigned long* BodyChecksums()
 {
     static unsigned long sums[kBodyBoneCount] = {};
@@ -396,6 +425,24 @@ PoseSample ReadPose(unsigned long skater)
         s.exceptionCode = GetExceptionCode();
     }
     return s;
+}
+
+int ReadSkeletonBones(unsigned long skeleton, BoneMatrix* out, int max)
+{
+    __try {
+        return ReadSkeletonUnprotected(skeleton, out, max);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+int ReadSkeletonBind(unsigned long skeleton, BoneMatrix* out, int max)
+{
+    __try {
+        return ReadSkeletonBindUnprotected(skeleton, out, max);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
 }
 
 int ReadAllBones(unsigned long skater, BoneMatrix* out, int max)
