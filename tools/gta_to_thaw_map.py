@@ -499,6 +499,63 @@ def make_pool_rails(n):
     return out
 
 
+# ---- 8.32 source D: railroad tracks -------------------------------------------
+#
+# GTA ships its rail tracks as text node lists: data\Paths\tracks*.dat, each a
+# count then "x y z flag" lines. Each file is ONE smooth polyline: no turn in any
+# file is over 45 degrees, and the long jumps (up to 256 m) are dead-straight
+# stretches the game samples sparsely - not branches. So each file becomes one
+# rail. TRACK_JUMP is only a safety valve for an absurd jump.
+TRACK_JUMP = 400.0   # m (safety only; real files have none over 256 m)
+TRACK_GAUGE = 1.435  # m between the two steel rails
+
+
+def read_tracks(gta, centre):
+    """Rail chains from GTA's tracks*.dat: two rails per stretch, on the steel rails."""
+    out = []
+    folder = os.path.join(gta, "data", "Paths")
+    try:
+        names = [n for n in os.listdir(folder) if n.startswith("tracks") and n.endswith(".dat")]
+    except OSError:
+        return out
+    for name in sorted(names):
+        try:
+            lines = [l.split() for l in open(os.path.join(folder, name)) if l.strip()]
+        except OSError:
+            continue
+        if not lines:
+            continue
+        count = int(lines[0][0])
+        pts = [(float(a), float(b), float(c)) for a, b, c, *_ in lines[1:1 + count]]
+        run = []
+        for p in pts:
+            if run and math.dist(run[-1], p) > TRACK_JUMP:
+                if len(run) >= 2:
+                    out.append(run)
+                run = []
+            run.append(p)
+        if len(run) >= 2:
+            out.append(run)
+    # two rails per stretch, offset to the steel rails (perpendicular to the track)
+    half = TRACK_GAUGE * 0.5
+    chains = []
+    for run in out:
+        left, right = [], []
+        for i, p in enumerate(run):
+            a = run[i - 1] if i > 0 else run[0]
+            b = run[i + 1] if i + 1 < len(run) else run[-1]
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            l = math.hypot(dx, dy)
+            if l < 1e-6:
+                dx, dy, l = 1.0, 0.0, 1.0
+            lx, ly = -dy / l, dx / l
+            left.append((p[0] + lx * half, p[1] + ly * half, p[2]))
+            right.append((p[0] - lx * half, p[1] - ly * half, p[2]))
+        chains.append(left)
+        chains.append(right)
+    return [[to_thaw(p, centre) for p in chain] for chain in chains]
+
+
 def mark_vert(obj, centre):
     """Set FLAG_VERT on obj's faces that lie in a VERT_AREAS area, and
     FLAG_WALLRIDE on that area's vertical walls (as LSE does in the skatepark).
@@ -1065,6 +1122,12 @@ def main():
     rails, found = ([], 0) if args.no_rails else find_rails(
         [o for o in objs if not o.name.startswith("extra_")], budget, rail_hi)
     rails = extra_rails + rails  # every real rail (with --rail-pool the finder ran with no budget)
+    # 8.32 source D: a rail along each stretch of GTA's railroad tracks
+    track_rails = [] if (args.no_rails or not args.gta) else read_tracks(args.gta, centre)
+    rails = rails + track_rails
+    if track_rails:
+        print("tracks:       %d rails, %d nodes from GTA's tracks*.dat (data\\Paths)" % (
+            len(track_rails), sum(len(c) for c in track_rails)))
     print("extras:       %d hand-made walls (gta_extras.py), %d rails along them" % (len(extras), len(extra_rails)))
     print("rails:        %d rails, %d rail nodes, %.0f m in all (found %d rails; longest kept, at most %s nodes)" % (
         len(rails), sum(len(r) for r in rails),

@@ -2,6 +2,16 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.32 source D: a rail along GTA's railroad tracks
+
+**Changed:** `tools/gta_to_thaw_map.py`: new `read_tracks(gta, centre)`, called from `main` when not `--no-rails`, appended to the rail list (so it lands in the map's rails and in `all_rails.csv`). It reads `data\Paths\tracks*.dat` (text: a count, then `x y z flag` lines) and, per file, emits the whole node list as **one rail**, twice over: offset left and right by half the 1.435 m gauge so the rails sit on the **two steel rails** (not down the middle). Logs `tracks:  N rails, M nodes`.
+
+**Why:** user 2026-10-12: make railroad tracks grindable. GTA's track node lists are the exact rail lines; no model/DFF work needed.
+
+**Tested how / result:** first cut split each file at jumps over 50 m and put one rail down the centre — user: "major improvement" but short grinds and CJ ground "in the middle of the track". Analysis: no turn in any file exceeds 45 deg, and the big jumps are straight track sampled sparsely, so splitting was wrong. Now one continuous rail per file, doubled onto the two rails: `tracks: 8 rails, 3898 nodes`. Whole-map pool rebuilt; not run in the game yet.
+
+**Result:** retest pending. (Source C, wires, was deferred — see DESIGN 8.32: only 8 wire models, compressed geometry; the pylon/pole-top connection is the alternative to revisit.)
+
 ## [2026-10-12] 8.32: learn the camera offset; rotate the left stick to match GTA's camera
 
 **Changed:** `src/gta/padlink.cpp`: new `RotateStickForCamera`. While skate mode is on, it compares the direction the player pushes (rotated into GTA world by `TheCamera.m_fCamFrontXNorm/YNorm`) with the skater's actual movement direction (the link's `thawVel` mapped by `FindLevelAlignment`), learns the signed offset (low-passed), and rotates the left-stick value published to reTHAWed by it. GTA's camera is untouched. Logs `pad: camera offset learned: N deg` once a second.
