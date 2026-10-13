@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.34 GUI launcher
+
+**Changed:** `src/launcher/main.cpp` rewritten as a **Windows GUI app** (was a console app). The window has: a **Play** button, **four setup checks** shown green (OK) / red (with the reason), a **"Start reTHAWed minimised"** tick box, and an **"Open logs folder"** button. Play checks the setup, starts reTHAWed and loads the THAW plugin into it, starts **GTA San Andreas**, then closes reTHAWed (we started it) when GTA exits. The long work runs on a **background thread** so the window never freezes. The log now **appends** to `logs\launcher.log` with a run header. A hidden **`--selftest`** switch runs the checks and exits without starting anything. `CMakeLists.txt`: new `GTA_DIR` cache setting (default `D:/Games/GTA San Andreas`) + `MP_GTA_DIR`, `WIN32` subsystem, `shell32` link. `docs/DESIGN.md`: new section **8.34** (the plan, written before the code).
+
+**Why:** user 2026-10-12: "build a launcher with a gui that is easy for end users to understand" — one window, one button, both games (their choice out of the options offered).
+
+**Tested how:** ran `build\Release\my-passthrough-launcher.exe --selftest` → exit code 0, `launcher.log` shows all four checks OK, no game started. Launched the window and closed it after 3 s → `launcher.log` shows `launcher: Ready. Click Play to start.`, so the window, controls and checks all built.
+
+**Still broken / not tested:** the **Play path itself** (start reTHAWed, inject, start GTA, close reTHAWed) has **not been run yet** — not tested. **"Start reTHAWed minimised"** is a first guess (`SW_SHOWMINNOACTIVE`); if reTHAWed pauses when it is not on screen it could affect its rendering and the HUD copy — untested. The controller fix is still always on (section 11: make it a tick box).
+
+**Next:** the user runs the GUI once and plays; then read `logs\launcher.log` (and `logs\gta.log` / `logs\thaw.log`) for that run.
+
 ## [2026-10-12] 8.33 skitch: hold L1 near a moving car and be towed (first cut)
 
 **Changed:** `src/common/link.h`: link **version 15** (name `_v15`, size 1084) + `gtaSkitchValid`, `gtaSkitchPos[3]`, `gtaSkitchVel[3]`. `src/gta/cars.cpp` `CarTick`: while scanning cars it also remembers the nearest **MOVING** car (speed > 0.1, within the same range) and publishes its position and velocity in **THAW units** (no rail). `src/thaw/bmx.cpp`: `CarSkitchGameThread` — while **L1 is held** and that car is within 7 m, the skater's **velocity** (`+0xC8`) is set to the car's every game-thread call; his position is never touched. Called from `BmxGameThreadTick` before its 100 ms gate, so it runs every pad query. Logs `cars: skitching in N frames this second`.

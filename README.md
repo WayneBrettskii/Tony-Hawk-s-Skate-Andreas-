@@ -12,6 +12,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **plugin-sdk linked** (phase 0a-2b, tested 2026-10-07): built with `tools\build-plugin-sdk.ps1`; the plugin logs plugin-sdk's game version check: `GTA SA 1.0 US 'HoodLum'`.
 - **Hooks into GTA's loop** (phase 0a-2c, tested 2026-10-07): counts drawn frames and world updates per second. While playing: 60 and 60. Main menu: 0 and 0. Pause menu: 0 drawn, 60 world updates.
 - **Launcher starts reTHAWed** (phase 0b-1, tested 2026-10-07): `build\Release\my-passthrough-launcher.exe`; reTHAWed starts and exits normally, controller detected.
+- **GUI launcher** (2026-10-12; the window and the checks tested, **the Play path not tested yet**): the launcher is now a window — **Play** starts reTHAWed (with the plugin loaded) and then **GTA San Andreas**, and closes reTHAWed when GTA exits. It shows four **setup checks** in green / red, a **"start reTHAWed minimised"** tick, and an **"open logs folder"** button. `--selftest` runs the checks only (no game started): all four pass. `logs\launcher.log` now keeps every run.
 - **Our plugin runs inside reTHAWed** (phase 0b-2, tested 2026-10-07): the launcher loads `my-passthrough-thaw.dll` 0.3 s after start; it writes `logs\thaw.log` with a heartbeat. Tested on the menus only.
 
 - **Link between the two games** (phase 0c-1, tested 2026-10-07): both sides see each other's once-per-second beat through shared memory.

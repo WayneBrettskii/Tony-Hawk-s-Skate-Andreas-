@@ -75,13 +75,17 @@ target_link_libraries(thaw_plugin PRIVATE hid setupapi) # touchpad.cpp (temporar
 set(RETHAWED_DIR "D:/Games/reTHAWed" CACHE PATH "reTHAWed install folder (read only)")
 # 8.27 radio wheel: the GTA plugin reads reTHAWed's logo (ReTHAWed_NotifIcon.ico) from there at run time
 target_compile_definitions(gta_plugin PRIVATE "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"")
-add_executable(launcher src/launcher/main.cpp)
+
+# --- GUI launcher (8.34): one window, one Play button, starts both games ---
+set(GTA_DIR "D:/Games/GTA San Andreas" CACHE PATH "GTA San Andreas install folder (read only; the launcher starts gta_sa.exe)")
+add_executable(launcher WIN32 src/launcher/main.cpp)
 set_target_properties(launcher PROPERTIES
     OUTPUT_NAME "my-passthrough-launcher"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_compile_features(launcher PRIVATE cxx_std_17)
 target_compile_definitions(launcher PRIVATE
-    "MP_LOG_DIR=\"${MP_LOG_DIR}\"" "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"" UNICODE _UNICODE)
+    "MP_LOG_DIR=\"${MP_LOG_DIR}\"" "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"" "MP_GTA_DIR=\"${GTA_DIR}\"" UNICODE _UNICODE)
+target_link_libraries(launcher PRIVATE shell32) # ShellExecuteW (open the logs folder)
 add_dependencies(launcher thaw_plugin) # building the launcher also builds the plugin
 
 # --- Unit test for the THAW -> GTA conversion (src/common/convert.h) ---

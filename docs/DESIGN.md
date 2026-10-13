@@ -930,6 +930,46 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
 
 **Order:** C1 (data) → C2 (grind) and C3 (skitch); C4 later.
 
+### 8.34 GUI launcher (user 2026-10-12; plan)
+
+**Goal.** One window, one button, for people who are not us. Today's launcher is a
+black console window that starts reTHAWed and loads our THAW plugin into it; GTA is
+started by hand. An end user should instead get a small window with a **Play** button,
+a few **status lines**, and one or two options.
+
+**What Play does** (user's choice, 2026-10-12 — "both games, one click"):
+
+1. check the setup and show each result as a green OK or a red reason;
+2. start reTHAWed (paused, the sound fix, the controller environment) and load
+   `my-passthrough-thaw.dll` into it — exactly what the console launcher does now;
+3. start GTA San Andreas (`gta_sa.exe` in its own folder);
+4. stay open and show what is happening, then once both games have closed, be
+   ready to Play again.
+
+**On the window** (user's choice):
+
+- **Start reTHAWed hidden** — a tick box, so only GTA is on screen.
+- **Open logs folder** — a button, so a user can find the logs to report a problem.
+- **Status lines** — for reTHAWed (present + the expected 5.0.0.1 build),
+  `my-passthrough-thaw.dll` (next to the launcher), `my-passthrough.asi` (in GTA's
+  modloader folder), and `gta_sa.exe`. Red lines say what is missing.
+
+**How it is built (plain language).** A plain Windows window using the controls that
+are part of Windows itself (buttons, text, a tick box) — no new libraries, nothing to
+install, the same 32-bit MSVC build as the rest of the project. The slow work
+(starting a game and waiting for it) runs on a **background thread** and sends short
+notes back to the window, so the window never freezes. Everything is still written to
+`logs\launcher.log`, so a problem can be read afterwards even though the window is
+gone. A hidden `--selftest` switch does the checks and writes the log **without**
+starting anything, so the launcher can be tested without opening a game.
+
+**New build setting:** `GTA_DIR` (the folder holding `gta_sa.exe`), default
+`D:/Games/GTA San Andreas`. Read only; nothing is written into either game install
+(AGENTS.md rules 1 and 4).
+
+**Not doing yet:** no auto-update, no profiles, no graphics options. The controller
+mode (section 11) is a later tick box on this window.
+
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 
 **Asked:** the slow motion already works in GTA (CJ follows the skater, who moves slower), but it should also look like reTHAWed's: its screen effect. Not planned yet. To find first: how reTHAWed knows Focus is on (a flag or time scale we can read), and what its effect draws (probably a full-screen pass near the end of the frame; the H1 frame log taken during Focus will show it). Then choose: copy the effect's look in GTA with our own full-screen pass, or catch reTHAWed's. Sound (if Focus changes it) to check too.

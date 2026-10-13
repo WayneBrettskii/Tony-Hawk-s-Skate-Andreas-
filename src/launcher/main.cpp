@@ -1,40 +1,44 @@
-// my-passthrough launcher
+// my-passthrough launcher (GUI)
 //
-// Phase 0b-2: starts reTHAWed and loads our THAW plugin into it.
-// Steps, all written to logs\launcher.log (and the console):
-//   1. check D:\Games\reTHAWed\reTHAWed.exe exists and is the expected size
-//      (we never start THAW.exe, the retail exe with SecuROM; see AGENTS.md rule 5),
-//      and that our plugin my-passthrough-thaw.dll is next to this launcher
-//   2. start reTHAWed.exe from its own folder, like reTHAWed's launcher does
-//      (no updater, no start-up options)
-//   3. wait until reTHAWed's own code (rthw.dll) is loaded in the game, and log
-//      how long that took plus the list of loaded program files
-//   4. load our plugin into the game: copy its path into the game's memory and
-//      ask the game to run Windows' LoadLibraryW on it ("DLL injection").
-//      This adds our code; it changes no game files and no protection.
-//   5. wait for the game to close and log how it closed
+// What it does, in plain language (see docs/DESIGN.md, section 8.34):
+//   - a small window with a Play button, a few setup checks, a tick box and a
+//     button that opens the logs folder;
+//   - Play: check the setup, start reTHAWed and load our THAW plugin into it,
+//     start GTA San Andreas, then wait until the games are closed;
+//   - everything is written to logs\launcher.log, so a problem can be read
+//     afterwards even after the window is gone.
 //
-// Controller fix (2026-10-07): before starting reTHAWed, sets the SDL setting
-// SDL_GAMECONTROLLER_IGNORE_DEVICES in this launcher's own environment, which
-// reTHAWed inherits. reTHAWed reads controllers through SDL2, so it then ignores
-// the virtual Xbox 360 controller DualSenseX creates (045E:028E) and uses only
-// the real PS5 controller. Affects only reTHAWed started by this launcher; GTA
-// (GInput, which needs the virtual Xbox controller) and Windows are untouched.
-// Attempt 2: also sets SDL_JOYSTICK_RAWINPUT=0. In SDL 2.26.2 the "raw input"
-// way of reading controllers skips the ignore list, and that is how the virtual
-// controller still got in on attempt 1. The PS5 controller is read another way
-// (SDL's own PS5 support), so it is not affected.
+// The old console behaviour is kept behind a hidden --selftest switch: it runs
+// the checks and writes them to the log, starting nothing. That is how the
+// launcher is tested without opening a game.
 //
-// It only reads from the reTHAWed folder; it never writes there.
+// The game work itself is unchanged from the console launcher (phase 0b-2):
+//   1. reTHAWed.exe must exist and be the expected (5.0.0.1) size; we never run
+//      THAW.exe, the retail exe with SecuROM (AGENTS.md rule 5)
+//   2. start reTHAWed.exe from its own folder, paused, with the sound fix applied
+//      and the controller environment set (both inherited from us)
+//   3. wait until reTHAWed's own code (rthw.dll) is loaded
+//   4. load our plugin into it (LoadLibraryW on a thread inside the game - "DLL
+//      injection"; it changes no game files and no protection)
+//   5. start GTA San Andreas
+//   6. wait for the games to close; if GTA closes first, close reTHAWed (we
+//      started it)
+//
+// Controller fix (2026-10-07): before starting reTHAWed, sets SDL_GAMECONTROLLER_
+// IGNORE_DEVICES and SDL_JOYSTICK_RAWINPUT in this launcher's environment, which
+// reTHAWed inherits, so it ignores the virtual Xbox 360 controller DualSenseX
+// creates. GTA (GInput) is untouched. (Section 11: this should become a tick box.)
+//
+// It only reads from the game folders; it never writes there.
 
-// 8.27: also starts reTHAWed paused and, before it runs, lets its sound effects
-// keep playing behind other windows (PatchSoundFocus; in memory only).
-
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <tlhelp32.h>
+#include <shellapi.h>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <cwctype>
 #include <string>
 #include <vector>
@@ -45,12 +49,15 @@
 #ifndef MP_RETHAWED_DIR
 #error "MP_RETHAWED_DIR must be set by CMakeLists.txt"
 #endif
+#ifndef MP_GTA_DIR
+#error "MP_GTA_DIR must be set by CMakeLists.txt"
+#endif
 
 namespace {
 
 // reTHAWed 5.0.0.1's reTHAWed.exe on the user's PC (see MODLOG, phase 0b research).
 constexpr ULONGLONG kExpectedExeSize = 3612672;
-constexpr DWORD kRthwWaitMs = 30000;  // give up waiting for rthw.dll after 30 s
+constexpr DWORD kRthwWaitMs = 30000; // give up waiting for rthw.dll after 30 s
 constexpr DWORD kPollMs = 100;
 
 // SDL setting passed to reTHAWed: controllers SDL must not treat as game
@@ -64,10 +71,32 @@ constexpr wchar_t kSdlIgnoreValue[] = L"0x045E/0x028E";
 constexpr wchar_t kSdlRawInputVar[] = L"SDL_JOYSTICK_RAWINPUT";
 constexpr wchar_t kSdlRawInputValue[] = L"0";
 
+// Window controls.
+constexpr int kCheckCount = 4;
+constexpr int IDC_PLAY = 1001;
+constexpr int IDC_HIDDEN = 1002;
+constexpr int IDC_LOGS = 1003;
+constexpr int IDC_STATUS = 1004;
+constexpr int IDC_CHECK0 = 1010; // .. 1010 + kCheckCount - 1
+constexpr UINT WM_MP_STATUS = WM_APP + 1;
+constexpr UINT WM_MP_DONE = WM_APP + 2;
+
 FILE* g_log = nullptr;
 ULONGLONG g_startTick = 0;
 
-// One line to the log file and the console: "[seconds since start] text".
+CRITICAL_SECTION g_cs;
+std::wstring g_status;
+HWND g_hwnd = nullptr;
+HWND g_statusHwnd = nullptr;
+HWND g_playHwnd = nullptr;
+HWND g_hiddenHwnd = nullptr;
+HWND g_checkHwnd[kCheckCount] = {};
+bool g_checkOk[kCheckCount] = {};
+bool g_running = false;
+bool g_startHidden = false;
+
+// ---- logging (same shape as the console launcher) ----
+
 void Log(const char* fmt, ...)
 {
     char text[1024];
@@ -83,6 +112,16 @@ void Log(const char* fmt, ...)
         fflush(g_log);
     }
 }
+
+// Narrow text from wide text, for the log.
+std::string Narrow(const wchar_t* w)
+{
+    std::string s;
+    for (; w && *w; ++w) s += (*w < 128) ? static_cast<char>(*w) : '?';
+    return s;
+}
+
+// ---------- small helpers (unchanged from the console launcher) ----------
 
 // ASCII path from CMake (forward slashes) -> Windows path (backslashes).
 std::wstring Widen(const char* s)
@@ -183,22 +222,20 @@ bool InjectPlugin(HANDLE process, const std::wstring& dllPath)
     GetExitCodeThread(thread, &result);
     CloseHandle(thread);
     VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-    Log("inject: LoadLibraryW finished in %.3f s, result 0x%08lX (%s)",
-        (GetTickCount64() - t0) / 1000.0, result, result ? "loaded" : "FAILED");
+    Log("inject: LoadLibraryW finished in %.3f s, result 0x%08lX (%s)", (GetTickCount64() - t0) / 1000.0, result,
+        result ? "loaded" : "FAILED");
     return result != 0;
 }
 
 // 8.27 sound fix (user 21:40: no skate sounds while GTA is in front).
-// reTHAWed makes its sound-effect buffers (0x00443F3B..0x00443FBD, IDirectSound
-// CreateSoundBuffer) with flags 0x400B0 / 0x400E0: no DSBCAPS_GLOBALFOCUS
-// (0x8000), so Windows mutes them whenever another program is in front. Its
-// music uses another path and kept playing. We add 0x8000 to both flag values
-// in reTHAWed's memory (nothing on disk), checked byte for byte first.
-// reTHAWed.exe has no address randomisation (image base 0x400000, checked).
+// reTHAWed makes its sound-effect buffers with flags 0x400B0 / 0x400E0: no
+// DSBCAPS_GLOBALFOCUS (0x8000), so Windows mutes them whenever another program is
+// in front. We add 0x8000 to both flag values in reTHAWed's memory (nothing on
+// disk), checked byte for byte first. reTHAWed.exe has no address randomisation.
 void PatchSoundFocus(HANDLE process)
 {
     struct Site {
-        DWORD address;            // the instruction: mov dword [reg+0x18], flags
+        DWORD address; // the instruction: mov dword [reg+0x18], flags
         unsigned char expect[7];
         const char* what;
     };
@@ -209,7 +246,8 @@ void PatchSoundFocus(HANDLE process)
     for (const Site& s : sites) {
         unsigned char now[7] = {};
         SIZE_T got = 0;
-        if (!ReadProcessMemory(process, reinterpret_cast<LPCVOID>(static_cast<ULONG_PTR>(s.address)), now, sizeof(now), &got) ||
+        if (!ReadProcessMemory(process, reinterpret_cast<LPCVOID>(static_cast<ULONG_PTR>(s.address)), now, sizeof(now),
+                               &got) ||
             got != sizeof(now) || memcmp(now, s.expect, sizeof(now)) != 0) {
             Log("sound fix: code at 0x%08lX is not as expected; sound effects left as they are (%s)", s.address, s.what);
             continue;
@@ -217,7 +255,8 @@ void PatchSoundFocus(HANDLE process)
         const ULONG_PTR flagByte = static_cast<ULONG_PTR>(s.address) + 4; // second byte of the flags: 0x00 -> 0x80
         DWORD old = 0;
         if (!VirtualProtectEx(process, reinterpret_cast<LPVOID>(flagByte), 1, PAGE_EXECUTE_READWRITE, &old)) {
-            Log("sound fix: could not unlock 0x%08lX (Windows error %lu)", static_cast<unsigned long>(flagByte), GetLastError());
+            Log("sound fix: could not unlock 0x%08lX (Windows error %lu)", static_cast<unsigned long>(flagByte),
+                GetLastError());
             continue;
         }
         const unsigned char value = 0x80;
@@ -227,141 +266,424 @@ void PatchSoundFocus(HANDLE process)
         VirtualProtectEx(process, reinterpret_cast<LPVOID>(flagByte), 1, old, &tmp);
         FlushInstructionCache(process, reinterpret_cast<LPCVOID>(flagByte), 1);
         if (ok && written == 1)
-            Log("sound fix: %s now keep playing behind other windows (global focus added at 0x%08lX)", s.what, s.address);
+            Log("sound fix: %s now keep playing behind other windows (global focus added at 0x%08lX)", s.what,
+                s.address);
         else
-            Log("sound fix: could not write 0x%08lX (Windows error %lu)", static_cast<unsigned long>(flagByte), GetLastError());
+            Log("sound fix: could not write 0x%08lX (Windows error %lu)", static_cast<unsigned long>(flagByte),
+                GetLastError());
     }
 }
 
-int Run()
+// ---------- the setup checks ----------
+
+struct SetupCheck {
+    std::wstring label;
+    bool ok = false;
+    std::wstring note; // why it failed
+};
+
+// Path of our GTA plugin (in GTA's Mod Loader folder).
+std::wstring GtaPluginPath()
+{
+    return Widen(MP_GTA_DIR) + L"\\modloader\\my-passthrough\\my-passthrough.asi";
+}
+
+std::vector<SetupCheck> RunChecks()
+{
+    std::vector<SetupCheck> out;
+    out.reserve(kCheckCount);
+
+    // 1. reTHAWed.exe, present and the expected version.
+    {
+        SetupCheck c{L"reTHAWed 5.0.0.1 found", false, L""};
+        const std::wstring exe = Widen(MP_RETHAWED_DIR) + L"\\reTHAWed.exe";
+        WIN32_FILE_ATTRIBUTE_DATA info = {};
+        if (!GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &info)) {
+            c.note = L"not found: " + exe;
+        } else {
+            const ULONGLONG size = (static_cast<ULONGLONG>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+            if (size != kExpectedExeSize)
+                c.note = L"wrong build (" + std::to_wstring(size) + L" bytes, expected " +
+                         std::to_wstring(kExpectedExeSize) + L")";
+            else
+                c.ok = true;
+        }
+        out.push_back(c);
+    }
+    // 2. our plugin next to the launcher.
+    {
+        SetupCheck c{L"reTHAWed plugin (my-passthrough-thaw.dll)", false, L""};
+        const std::wstring dll = PluginPath();
+        if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES)
+            c.note = L"not found next to the launcher: " + dll;
+        else
+            c.ok = true;
+        out.push_back(c);
+    }
+    // 3. our plugin in GTA's Mod Loader folder.
+    {
+        SetupCheck c{L"GTA plugin (my-passthrough.asi)", false, L""};
+        const std::wstring asi = GtaPluginPath();
+        if (GetFileAttributesW(asi.c_str()) == INVALID_FILE_ATTRIBUTES)
+            c.note = L"not found: " + asi;
+        else
+            c.ok = true;
+        out.push_back(c);
+    }
+    // 4. GTA San Andreas.
+    {
+        SetupCheck c{L"GTA San Andreas (gta_sa.exe)", false, L""};
+        const std::wstring exe = Widen(MP_GTA_DIR) + L"\\gta_sa.exe";
+        if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES)
+            c.note = L"not found: " + exe;
+        else
+            c.ok = true;
+        out.push_back(c);
+    }
+    return out;
+}
+
+// --selftest: write the checks to the log and stop. Starts nothing.
+int RunSelfTest()
+{
+    const std::vector<SetupCheck> checks = RunChecks();
+    bool all = true;
+    for (const SetupCheck& c : checks) {
+        Log("check: [%s] %s%s", c.ok ? "OK" : "--", Narrow(c.label.c_str()).c_str(),
+            c.note.empty() ? "" : (" - " + Narrow(c.note.c_str())).c_str());
+        if (!c.ok) all = false;
+    }
+    Log("selftest: %s", all ? "all checks passed" : "one or more checks FAILED");
+    return all ? 0 : 1;
+}
+
+// ---------- the window ----------
+
+void SetStatus(const wchar_t* text)
+{
+    Log("launcher: %s", Narrow(text).c_str());
+    EnterCriticalSection(&g_cs);
+    g_status = text;
+    LeaveCriticalSection(&g_cs);
+    if (g_hwnd) PostMessageW(g_hwnd, WM_MP_STATUS, 0, 0);
+}
+
+void RefreshChecks()
+{
+    const std::vector<SetupCheck> checks = RunChecks();
+    for (int i = 0; i < kCheckCount && i < static_cast<int>(checks.size()); ++i) {
+        const SetupCheck& c = checks[i];
+        g_checkOk[i] = c.ok;
+        std::wstring text = (c.ok ? L"OK   " : L"--   ") + c.label;
+        if (!c.ok && !c.note.empty()) text += L"   (" + c.note + L")";
+        SetWindowTextW(g_checkHwnd[i], text.c_str());
+        InvalidateRect(g_checkHwnd[i], nullptr, TRUE);
+    }
+}
+
+// One line of the launch sequence, run on the worker thread.
+void RunSequence()
 {
     const std::wstring gameDir = Widen(MP_RETHAWED_DIR);
     const std::wstring exePath = gameDir + L"\\reTHAWed.exe";
-    Log("my-passthrough launcher: phase 0b-2 (start reTHAWed, load our THAW plugin)");
-    Log("game folder: %ls", gameDir.c_str());
-
-    // 1. Check the exe.
-    WIN32_FILE_ATTRIBUTE_DATA info = {};
-    if (!GetFileAttributesExW(exePath.c_str(), GetFileExInfoStandard, &info)) {
-        Log("ERROR: cannot find %ls (Windows error %lu). Stopping.", exePath.c_str(), GetLastError());
-        return 1;
-    }
-    const ULONGLONG size = (static_cast<ULONGLONG>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
-    if (size != kExpectedExeSize) {
-        Log("ERROR: reTHAWed.exe is %llu bytes, expected %llu (reTHAWed 5.0.0.1). "
-            "Was reTHAWed updated? Stopping.", size, kExpectedExeSize);
-        return 1;
-    }
-    Log("reTHAWed.exe: %llu bytes: MATCH", size);
-
     const std::wstring dllPath = PluginPath();
-    if (GetFileAttributesW(dllPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        Log("ERROR: our plugin is missing: %ls (Windows error %lu). Rebuild. Stopping.",
-            dllPath.c_str(), GetLastError());
-        return 1;
-    }
-    Log("our plugin: %ls", dllPath.c_str());
 
-    // Controller fix: reTHAWed inherits this launcher's environment.
+    SetStatus(L"Setting up the controller...");
     if (SetEnvironmentVariableW(kSdlIgnoreVar, kSdlIgnoreValue))
-        Log("controller fix: %ls=%ls (reTHAWed will ignore Xbox 360 controllers, incl. DualSenseX's virtual one)",
+        Log("controller fix: %ls=%ls (reTHAWed ignores Xbox 360 controllers, incl. DualSenseX's virtual one)",
             kSdlIgnoreVar, kSdlIgnoreValue);
-    else
-        Log("controller fix: could not set %ls (Windows error %lu); reTHAWed starts without it",
-            kSdlIgnoreVar, GetLastError());
     if (SetEnvironmentVariableW(kSdlRawInputVar, kSdlRawInputValue))
         Log("controller fix: %ls=%ls (SDL's raw input controller reading off)", kSdlRawInputVar, kSdlRawInputValue);
-    else
-        Log("controller fix: could not set %ls (Windows error %lu)", kSdlRawInputVar, GetLastError());
 
-    // 2. Start it from its own folder (paused, for the sound fix below).
-    std::wstring cmdLine = L"\"" + exePath + L"\"";
+    SetStatus(g_startHidden ? L"Starting reTHAWed (minimised)..." : L"Starting reTHAWed...");
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
+    if (g_startHidden) {
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_SHOWMINNOACTIVE;
+    }
+    std::wstring cmdLine = L"\"" + exePath + L"\"";
     PROCESS_INFORMATION pi = {};
     if (!CreateProcessW(exePath.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr,
                         gameDir.c_str(), &si, &pi)) {
-        Log("ERROR: could not start reTHAWed.exe (Windows error %lu). Stopping.", GetLastError());
-        return 1;
+        Log("ERROR: could not start reTHAWed.exe (Windows error %lu)", GetLastError());
+        SetStatus(L"Could not start reTHAWed. See the logs folder.");
+        return;
     }
     const ULONGLONG launchTick = GetTickCount64();
     Log("started reTHAWed.exe (paused), process id %lu", pi.dwProcessId);
-    // 8.27 sound fix, before any of reTHAWed's code runs: its sound effects get
-    // DirectSound's "global focus" flag, so they keep playing behind GTA.
     PatchSoundFocus(pi.hProcess);
     if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1))
         Log("ERROR: could not resume reTHAWed (Windows error %lu)", GetLastError());
-    else
-        Log("reTHAWed running");
 
-    // 3. Wait for rthw.dll.
+    // Wait for reTHAWed's own code (rthw.dll).
+    SetStatus(L"Waiting for reTHAWed to come up...");
     std::vector<std::wstring> modules;
     bool found = false;
-    unsigned listFailures = 0;
     while (GetTickCount64() - launchTick < kRthwWaitMs) {
         if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
             DWORD code = 0;
             GetExitCodeProcess(pi.hProcess, &code);
-            Log("ERROR: reTHAWed closed before rthw.dll was seen (exit code %lu).", code);
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
-            return 1;
+            Log("ERROR: reTHAWed closed before rthw.dll was seen (exit code %lu)", code);
+            break;
         }
-        if (!ListModules(pi.dwProcessId, modules)) {
-            ++listFailures;
-        } else if (HasModule(modules, L"rthw.dll")) {
+        if (ListModules(pi.dwProcessId, modules) && HasModule(modules, L"rthw.dll")) {
             found = true;
             break;
         }
         Sleep(kPollMs);
     }
-    const double waitSecs = (GetTickCount64() - launchTick) / 1000.0;
-    if (listFailures) Log("(module list not available yet %u times while starting; normal)", listFailures);
     if (!found) {
-        Log("ERROR: rthw.dll not seen within %.1f s. reTHAWed is left running; check it.", waitSecs);
-    } else {
-        Log("rthw.dll found %.3f s after start; %zu program files loaded:", waitSecs, modules.size());
-        for (const auto& m : modules) Log("  module: %ls", m.c_str());
+        Log("ERROR: rthw.dll not seen within %u ms; closing reTHAWed again", kRthwWaitMs);
+        SetStatus(L"reTHAWed did not start properly. See the logs folder.");
+        TerminateProcess(pi.hProcess, 0);
+        WaitForSingleObject(pi.hProcess, 5000);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return;
+    }
+    Log("rthw.dll found %.3f s after start", (GetTickCount64() - launchTick) / 1000.0);
 
-        // 4. Load our plugin, then confirm it shows up in the game's module list.
-        if (InjectPlugin(pi.hProcess, dllPath)) {
-            if (ListModules(pi.dwProcessId, modules) && HasModule(modules, L"my-passthrough-thaw.dll"))
-                Log("confirmed: my-passthrough-thaw.dll is loaded in reTHAWed (%zu program files now)",
-                    modules.size());
-            else
-                Log("WARNING: plugin reported loaded but is not in the module list");
-        } else {
-            Log("ERROR: our plugin was not loaded. reTHAWed keeps running without it.");
-            found = false; // report failure as the launcher's result
-        }
+    SetStatus(L"Loading the plugin into reTHAWed...");
+    if (InjectPlugin(pi.hProcess, dllPath)) {
+        if (ListModules(pi.dwProcessId, modules) && HasModule(modules, L"my-passthrough-thaw.dll"))
+            Log("confirmed: my-passthrough-thaw.dll is loaded in reTHAWed");
+        else
+            Log("WARNING: plugin reported loaded but is not in the module list");
+    } else {
+        Log("ERROR: our plugin was not loaded; reTHAWed keeps running without it");
+        SetStatus(L"The plugin did not load into reTHAWed. See the logs folder.");
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return;
     }
 
-    // 5. Wait for the game to close.
-    Log("waiting for reTHAWed to close...");
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD exitCode = 0;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-    Log("reTHAWed closed after %.1f s, exit code %lu", (GetTickCount64() - launchTick) / 1000.0, exitCode);
+    // Start GTA San Andreas.
+    const std::wstring gtaDir = Widen(MP_GTA_DIR);
+    const std::wstring gtaExe = gtaDir + L"\\gta_sa.exe";
+    SetStatus(L"Starting GTA San Andreas...");
+    std::wstring gtaCmd = L"\"" + gtaExe + L"\"";
+    STARTUPINFOW gsi = {};
+    gsi.cb = sizeof(gsi);
+    PROCESS_INFORMATION gp = {};
+    if (!CreateProcessW(gtaExe.c_str(), gtaCmd.data(), nullptr, nullptr, FALSE, 0, nullptr, gtaDir.c_str(), &gsi, &gp)) {
+        Log("ERROR: could not start gta_sa.exe (Windows error %lu)", GetLastError());
+        SetStatus(L"Could not start GTA San Andreas. See the logs folder.");
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return;
+    }
+    Log("started gta_sa.exe, process id %lu", gp.dwProcessId);
+    SetStatus(L"Both games are running. Close GTA when you are done.");
+
+    // Wait for GTA, then close reTHAWed (we started it, and it may be hidden).
+    WaitForSingleObject(gp.hProcess, INFINITE);
+    DWORD gtaCode = 0;
+    GetExitCodeProcess(gp.hProcess, &gtaCode);
+    Log("gta_sa.exe closed, exit code %lu", gtaCode);
+    CloseHandle(gp.hThread);
+    CloseHandle(gp.hProcess);
+
+    if (WaitForSingleObject(pi.hProcess, 2000) == WAIT_TIMEOUT) {
+        SetStatus(L"Closing reTHAWed...");
+        Log("reTHAWed still running 2 s after GTA closed; closing it (we started it)");
+        TerminateProcess(pi.hProcess, 0);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    DWORD thawCode = 0;
+    GetExitCodeProcess(pi.hProcess, &thawCode);
+    Log("reTHAWed closed, exit code %lu", thawCode);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    return found ? 0 : 1;
+
+    SetStatus(L"Done. Click Play to start again.");
+}
+
+DWORD WINAPI WorkerThread(LPVOID)
+{
+    RunSequence();
+    if (g_hwnd) PostMessageW(g_hwnd, WM_MP_DONE, 0, 0);
+    return 0;
+}
+
+HFONT g_font = nullptr;
+HFONT g_fontBold = nullptr;
+HFONT g_fontTitle = nullptr;
+
+HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int id, HFONT font)
+{
+    HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, g_hwnd,
+                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+    if (c && font) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    return c;
+}
+
+void LayoutControls()
+{
+    MakeControl(L"STATIC", L"my-passthrough", SS_LEFT, 20, 16, 480, 30, -1, g_fontTitle);
+    MakeControl(L"STATIC", L"Skate in GTA San Andreas with reTHAWed's skating.", SS_LEFT, 20, 50, 480, 20, -1,
+                g_font);
+    MakeControl(L"STATIC", L"Setup:", SS_LEFT, 20, 82, 480, 18, -1, g_fontBold);
+    for (int i = 0; i < kCheckCount; ++i)
+        g_checkHwnd[i] = MakeControl(L"STATIC", L"...", SS_LEFT, 28, 104 + i * 20, 470, 18, IDC_CHECK0 + i, g_font);
+    g_hiddenHwnd = MakeControl(L"BUTTON", L"Start reTHAWed minimised (only GTA on screen)",
+                               BS_AUTOCHECKBOX | WS_TABSTOP, 24, 196, 470, 22, IDC_HIDDEN, g_font);
+    MakeControl(L"STATIC", L"Status:", SS_LEFT, 20, 228, 480, 18, -1, g_fontBold);
+    g_statusHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 28, 248, 470, 60, IDC_STATUS, g_font);
+    g_playHwnd = MakeControl(L"BUTTON", L"Play", BS_PUSHBUTTON | WS_TABSTOP, 24, 320, 240, 46, IDC_PLAY, g_fontBold);
+    MakeControl(L"BUTTON", L"Open logs folder", BS_PUSHBUTTON | WS_TABSTOP, 280, 330, 200, 28, IDC_LOGS, g_font);
+}
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_CREATE:
+        g_hwnd = hwnd;
+        LayoutControls();
+        RefreshChecks();
+        SetStatus(L"Ready. Click Play to start.");
+        return 0;
+
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        HWND ctl = reinterpret_cast<HWND>(lParam);
+        for (int i = 0; i < kCheckCount; ++i) {
+            if (ctl == g_checkHwnd[i]) {
+                SetTextColor(dc, g_checkOk[i] ? RGB(0, 120, 0) : RGB(190, 0, 0));
+                SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
+                return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+            }
+        }
+        SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+    }
+
+    case WM_MP_STATUS: {
+        EnterCriticalSection(&g_cs);
+        const std::wstring s = g_status;
+        LeaveCriticalSection(&g_cs);
+        if (g_statusHwnd) SetWindowTextW(g_statusHwnd, s.c_str());
+        return 0;
+    }
+
+    case WM_MP_DONE:
+        g_running = false;
+        if (g_playHwnd) EnableWindow(g_playHwnd, TRUE);
+        return 0;
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDC_PLAY: {
+            if (g_running) break;
+            bool ok = true;
+            for (int i = 0; i < kCheckCount; ++i)
+                if (!g_checkOk[i]) ok = false;
+            if (!ok) {
+                SetStatus(L"Some setup checks failed (red lines above). Fix those first.");
+                break;
+            }
+            g_startHidden = (IsDlgButtonChecked(hwnd, IDC_HIDDEN) == BST_CHECKED);
+            g_running = true;
+            if (g_playHwnd) EnableWindow(g_playHwnd, FALSE);
+            SetStatus(L"Starting...");
+            CloseHandle(CreateThread(nullptr, 0, WorkerThread, nullptr, 0, nullptr));
+            break;
+        }
+        case IDC_LOGS: {
+            const std::wstring dir = Widen(MP_LOG_DIR);
+            ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        }
+        default:
+            break;
+        }
+        return 0;
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+int RunGui(HINSTANCE inst)
+{
+    g_font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    g_fontBold = CreateFontW(-12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    g_fontTitle = CreateFontW(-20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+    wc.lpszClassName = L"MyPassthroughLauncher";
+    if (!RegisterClassExW(&wc)) {
+        Log("ERROR: could not register the window class (Windows error %lu)", GetLastError());
+        return 1;
+    }
+
+    RECT rect = {0, 0, 520, 390};
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    AdjustWindowRect(&rect, style, FALSE);
+
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"my-passthrough", style, CW_USEDEFAULT, CW_USEDEFAULT,
+                                rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, inst, nullptr);
+    if (!hwnd) {
+        Log("ERROR: could not create the window (Windows error %lu)", GetLastError());
+        return 1;
+    }
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(hwnd, &msg)) { // Tab between the controls
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    return 0;
+}
+
+bool HasArg(const wchar_t* arg)
+{
+    const wchar_t* line = GetCommandLineW();
+    return line && wcsstr(line, arg) != nullptr;
 }
 
 } // namespace
 
-
-int main()
+int APIENTRY wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
 {
     g_startTick = GetTickCount64();
+    InitializeCriticalSection(&g_cs);
+
     const std::wstring logDir = Widen(MP_LOG_DIR);
     CreateDirectoryW(logDir.c_str(), nullptr); // fine if it already exists
     const std::wstring logPath = logDir + L"\\launcher.log";
-    if (_wfopen_s(&g_log, logPath.c_str(), L"w") != 0) {
+    // Append, with a run header, so a user can send us one file with the history.
+    if (_wfopen_s(&g_log, logPath.c_str(), L"a") == 0 && g_log) {
+        SYSTEMTIME st = {};
+        GetLocalTime(&st);
+        fprintf(g_log, "\n===== launcher run %04u-%02u-%02u %02u:%02u:%02u =====\n", st.wYear, st.wMonth, st.wDay,
+                st.wHour, st.wMinute, st.wSecond);
+        fflush(g_log);
+    } else {
         g_log = nullptr;
-        printf("warning: could not open %ls; logging to this window only\n", logPath.c_str());
+        printf("warning: could not open %ls\n", logPath.c_str());
     }
 
-    const int result = Run();
+    const int result = HasArg(L"--selftest") ? RunSelfTest() : RunGui(inst);
     if (g_log) fclose(g_log);
     return result;
 }
