@@ -257,7 +257,9 @@ float g_skitchCj[3] = {}, g_skitchCar[3] = {}; // last skater / published car po
 
 void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
 {
-    if (!link || !skater || link->gtaSkateMode != 1) return;
+    if (!link) return;
+    link->thawSkitching = 0; // set again below while a tow is happening
+    if (!skater || link->gtaSkateMode != 1) return;
     InputShared in;
     if (!ReadInputShared(link, in) || !(in.buttons & kBtnL1)) return;
     ++g_skitchL1;
@@ -277,10 +279,29 @@ void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
         // so this is just a sanity guard (about 80 m) against a stale or torn read.
         if (d2 > 1.0e7f) return;
         ++g_skitchNear;
+        // Hold him behind the car: match the car's velocity and add a spring towards a
+        // point just behind it, so he does not drift into the car (or wander off) the way
+        // a plain velocity match let him. THAW units are inches: 3.2 m is ~126 units.
+        const float kBack = 126.0f;    // target ~3.2 m behind the car's origin
+        const float kGain = 2.0f;      // spring, 1/s
+        const float kMaxCorr = 500.0f; // cap the correction (~12 m/s)
         float* v = reinterpret_cast<float*>(skater + 0xC8);
-        v[0] = cv[0];
-        v[1] = cv[1];
-        v[2] = cv[2];
+        const float fl = sqrtf(cv[0] * cv[0] + cv[1] * cv[1] + cv[2] * cv[2]);
+        if (fl > 1.0f) {
+            float fwd[3] = {cv[0] / fl, cv[1] / fl, cv[2] / fl};
+            float corr[3];
+            for (int k = 0; k < 3; ++k) corr[k] = (cp[k] - fwd[k] * kBack - p[k]) * kGain;
+            corr[1] = 0.0f; // horizontal follow only: keep his own height
+            const float cm = sqrtf(corr[0] * corr[0] + corr[1] * corr[1] + corr[2] * corr[2]);
+            if (cm > kMaxCorr) {
+                const float s = kMaxCorr / cm;
+                for (int k = 0; k < 3; ++k) corr[k] *= s;
+            }
+            for (int k = 0; k < 3; ++k) v[k] = cv[k] + corr[k];
+        } else {
+            for (int k = 0; k < 3; ++k) v[k] = cv[k];
+        }
+        link->thawSkitching = 1; // tell GTA: leave his spot alone while this lasts
         ++g_skitchFrames;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }

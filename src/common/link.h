@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 15;         // ... 14: car roof rails (8.33); 15: skitch (8.33)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v15";
+constexpr LONG kLinkVersion = 16;         // ... 15: skitch (8.33); 16: skitching flag (8.33)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v16";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -203,8 +203,13 @@ struct LinkBlock {
     volatile LONG gtaSkitchValid;
     volatile float gtaSkitchPos[3];
     volatile float gtaSkitchVel[3];
+    // ---- 8.33 (version 16), written by the THAW plugin: 1 while it is skitching a
+    // moving car. GTA then leaves CJ's spot alone (no car push-out, no car-hit bail):
+    // the whole point is to travel with the car, and the push-out was shoving him
+    // about inside it.
+    volatile LONG thawSkitching;
 };
-static_assert(sizeof(LinkBlock) == 1084, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 1088, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {

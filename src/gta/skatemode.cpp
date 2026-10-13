@@ -732,7 +732,10 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     // 8.33 C5: a fast car hit CJ -> he bails. Skate mode goes off so GTA's own
     // physics knocks him over (while we drive him he would just shove the car),
     // and it is requested again after he has had a moment to get up.
-    if (FastCarOnCj(ped, log)) {
+    // 8.33 (link v16): while reTHAWed is towing CJ along a moving car, leave his spot
+    // alone - no car-hit bail and no car push-out: he is meant to travel with the car,
+    // and the push-out was shoving him about inside it.
+    if (link->thawSkitching != 1 && FastCarOnCj(ped, log)) {
         log("skate mode: a fast car hit CJ: bailing (skate mode off; back on once he is up)");
         g_bailResumeAt = GetTickCount64() + 3500;
         TurnOff(ped, pad, link, log, "hit by a car");
@@ -835,8 +838,9 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         ++g.clamps;
     }
 
-    // 8.33: keep CJ out of the cars (they are solid to him)
-    PushOutOfCars(t, log);
+    // 8.33: keep CJ out of the cars (they are solid to him) - unless reTHAWed is
+    // towing him along one, where being against / inside it is the point.
+    if (link->thawSkitching != 1) PushOutOfCars(t, log);
 
     ped->SetPosn(CVector(t.x, t.y, t.z));
     ped->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
