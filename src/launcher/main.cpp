@@ -101,6 +101,7 @@ HWND g_playHwnd = nullptr;
 HWND g_hiddenHwnd = nullptr;
 HWND g_checkHwnd[kCheckCount] = {};
 bool g_checkOk[kCheckCount] = {};
+bool g_checkWarn[kCheckCount] = {};
 bool g_running = false;
 bool g_startHidden = false;
 
@@ -399,8 +400,9 @@ void PatchSoundFocus(HANDLE process)
 
 struct SetupCheck {
     std::wstring label;
-    bool ok = false;
-    std::wstring note; // why it failed
+    bool ok = false;   // true = not a failure (a warning still counts as ok)
+    bool warn = false; // worth knowing, but does NOT stop Play
+    std::wstring note; // why it failed, or what the warning is
 };
 
 // Path of our GTA plugin (in GTA's Mod Loader folder).
@@ -416,24 +418,38 @@ std::vector<SetupCheck> RunChecks()
 
     // 1. reTHAWed.exe, present and the expected version.
     {
-        SetupCheck c{L"reTHAWed 5.0.0.1 found", false, L""};
+        SetupCheck c{L"reTHAWed 5.0.0.1", false, false, L""};
         const std::wstring exe = g_rethawedDir + L"\\reTHAWed.exe";
         WIN32_FILE_ATTRIBUTE_DATA info = {};
         if (!GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &info)) {
             c.note = L"not found: " + exe;
         } else {
             const ULONGLONG size = (static_cast<ULONGLONG>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
-            if (size != kExpectedExeSize)
-                c.note = L"wrong build (" + std::to_wstring(size) + L" bytes, expected " +
-                         std::to_wstring(kExpectedExeSize) + L")";
-            else
+            if (size != kExpectedExeSize) {
+                // 8.43: a WARNING, not a refusal (user 2026-10-13: "let them try to launch at
+                // least, maybe it will work"). The size is only a guess that this is the build we
+                // were written against; if it is a different one the plugin's code checks say
+                // exactly what moved, in thaw.log. So Play is allowed through.
+                c.ok = true;   // not a failure
+                c.warn = true; // but say so
+                c.note = L"your copy is a different version - trying it anyway";
+                static bool told = false;
+                if (!told) {
+                    told = true;
+                    Log("launcher: reTHAWed.exe is %llu bytes, but this mod was written against 5.0.0.1 "
+                        "(%llu bytes) - letting it start, and the plugin will report any code it does not "
+                        "recognise",
+                        size, kExpectedExeSize);
+                }
+            } else {
                 c.ok = true;
+            }
         }
         out.push_back(c);
     }
     // 2. our plugin next to the launcher.
     {
-        SetupCheck c{L"reTHAWed plugin (SkateAndreas-thaw.dll)", false, L""};
+        SetupCheck c{L"reTHAWed plugin (SkateAndreas-thaw.dll)", false, false, L""};
         const std::wstring dll = PluginPath();
         if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not found next to the launcher: " + dll;
@@ -443,7 +459,7 @@ std::vector<SetupCheck> RunChecks()
     }
     // 3. our plugin in GTA's Mod Loader folder.
     {
-        SetupCheck c{L"GTA plugin (SkateAndreas.asi)", false, L""};
+        SetupCheck c{L"GTA plugin (SkateAndreas.asi)", false, false, L""};
         const std::wstring asi = GtaPluginPath();
         if (GetFileAttributesW(asi.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not found: " + asi;
@@ -453,7 +469,7 @@ std::vector<SetupCheck> RunChecks()
     }
     // 4. GTA San Andreas.
     {
-        SetupCheck c{L"GTA San Andreas (gta_sa.exe)", false, L""};
+        SetupCheck c{L"GTA San Andreas (gta_sa.exe)", false, false, L""};
         const std::wstring exe = g_gtaDir + L"\\gta_sa.exe";
         if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not found: " + exe;
@@ -463,7 +479,7 @@ std::vector<SetupCheck> RunChecks()
     }
     // 5. the map itself (the map tool's output). Without it there are no rails at all.
     {
-        SetupCheck c{L"SkateAndreas map built", false, L""};
+        SetupCheck c{L"SkateAndreas map built", false, false, L""};
         const std::wstring railList = g_modHome + L"\\extracted\\thaw_maps\\_railpool\\rails_in_map.csv";
         if (GetFileAttributesW(railList.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not built yet - press \"Build the map\" below (needs Python 3)";
@@ -499,7 +515,7 @@ int RunSelfTest()
     const std::vector<SetupCheck> checks = RunChecks();
     bool all = true;
     for (const SetupCheck& c : checks) {
-        Log("check: [%s] %s%s", c.ok ? "OK" : "--", Narrow(c.label.c_str()).c_str(),
+        Log("check: [%s] %s%s", !c.ok ? "--" : (c.warn ? "WARN" : "OK"), Narrow(c.label.c_str()).c_str(),
             c.note.empty() ? "" : (" - " + Narrow(c.note.c_str())).c_str());
         if (!c.ok) all = false;
     }
@@ -524,8 +540,10 @@ void RefreshChecks()
     for (int i = 0; i < kCheckCount && i < static_cast<int>(checks.size()); ++i) {
         const SetupCheck& c = checks[i];
         g_checkOk[i] = c.ok;
-        std::wstring text = (c.ok ? L"OK   " : L"--   ") + c.label;
-        if (!c.ok && !c.note.empty()) text += L"   (" + c.note + L")";
+        g_checkWarn[i] = c.warn;
+        const wchar_t* mark = !c.ok ? L"--   " : (c.warn ? L"!!   " : L"OK   ");
+        std::wstring text = std::wstring(mark) + c.label;
+        if (!c.note.empty() && (!c.ok || c.warn)) text += L"   (" + c.note + L")";
         SetWindowTextW(g_checkHwnd[i], text.c_str());
         InvalidateRect(g_checkHwnd[i], nullptr, TRUE);
     }
@@ -807,7 +825,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         HWND ctl = reinterpret_cast<HWND>(lParam);
         for (int i = 0; i < kCheckCount; ++i) {
             if (ctl == g_checkHwnd[i]) {
-                SetTextColor(dc, g_checkOk[i] ? RGB(0, 120, 0) : RGB(190, 0, 0));
+                // green = fine, amber = warning (Play still allowed), red = Play blocked
+                const COLORREF colour = !g_checkOk[i] ? RGB(190, 0, 0) : (g_checkWarn[i] ? RGB(160, 110, 0) : RGB(0, 120, 0));
+                SetTextColor(dc, colour);
                 SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
                 return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
             }
@@ -839,7 +859,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             for (int i = 0; i < kCheckCount; ++i)
                 if (!g_checkOk[i]) ok = false;
             if (!ok) {
-                SetStatus(L"Some setup checks failed (red lines above). Fix those first.");
+                // 8.42: name what is wrong instead of just "some checks failed", so a player
+                // with the wrong reTHAWed build reads it in one go (DESIGN 11).
+                std::wstring msg = L"Fix these first:";
+                for (const SetupCheck& c : RunChecks()) {
+                    if (c.ok) continue;
+                    msg += L"\n - " + c.label;
+                    if (!c.note.empty()) msg += L" - " + c.note;
+                }
+                SetStatus(msg.c_str());
                 break;
             }
             g_startHidden = (IsDlgButtonChecked(hwnd, IDC_HIDDEN) == BST_CHECKED);

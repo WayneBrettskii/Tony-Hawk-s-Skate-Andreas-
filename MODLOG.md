@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-13] launcher: friendlier version wording, and a different reTHAWed build only WARNS
+
+**Changed:** `src/launcher/main.cpp`: `SetupCheck` gained a **warning** state — shown **amber** with a `!!` mark, it does **not** block Play and does **not** fail `--selftest`. The reTHAWed check now reads `your copy is a different version - trying it anyway` (amber) where it used to be a refusal, and writes one log line with both byte counts and why. When Play genuinely *is* blocked, the status now names each failing check and its note (`Fix these first:` ...) instead of "some setup checks failed".
+
+**Why:** user 2026-10-13 — reTHAWed **5.0.0.2** is out and the size gate was refusing to start it: *"let them try to launch at least maybe it will work who knows"*. The size is only a guess that we were written against that build; the real authority is the plugin's own code checks, which report exactly what they do not recognise. "Try it, and the log says why if it misbehaves" beats "refuse".
+
+**Tested how:** faked a reTHAWed folder holding a 4,000,000-byte `reTHAWed.exe` (via `SkateAndreas.ini`): `--selftest` gives `[WARN] reTHAWed 5.0.0.1 - your copy is a different version - trying it anyway` with the other four `OK`, and **passes**, so Play is allowed. Normal layout: all five `OK`. **That test also caught a real bug** — adding the field shifted the brace initialisers so every check came out as a warning (MSVC flagged the narrowing); fixed before committing.
+
+**Still broken / not tested:** not run against a real 5.0.0.2 yet — the user will. If it misbehaves, the `code check ... DIFFERENT` lines in `thaw.log` are the work list (DESIGN 11).
+
+**Next:** try 5.0.0.2 and read `logs\thaw.log` for what the plugin did not recognise.
+
 ## [2026-10-13] 8.41 car rails: "parked" now actually means parked (the moving-rail NaN)
 
 **Changed:** `src/gta/cars.cpp`: a car gets a roof rail only when it is **genuinely parked**, decided by the car's **position not changing** since the last pass (`kStillMoved` = 2 cm, remembered per vehicle-pool index), instead of by its speed. The old test was `move speed <= 0.05`, and that is a different thing: 0.05 m per frame is **2.5 m/s (9 km/h)**, so a car pulling away from a standstill sat inside that window for about a second with its rail rewritten **every frame** — a rail that **moves under the skater**, which is exactly what turns reTHAWed's grind maths to NaN. The once-a-second car scan now prints `NO RAIL (moving)` where it used to print a rail height it would not actually use.

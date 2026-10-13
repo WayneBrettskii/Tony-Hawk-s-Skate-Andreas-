@@ -1194,14 +1194,15 @@ copy of it, not two.
 ## 11. Before release (to do later)
 
 - **The mod is pinned to reTHAWed 5.0.0.1** — and **5.0.0.2 is already out** (user, 2026-10-13). The
-  launcher **refuses to start** any other build (`kExpectedExeSize` in `src/launcher/main.cpp`), and
-  the THAW plugin's code checks are byte signatures from 5.0.0.1. They are written to *disable* their
-  feature rather than misbehave, and the log names each one that moved
-  (`code check 0x005A9407: DIFFERENT at byte 3 (expected 8B, found ...)`), so the log is the map.
-  Supporting an update means three things: (1) the launcher's size gate; (2) re-deriving each
-  address and signature from the new binary; (3) checking whether a field's **meaning** changed, not
-  just its bytes — that is the part that is real work. The durable fix, if this keeps happening, is
-  to find the code by **pattern** instead of fixed addresses.
+  launcher **warns rather than refuses** now (8.43: the exe size is only a *guess* that we were
+  written against that build, and the user asked to let it try — a different version shows an amber
+  `!!` line and Play is still allowed), but the THAW plugin's code checks are byte signatures from
+  5.0.0.1. They are written to *disable* their feature rather than misbehave, and the log names each
+  one that moved (`code check 0x005A9407: DIFFERENT at byte 3 (expected 8B, found ...)`), so that
+  list is the work. Supporting an update means three things: (1) the launcher's expected size;
+  (2) re-deriving each address and signature from the new binary; (3) checking whether a field's
+  **meaning** changed, not just its bytes — that is the part that is real work. The durable fix, if
+  this keeps happening, is to find the code by **pattern** instead of fixed addresses.
 
 - **Done (2026-10-12): the folders are no longer baked in.** The launcher names the mod's home
   (`SKATEANDREAS_DIR`) and both plugins keep their logs and find the map tool's output under it,
