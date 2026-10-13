@@ -967,8 +967,88 @@ starting anything, so the launcher can be tested without opening a game.
 `D:/Games/GTA San Andreas`. Read only; nothing is written into either game install
 (AGENTS.md rules 1 and 4).
 
+**The game folders can be pointed out by hand (added 2026-10-12, user's ask).** The
+window shows a **Game folders** row for each game with a **Browse...** button, and the
+choices are remembered next to the launcher in **`SkateAndreas.ini`**
+(`[Paths] GtaDir=` / `RethawedDir=`). The setup checks and Play both use them. With no
+ini, the paths the build was made with are used. This is what makes the launcher
+usable on someone else's PC without a rebuild, and it is where the controller-mode
+option (section 11) will live.
+
 **Not doing yet:** no auto-update, no profiles, no graphics options. The controller
 mode (section 11) is a later tick box on this window.
+
+### 8.35 Start in our map on Play (free skate, a silent skater) — plan (user 2026-10-12)
+
+**Wanted.** When the player hits Play, reTHAWed should end up in **free skate, on our
+map**, as a **created ("New Skater") skater**. The user's reason for the skater
+specifically: a created skater has **no voice lines**, so a story character's lines
+cannot play over GTA (reTHAWed's sound effects are audible behind GTA on purpose,
+section 8.27).
+
+**What reTHAWed offers.** Nothing to switch on: `rethawed.ini` has no "start in level"
+key, and neither `reTHAWed.exe` nor `rthw.dll` has a command-line flag for it (both
+searched 2026-10-12). What reTHAWed does expose are the game's own **script
+functions** — `LaunchLevel`, `RestartLevel`, `LaunchGame`, `CareerStartLevel`,
+`RT_CreateLevelLoadScript` — and we already run reTHAWed's scripts from our plugin on
+its game thread (that is how BMX mode drives the bike toggle, section 8.29). So this
+is reachable by the same road.
+
+**The lead.** Our level's ID, `0x9F014B98`, *is* the checksum of the name
+**`load_MPGTALSE`** — reTHAWed's own "load this level" script for a custom level
+(`src/common/convert.h`). So the first thing to try is running that script from
+reTHAWed's game thread while it sits at the front end, and watching for reTHAWed's own
+`Started Level Prefix: %s` line.
+
+**A rule that shapes it.** Nothing may be written into `D:\Games\reTHAWed`
+(AGENTS.md rule 4), so we cannot edit its save or its ini — this has to be done **in
+memory**, from our plugin. (Its own files are reTHAWed's business, not ours.)
+
+**Plan, one step at a time:**
+
+1. *(research, needs one game run)* From reTHAWed's front end, run `0x9F014B98`
+   through the existing RunScript call (as `src/thaw/bmx.cpp` does) and watch
+   `thaw.log` and reTHAWed's `debug.txt` for `Started Level Prefix: MPGTALSE`.
+   If the level loads, this step is done.
+2. *(research)* Find how the front end picks the skater, and whether "free skate" is
+   a separate step from loading the level.
+3. *(build)* Our THAW plugin does it once, shortly after reTHAWed reaches the front
+   end: the level, then the skater, logging every step. If a step cannot be
+   understood after two real attempts, stop and write it up in `STATUS.md`
+   (AGENTS.md).
+
+**Risks.** This is the fragile kind of work — driving the game's front end. The
+scripts may need a particular game state, and a wrong call could leave reTHAWed
+sitting in a menu it will not leave. **Fallback if it will not work:** the player
+loads the level by hand once per session (the pad is reTHAWed's until skate mode
+starts), or we **mute reTHAWed's skater voice lines** instead of changing the skater.
+
+**Result (2026-10-12): the two roads we tried, and why this is a dead end.**
+
+1. **Run reTHAWed's own level script from the front end.** The map *does* load — reTHAWed's
+   `debug.txt` says `LOADING CUSTOM LEVEL...` / `Loading career level MPGTALSE...` — but the
+   game's "current level" field (`0x008A3B5C + 0x20`, what `ReadGameState` reads) **keeps
+   pointing at the front end's own level**: its value is exactly `qbkey("load_z_mainmenu")`.
+   So the plugin cannot recognise the level: skate mode answers "reTHAWed not in a level" and
+   CJ floats (the alignment is never applied). Running that script is **not** the same as the
+   front end's free-skate flow. *(A comparison run settled it: the manual free-skate load
+   gives level `0x9F014B98` and `skate mode: ON ... ABSOLUTE (level lined up with GTA)`.)*
+
+2. **Replay the player's own pad presses.** The sequence was captured from their manual run
+   (`Down ×3, Cross ×3, Right ×3, Down ×2, Cross held`) and played back through the input
+   hook. This cannot work, and the reason is the one worth remembering: **reTHAWed's front end
+   only polls the pad once the player touches it** — in a 69 s run the input hook ran for
+   **2 s**, and only after a real press. Our synthetic presses go in through that same hook,
+   so the replay can never start itself (chicken and egg). The front end also reads no input
+   at all while GTA is the front window.
+
+**Decision (user 2026-10-12): stop here.** The manual free-skate load works and stays. The
+real complaint behind the request — a story character's voice lines playing over CJ — is
+better solved **directly, by muting reTHAWed's skater voice lines**, which needs none of this.
+The experiment's code (`src/thaw/autostart.cpp`, the recorder and the replay) is left in place
+but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so nobody repeats it.
+
+**Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
 
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 

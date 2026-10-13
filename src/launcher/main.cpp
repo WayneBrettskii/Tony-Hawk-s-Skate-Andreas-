@@ -33,6 +33,8 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <objbase.h>
+#include <shobjidl.h>
 #include <tlhelp32.h>
 #include <shellapi.h>
 #include <cstdarg>
@@ -77,6 +79,10 @@ constexpr int IDC_PLAY = 1001;
 constexpr int IDC_HIDDEN = 1002;
 constexpr int IDC_LOGS = 1003;
 constexpr int IDC_STATUS = 1004;
+constexpr int IDC_BROWSE_GTA = 1005;
+constexpr int IDC_BROWSE_THAW = 1006;
+constexpr int IDC_GTA_PATH = 1007;
+constexpr int IDC_THAW_PATH = 1008;
 constexpr int IDC_CHECK0 = 1010; // .. 1010 + kCheckCount - 1
 constexpr UINT WM_MP_STATUS = WM_APP + 1;
 constexpr UINT WM_MP_DONE = WM_APP + 2;
@@ -94,6 +100,14 @@ HWND g_checkHwnd[kCheckCount] = {};
 bool g_checkOk[kCheckCount] = {};
 bool g_running = false;
 bool g_startHidden = false;
+
+// 8.36: the game folders. They start at the paths the build was made with, and the
+// player can point them somewhere else with the Browse buttons; their choices are
+// remembered in SkateAndreas.ini next to the launcher.
+std::wstring g_gtaDir;
+std::wstring g_rethawedDir;
+HWND g_gtaPathHwnd = nullptr;
+HWND g_thawPathHwnd = nullptr;
 
 // ---- logging (same shape as the console launcher) ----
 
@@ -173,6 +187,86 @@ std::wstring PluginPath()
     const size_t slash = p.find_last_of(L'\\');
     p = (slash == std::wstring::npos) ? L"" : p.substr(0, slash + 1);
     return p + L"SkateAndreas-thaw.dll";
+}
+
+// 8.36: the launcher's own folder (with a trailing backslash), where the settings
+// file lives.
+std::wstring LauncherDir()
+{
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    std::wstring p = self;
+    const size_t slash = p.find_last_of(L'\\');
+    return (slash == std::wstring::npos) ? L"" : p.substr(0, slash + 1);
+}
+
+std::wstring SettingsPath()
+{
+    return LauncherDir() + L"SkateAndreas.ini";
+}
+
+// Read the saved folders. A missing or empty value leaves the built-in default.
+void LoadSettings()
+{
+    const std::wstring ini = SettingsPath();
+    wchar_t buf[MAX_PATH] = {};
+    if (GetPrivateProfileStringW(L"Paths", L"GtaDir", L"", buf, MAX_PATH, ini.c_str()) > 0 && buf[0])
+        g_gtaDir = buf;
+    if (GetPrivateProfileStringW(L"Paths", L"RethawedDir", L"", buf, MAX_PATH, ini.c_str()) > 0 && buf[0])
+        g_rethawedDir = buf;
+}
+
+void SaveSettings()
+{
+    const std::wstring ini = SettingsPath();
+    WritePrivateProfileStringW(L"Paths", L"GtaDir", g_gtaDir.c_str(), ini.c_str());
+    WritePrivateProfileStringW(L"Paths", L"RethawedDir", g_rethawedDir.c_str(), ini.c_str());
+}
+
+// The plain Windows "pick a folder" window, starting where `out` already points.
+bool BrowseForFolder(HWND owner, std::wstring& out)
+{
+    IFileDialog* dlg = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg))))
+        return false;
+    DWORD opts = 0;
+    dlg->GetOptions(&opts);
+    dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    if (!out.empty()) {
+        IShellItem* start = nullptr;
+        if (SUCCEEDED(SHCreateItemFromParsingName(out.c_str(), nullptr, IID_PPV_ARGS(&start)))) {
+            dlg->SetFolder(start);
+            start->Release();
+        }
+    }
+    bool ok = false;
+    if (SUCCEEDED(dlg->Show(owner))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dlg->GetResult(&item))) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                out = path;
+                CoTaskMemFree(path);
+                ok = true;
+            }
+            item->Release();
+        }
+    }
+    dlg->Release();
+    return ok;
+}
+
+// Put the two folders on the window (shortened from the left: the end matters most).
+void ShowPaths()
+{
+    auto show = [](HWND h, const std::wstring& p) {
+        if (!h) return;
+        std::wstring s = p;
+        if (s.size() > 44) s = L"..." + s.substr(s.size() - 41);
+        SetWindowTextW(h, s.c_str());
+    };
+    show(g_gtaPathHwnd, g_gtaDir);
+    show(g_thawPathHwnd, g_rethawedDir);
 }
 
 // Load our plugin into the game. Logs every step; returns true on success.
@@ -285,7 +379,7 @@ struct SetupCheck {
 // Path of our GTA plugin (in GTA's Mod Loader folder).
 std::wstring GtaPluginPath()
 {
-    return Widen(MP_GTA_DIR) + L"\\modloader\\SkateAndreas\\SkateAndreas.asi";
+    return g_gtaDir + L"\\modloader\\SkateAndreas\\SkateAndreas.asi";
 }
 
 std::vector<SetupCheck> RunChecks()
@@ -296,7 +390,7 @@ std::vector<SetupCheck> RunChecks()
     // 1. reTHAWed.exe, present and the expected version.
     {
         SetupCheck c{L"reTHAWed 5.0.0.1 found", false, L""};
-        const std::wstring exe = Widen(MP_RETHAWED_DIR) + L"\\reTHAWed.exe";
+        const std::wstring exe = g_rethawedDir + L"\\reTHAWed.exe";
         WIN32_FILE_ATTRIBUTE_DATA info = {};
         if (!GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &info)) {
             c.note = L"not found: " + exe;
@@ -333,7 +427,7 @@ std::vector<SetupCheck> RunChecks()
     // 4. GTA San Andreas.
     {
         SetupCheck c{L"GTA San Andreas (gta_sa.exe)", false, L""};
-        const std::wstring exe = Widen(MP_GTA_DIR) + L"\\gta_sa.exe";
+        const std::wstring exe = g_gtaDir + L"\\gta_sa.exe";
         if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not found: " + exe;
         else
@@ -384,7 +478,7 @@ void RefreshChecks()
 // One line of the launch sequence, run on the worker thread.
 void RunSequence()
 {
-    const std::wstring gameDir = Widen(MP_RETHAWED_DIR);
+    const std::wstring gameDir = g_rethawedDir;
     const std::wstring exePath = gameDir + L"\\reTHAWed.exe";
     const std::wstring dllPath = PluginPath();
 
@@ -460,7 +554,7 @@ void RunSequence()
     }
 
     // Start GTA San Andreas.
-    const std::wstring gtaDir = Widen(MP_GTA_DIR);
+    const std::wstring gtaDir = g_gtaDir;
     const std::wstring gtaExe = gtaDir + L"\\gta_sa.exe";
     SetStatus(L"Starting GTA San Andreas...");
     std::wstring gtaCmd = L"\"" + gtaExe + L"\"";
@@ -522,18 +616,28 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int x, in
 
 void LayoutControls()
 {
-    MakeControl(L"STATIC", L"Tony Hawk's SkateAndreas", SS_LEFT, 20, 16, 480, 30, -1, g_fontTitle);
-    MakeControl(L"STATIC", L"Skate in GTA San Andreas with reTHAWed's skating.", SS_LEFT, 20, 50, 480, 20, -1,
+    MakeControl(L"STATIC", L"Tony Hawk's SkateAndreas", SS_LEFT, 20, 16, 520, 30, -1, g_fontTitle);
+    MakeControl(L"STATIC", L"Skate in GTA San Andreas with reTHAWed's skating.", SS_LEFT, 20, 48, 520, 20, -1,
                 g_font);
-    MakeControl(L"STATIC", L"Setup:", SS_LEFT, 20, 82, 480, 18, -1, g_fontBold);
+
+    // 8.36: the game folders, so a player on another PC can point them out.
+    MakeControl(L"STATIC", L"Game folders:", SS_LEFT, 20, 78, 520, 18, -1, g_fontBold);
+    MakeControl(L"STATIC", L"GTA San Andreas:", SS_LEFT, 28, 102, 116, 18, -1, g_font);
+    g_gtaPathHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 148, 102, 300, 18, IDC_GTA_PATH, g_font);
+    MakeControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 456, 100, 80, 22, IDC_BROWSE_GTA, g_font);
+    MakeControl(L"STATIC", L"reTHAWed:", SS_LEFT, 28, 128, 116, 18, -1, g_font);
+    g_thawPathHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 148, 128, 300, 18, IDC_THAW_PATH, g_font);
+    MakeControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 456, 126, 80, 22, IDC_BROWSE_THAW, g_font);
+
+    MakeControl(L"STATIC", L"Setup:", SS_LEFT, 20, 160, 520, 18, -1, g_fontBold);
     for (int i = 0; i < kCheckCount; ++i)
-        g_checkHwnd[i] = MakeControl(L"STATIC", L"...", SS_LEFT, 28, 104 + i * 20, 470, 18, IDC_CHECK0 + i, g_font);
+        g_checkHwnd[i] = MakeControl(L"STATIC", L"...", SS_LEFT, 28, 182 + i * 20, 508, 18, IDC_CHECK0 + i, g_font);
     g_hiddenHwnd = MakeControl(L"BUTTON", L"Start reTHAWed minimised (only GTA on screen)",
-                               BS_AUTOCHECKBOX | WS_TABSTOP, 24, 196, 470, 22, IDC_HIDDEN, g_font);
-    MakeControl(L"STATIC", L"Status:", SS_LEFT, 20, 228, 480, 18, -1, g_fontBold);
-    g_statusHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 28, 248, 470, 60, IDC_STATUS, g_font);
-    g_playHwnd = MakeControl(L"BUTTON", L"Play", BS_PUSHBUTTON | WS_TABSTOP, 24, 320, 240, 46, IDC_PLAY, g_fontBold);
-    MakeControl(L"BUTTON", L"Open logs folder", BS_PUSHBUTTON | WS_TABSTOP, 280, 330, 200, 28, IDC_LOGS, g_font);
+                               BS_AUTOCHECKBOX | WS_TABSTOP, 24, 270, 508, 22, IDC_HIDDEN, g_font);
+    MakeControl(L"STATIC", L"Status:", SS_LEFT, 20, 300, 520, 18, -1, g_fontBold);
+    g_statusHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 28, 320, 508, 60, IDC_STATUS, g_font);
+    g_playHwnd = MakeControl(L"BUTTON", L"Play", BS_PUSHBUTTON | WS_TABSTOP, 24, 392, 240, 46, IDC_PLAY, g_fontBold);
+    MakeControl(L"BUTTON", L"Open logs folder", BS_PUSHBUTTON | WS_TABSTOP, 280, 402, 200, 28, IDC_LOGS, g_font);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -542,6 +646,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_CREATE:
         g_hwnd = hwnd;
         LayoutControls();
+        ShowPaths();
         RefreshChecks();
         SetStatus(L"Ready. Click Play to start.");
         return 0;
@@ -596,6 +701,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             break;
         }
+        case IDC_BROWSE_GTA: {
+            std::wstring pick = g_gtaDir;
+            if (BrowseForFolder(hwnd, pick)) {
+                g_gtaDir = pick;
+                SaveSettings();
+                ShowPaths();
+                Log("launcher: GTA folder set to %ls", g_gtaDir.c_str());
+            }
+            RefreshChecks();
+            break;
+        }
+        case IDC_BROWSE_THAW: {
+            std::wstring pick = g_rethawedDir;
+            if (BrowseForFolder(hwnd, pick)) {
+                g_rethawedDir = pick;
+                SaveSettings();
+                ShowPaths();
+                Log("launcher: reTHAWed folder set to %ls", g_rethawedDir.c_str());
+            }
+            RefreshChecks();
+            break;
+        }
         default:
             break;
         }
@@ -613,6 +740,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 int RunGui(HINSTANCE inst)
 {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // for the "pick a folder" window
     g_font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     g_fontBold = CreateFontW(-12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -632,7 +760,7 @@ int RunGui(HINSTANCE inst)
         return 1;
     }
 
-    RECT rect = {0, 0, 520, 390};
+    RECT rect = {0, 0, 560, 460};
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRect(&rect, style, FALSE);
 
@@ -668,11 +796,19 @@ int APIENTRY wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     g_startTick = GetTickCount64();
     InitializeCriticalSection(&g_cs);
 
+    // 8.36: the folders start at the ones the build was made with, then whatever the
+    // player last chose (SkateAndreas.ini next to this launcher).
+    g_gtaDir = Widen(MP_GTA_DIR);
+    g_rethawedDir = Widen(MP_RETHAWED_DIR);
+    LoadSettings();
+
     const std::wstring logDir = Widen(MP_LOG_DIR);
     CreateDirectoryW(logDir.c_str(), nullptr); // fine if it already exists
     const std::wstring logPath = logDir + L"\\launcher.log";
     // Append, with a run header, so a user can send us one file with the history.
-    if (_wfopen_s(&g_log, logPath.c_str(), L"a") == 0 && g_log) {
+    // Open it shareable (deny none) so we can still read it while the window is open.
+    g_log = _wfsopen(logPath.c_str(), L"a", _SH_DENYNO);
+    if (g_log) {
         SYSTEMTIME st = {};
         GetLocalTime(&st);
         fprintf(g_log, "\n===== launcher run %04u-%02u-%02u %02u:%02u:%02u =====\n", st.wYear, st.wMonth, st.wDay,

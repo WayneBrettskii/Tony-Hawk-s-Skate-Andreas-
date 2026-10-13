@@ -58,6 +58,7 @@
 #include "bmx.h"
 #include "railscan.h"
 #include "statefind.h"
+#include "autostart.h"
 #include <tlhelp32.h>
 #include <timeapi.h>
 #pragma comment(lib, "winmm.lib")
@@ -641,6 +642,7 @@ DWORD WINAPI MainThread(LPVOID)
     mp::thaw::MusicCodeChecksPass(&Log); // 8.27 radio
     mp::thaw::TagsStart(g_link, &Log);   // 8.28 a graffiti tags
     mp::thaw::BmxCodeChecksPass(&Log);   // 8.29 BMX
+    mp::thaw::AutoStartCodeChecksPass(&Log); // 8.35 test: start our map from the front end
 
     // Phase 5-3f: wake about every 1 ms and check only the skater's position;
     // when it changes, reTHAWed has a new frame: note the exact time, wait

@@ -5,6 +5,7 @@
 #include "input.h"
 #include "music.h"
 #include "bmx.h"
+#include "autostart.h"
 
 #include <cstring>
 
@@ -74,9 +75,22 @@ unsigned char __cdecl HookGetButton(void* controller, int button)
     MusicGameThreadTick(g_link);
     // 8.29 BMX: rider on / off the bike as CJ
     BmxGameThreadTick(g_link);
+    // 8.35 test: try to load our map from reTHAWed's front end
+    AutoStartGameThreadTick(g_link);
+    // 8.35: the front-end replay drives reTHAWed's menus for the player
+    const int synth = AutoStartSyntheticButtons();
+    if (synth) {
+        const long bit = SdlButtonToGtaBit(button);
+        if (bit && (synth & bit)) return 1;
+    }
     const LONG src = g_source;
     InterlockedIncrement(&g_calls[src]);
-    if (src == kReal) return g_realGetButton(controller, button);
+    if (src == kReal) {
+        const unsigned char real = g_realGetButton(controller, button);
+        // 8.35: capture the front-end navigation while reTHAWed is the front window
+        AutoStartNoteFrontButton(static_cast<int>(SdlButtonToGtaBit(button)), real != 0);
+        return real;
+    }
     if (src == kNothing) return 0;
     InputShared in;
     LinkBlock* link = g_link;

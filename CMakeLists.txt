@@ -62,7 +62,7 @@ endif()
 
 # --- reTHAWed plugin: SkateAndreas-thaw.dll (loaded into reTHAWed by the launcher) ---
 # Stays in the build folder next to the launcher; nothing goes into the reTHAWed install.
-add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp src/thaw/drawlog.cpp src/thaw/touchpad.cpp src/thaw/hud.cpp src/thaw/music.cpp src/thaw/tags.cpp src/thaw/bmx.cpp src/thaw/bikeparts.cpp src/thaw/bikefind.cpp src/thaw/railscan.cpp src/thaw/statefind.cpp)
+add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp src/thaw/drawlog.cpp src/thaw/touchpad.cpp src/thaw/hud.cpp src/thaw/music.cpp src/thaw/tags.cpp src/thaw/bmx.cpp src/thaw/bikeparts.cpp src/thaw/bikefind.cpp src/thaw/railscan.cpp src/thaw/statefind.cpp src/thaw/autostart.cpp)
 set_target_properties(thaw_plugin PROPERTIES
     OUTPUT_NAME "SkateAndreas-thaw"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -85,7 +85,7 @@ set_target_properties(launcher PROPERTIES
 target_compile_features(launcher PRIVATE cxx_std_17)
 target_compile_definitions(launcher PRIVATE
     "MP_LOG_DIR=\"${MP_LOG_DIR}\"" "MP_RETHAWED_DIR=\"${RETHAWED_DIR}\"" "MP_GTA_DIR=\"${GTA_DIR}\"" UNICODE _UNICODE)
-target_link_libraries(launcher PRIVATE shell32) # ShellExecuteW (open the logs folder)
+target_link_libraries(launcher PRIVATE shell32 ole32) # ShellExecuteW (open logs) + the folder picker
 add_dependencies(launcher thaw_plugin) # building the launcher also builds the plugin
 
 # --- Unit test for the THAW -> GTA conversion (src/common/convert.h) ---

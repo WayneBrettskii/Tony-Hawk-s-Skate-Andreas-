@@ -68,6 +68,15 @@ constexpr LevelAlignment kLosSantosEast{0x0274F7DEul, "Los Santos East", 0.02422
 constexpr LevelAlignment kGtaEastLs{0x9F014B98ul, "GTA East LS (SkateAndreas)", 0.0254f, -1.0f,
                                     Vec3{1975.0f, -1525.0f, 0.0f}};
 
+// 8.35 notebook (2026-10-12): a script call from the front end does load our map
+// (reTHAWed's debug.txt: `LOADING CUSTOM LEVEL...`, `Loading career level
+// MPGTALSE...`), but the game's "current level" field (0x008A3B5C + 0x20, what
+// ReadGameState reads) still says the FRONT-END level: its value 0x99CE4D72 is
+// exactly qbkey("load_z_mainmenu"). So the plugin saw z_mainmenu, not our map:
+// no alignment, "reTHAWed not in a level", and CJ floating. The fix is NOT an
+// alignment entry for that ID (that would label the menu as our map) - it is to
+// make the load happen the way the front end does it (DESIGN 8.35).
+
 // The aligned level for this level ID, or nullptr.
 inline const LevelAlignment* FindLevelAlignment(unsigned long levelId)
 {

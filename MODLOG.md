@@ -2,6 +2,104 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] GUI launcher: the game folders can be pointed out by hand
+
+**Changed:** `src/launcher/main.cpp`: the window now has a **Game folders** section showing the **GTA San Andreas** and **reTHAWed** folders, each with a **Browse...** button (the standard Windows folder picker). The choices are saved next to the launcher in **`SkateAndreas.ini`** (`[Paths] GtaDir=` / `RethawedDir=`) and are used both by the setup checks and by Play. With no ini, the paths the build was made with are used, so nothing changes on the current machine. The window is larger (560x460) to fit the new rows. `CMakeLists.txt`: the launcher links `ole32` for the picker.
+
+**Why:** user 2026-10-12 — "is the player able to point to their gta and rethawed files manually in case they don't auto detect?" Until now both paths were fixed when the project was **built**, so any other PC needed a rebuild. It also gives section 11's planned settings file its home.
+
+**Tested how:** `--selftest`, three ways: (1) no ini → all four checks OK; (2) an ini pointing GTA at `C:\Totally\Wrong` → both GTA checks red with the reason, exit 1; (3) ini removed → all four OK again. The window: launched and closed; the log shows `launcher: Ready. Click Play to start.`, so every control was created.
+
+**Still broken / not tested:** the **Browse** buttons have not actually been clicked in a run (the picker window and the save path are unexercised), and the layout was checked by arithmetic rather than by eye.
+
+**Next:** the user opens the launcher, tries Browse for each folder (and cancels once), and confirms the window looks right.
+
+## [2026-10-12] 8.35 result: starting in free skate is a DEAD END — stopped, experiment switched off
+
+**Changed:** `src/thaw/autostart.cpp`: the front-end **replay** and the **recorder** are switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`). `docs/DESIGN.md` 8.35: the full outcome written up.
+
+**Why:** both routes to "Play lands you in free skate on our map" were tried and both failed, for reasons now understood rather than guessed:
+1. **Running reTHAWed's own level script** loads the map (`debug.txt`: `LOADING CUSTOM LEVEL... MPGTALSE`) but leaves the game's "current level" field on the **front-end** level — its value is exactly `qbkey("load_z_mainmenu")` — so the plugin cannot recognise the level, CJ floats, and skate mode refuses. *(A comparison run proved the difference: the manual free-skate load gives `0x9F014B98` and `ABSOLUTE (level lined up with GTA)`.)*
+2. **Replaying the player's own presses** (captured sequence, played back through the input hook) cannot work, because **reTHAWed's front end only polls the pad once the player touches it** — the input hook ran for **2 s** in a 69 s run, and only after a real press. Our synthetic presses go in through that same hook, so the replay can never start itself.
+
+**Tested how:** four runs on 2026-10-12, each read back from `logs\thaw.log`, `logs\gta.log` and reTHAWed's `debug.txt`. The last one: the hook ran 2 s of 69 s.
+
+**Still broken / not tested:** nothing further; this is stopped by decision (user 2026-10-12). The manual free-skate load works and stays.
+
+**Next:** the user's actual complaint (a story character's voice lines over CJ) is better fixed directly by **muting reTHAWed's skater voice lines** — much smaller, and independent of any of this.
+
+## [2026-10-12] 8.35: replay diagnostic (it never started)
+
+**Changed:** `src/thaw/autostart.cpp`: the replay logs a line once a second — `frontend replay: inFrontend=.. settleSeen=.. userDrove=.. done=.. running=.. synth=0x..` — so the reason it does not start is visible.
+
+**Why:** the first replay run did nothing and logged **no** `frontend replay:` line at all, even though reTHAWed was on its front end the whole time (the GTA log shows `[menu]` for **all 177** of its samples). The likely cause is that the state reads something other than "front end" often enough to keep resetting the 2.5 s settle timer, but a line a second says so for certain instead of guessing.
+
+**Tested how:** built only — needs one short run.
+
+**Still broken / not tested:** the replay has never run, so nothing about the idea is proven yet.
+
+**Next:** one short run (Play, **do not touch the pad**, ~30 s), then read the diagnostic line.
+
+## [2026-10-12] 8.35: the front-end replay (plays back the player's own presses)
+
+**Changed:** `src/thaw/autostart.cpp` / `.h`: `kFrontEndMacro`, the captured sequence, and the code that plays it back — a timed list of the player's presses (`Down ×3, Cross ×3, Right ×3, Down ×2, Cross held`), holding the right buttons for reTHAWed's front end. It starts ~2.5 s after reTHAWed's front end appears, **only if the player has not pressed anything themselves** (`g_userDrove`), and stops when reTHAWed leaves the front end. `src/thaw/input.cpp`: the controller hook now answers "pressed" for the buttons the replay is holding.
+
+**Why:** the one-script load leaves the game's level field on the menu (see the previous entry), but the player's own free-skate navigation sets everything correctly. Replaying their own presses therefore uses reTHAWed's real flow, so the level, the mode and the skater all come out right (DESIGN 8.35).
+
+**Tested how:** built only — **not tested in game yet**. It logs `frontend replay: ...` lines to `logs\thaw.log`.
+
+**Still broken / not tested:** the whole idea. Unknown: whether reTHAWed's front end accepts input while GTA is the front window (our focus patch makes it think it is focused, but the menus may check the window directly); whether the replay's timing survives menu animations; and whether the sequence loads the right level with the right skater.
+
+**Next:** one run: Play, then **wait and do not touch the pad** (~45 s); check whether reTHAWed ends up in the level (alt-tab and look, or press L3+R3 in GTA and see whether CJ lands on the ground instead of floating).
+
+## [2026-10-12] 8.35: front-end navigation recorder; the one-script load switched off
+
+**Changed:** `src/thaw/autostart.cpp` / `.h`: a **recorder** that logs every front-end button press and release with its time (`frontend: Down DOWN (+1.23 s)`), called from the input hook while reTHAWed is the **front window** (`src/thaw/input.cpp`); and the one-script load is switched **off** (`kTryTheLoad = false`).
+
+**Why:** the comparison run settled it — the manual **free skate** load gives level **`0x9F014B98`** and `skate mode: ON ... ABSOLUTE (level lined up with GTA)`, while our script load leaves the game on the menu level (`0x99CE4D72` = `qbkey("load_z_mainmenu")`), which is why the plugin saw "not in a level" and CJ floated. The user chose to reach free skate by **replaying their own pad presses** (DESIGN 8.35), so the sequence has to be captured first. The load is off so it cannot interfere with the recording.
+
+**Tested how:** built; the recorder writes its lines to `logs\thaw.log`. The capture itself needs the user to do their normal manual load once (their run also showed they navigate with the **pad** — `input: source now REAL controller (reTHAWed in front)` while GTA's pad log showed `Down` / `Cross`, so our hook sees it).
+
+**Still broken / not tested:** the replay does not exist yet; everything depends on the captured sequence.
+
+**Next:** the user does the manual load once with the recorder on; then build the replay from the capture.
+
+## [2026-10-12] 8.35: the script-loaded level's ID was the MENU's — my alignment entry reverted
+
+**Changed:** `src/launcher/main.cpp`: the launcher log is now opened **shareable** (`_wfsopen(..., _SH_DENYNO)`), so it can be read while the launcher window is open. `src/common/convert.h`: the alignment entry I added earlier this evening for level ID **`0x99CE4D72`** is **reverted** — it was wrong (see below). `src/thaw/autostart.cpp`: the auto-load waits 90 s now, on purpose, for the comparison run.
+
+**Why:** the run after that entry could not enter skate mode and the GTA log said `reTHAWed not in a level`. Re-reading the logs cracked it: the ID the plugin reads, **`0x99CE4D72`, is exactly `qbkey("load_z_mainmenu")`** — reTHAWed's **front-end menu level**. So a script call from the front end does load our map (reTHAWed's `debug.txt` still shows `LOADING CUSTOM LEVEL...` and `Loading career level MPGTALSE...`), but the game's "current level" field — what `ReadGameState` reads, `0x008A3B5C + 0x20` — **keeps pointing at the menu**. That is why the alignment was never applied (my matching entry would have labelled the *menu* as our map, which is worse), why skate mode refused, and why CJ floated.
+
+**Tested how:** logs only, plus a build. The reverted entry was never a real fix — it should not have gone in as one.
+
+**Still broken / not tested:** the whole auto-start. Running our map's load script is **not** equivalent to the front end's **free skate** flow: the game's level field is left pointing at the menu, so the plugin cannot recognise the level.
+
+**Next:** the comparison run — load the map the **normal way (free skate)** in reTHAWed while GTA is running, then read the level ID in `gta.log` (`link skater: [level] level 0x...`). That is what the front end sets, and therefore what the auto-start has to reproduce.
+
+## [2026-10-12] 8.35: align the script-loaded level (the floating fix) + launcher log sharing
+
+**Changed:** `src/common/convert.h`: new alignment entry `kGtaPoolLoadScript` for level ID **`0x99CE4D72`** — the ID reTHAWed reports for our map when it is loaded by **our own script call** from the front end (a menu load reports `0x9F014B98`). Same map, same origin `(1975, -1525, 0)`, same scale and mirror, so the same alignment. `src/launcher/main.cpp`: the launcher log is now opened **shareable** (`_wfsopen(..., _SH_DENYNO)`), so it can be read while the launcher window is open.
+
+**Why:** the 2026-10-12 auto-load run worked (reTHAWed loaded MPGTALSE, its `debug.txt` says so) but the plugin did **not** recognise the level ID, so it fell back to its "relative" placement and the user saw CJ **floating all around**. Separately, the launcher held `launcher.log` open, so it could only be read after closing the window.
+
+**Tested how:** built clean; the log-sharing fix verified by reading `launcher.log` while the launcher window was open. The alignment entry itself is **not yet tested in game**.
+
+**Still broken / not tested:** the alignment entry is a **hypothesis** — the next run has to show CJ on the ground. The level still loads as a **career** level, not **free skate** (the user's actual wish), which is the next piece of work.
+
+**Next:** Play → wait for the auto-load → turn skate mode on: does CJ sit on the ground now instead of floating? Then continue to find the front end's free-skate path.
+
+## [2026-10-12] 8.35 step 1 (test): can we start our map from reTHAWed's front end?
+
+**Changed:** new `src/thaw/autostart.h` / `.cpp` (and `CMakeLists.txt`). On reTHAWed's **game thread**, once per start: 8 s after the plugin loads, if reTHAWed is sitting on its **front end**, run reTHAWed's own level script **`0x9F014B98`** — the checksum of the name **`load_MPGTALSE`** — up to 3 times, 2.5 s apart, then log reTHAWed's state (front end / level, and the level ID) once a second for 15 s. Wired in from `src/thaw/input.cpp` (our controller hook — the game thread, the same place BMX runs its script) and installed from `src/thaw/main.cpp`. The script runner (`0x004135E0`) is byte-checked before anything is called, as BMX's is.
+
+**Why:** the user (DESIGN 8.35) wants Play to drop them into **free skate on our map** as a created skater (a created skater has no voice lines to play over CJ). reTHAWed has no setting and no command-line flag for that, so the plan is to run reTHAWed's own level script. This step answers, in a single run, whether that script on its own loads the level.
+
+**Tested how:** one launch through the GUI launcher (2026-10-12 ~21:52), reTHAWed left on its front end. **It works.** `thaw.log`: `autostart: attempt 1: reTHAWed is on its front end; running script 0x9F014B98`, then `the call returned 487309304`; reTHAWed's own `debug.txt`: `LOADING CUSTOM LEVEL...`, `Changing Sky: MPGTALSE_sky`, `Loading career level MPGTALSE...`, `It's a custom zone!`, `Setting level name to MPGTALSE...`. So running that one script does load our map. Skate mode afterwards worked normally (the GTA log shows `skate mode: ON` and CJ following the skater). The same run also proved the launcher's **Play** path: it started reTHAWed, injected the plugin and started GTA.
+
+**Still broken / not tested:** two things. (1) reTHAWed loaded it as a **career level** (`Loading career level MPGTALSE...`); the user wants **free skate**, so that is still to do. (2) The plugin then read the level as **`0x99CE4D72`**, **not** the `0x9F014B98` it recognises (the checksum of `load_MPGTALSE`), so it used its **"relative" placement** rather than the calibrated level alignment (see the note in the environment list about a wrong level id). Whether that lines up in game is not yet known. Also noted: the launcher keeps `launcher.log` open, so it cannot be read while the launcher window is open.
+
+**Next:** find the front end's **free skate** path (what it does beyond loading the level) and whether that path gives the recognised level id; and ask the user whether the skating lined up during the auto-load run.
+
 ## [2026-10-12] Rename to "Tony Hawk's SkateAndreas"
 
 **Changed:** the mod's name, and the files it ships as. The **display name** (what a player sees) is now **Tony Hawk's SkateAndreas**; file and folder names use **SkateAndreas** (no apostrophe, no space, so scripts and build tools stay happy):
