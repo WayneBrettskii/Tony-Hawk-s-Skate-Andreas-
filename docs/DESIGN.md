@@ -1050,6 +1050,35 @@ but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so 
 
 **Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
 
+### 8.39 "Build the map..." in the launcher (user 2026-10-12)
+
+**Asked:** a way to make the map without a command prompt.
+
+**Why the map cannot simply be shipped.** It is **GTA's own collision, converted** —
+`tools/gta_to_thaw_map.py` reads the player's installation. Shipping it would redistribute
+Rockstar's data, which AGENTS.md rule 1 forbids and which is what mod takedowns are made of. The
+two `_railpool` csv files are the same (rails found in GTA's geometry). So the player builds it
+from their own copy — this button just takes the command prompt out of the way.
+
+**What the button does:** finds Python 3 (`python`, `python3` or `py -3`), runs the tool in its own
+console window so the player can watch the progress, waits, then opens `extracted\thaw_maps\` and
+says where to copy the map folder. The arguments are the whole-map pool build:
+`--box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0`.
+
+**A fifth setup check**, "SkateAndreas map built", looks for
+`<home>\extracted\thaw_maps\_railpool\rails_in_map.csv` and goes red with "press Build the map"
+when it is missing — so an install that has not built its map explains itself, instead of the
+player later finding that nothing grinds.
+
+**Deliberately not done:** the launcher does **not** copy the map into reTHAWed (nothing of ours
+writes inside the reTHAWed install — AGENTS.md rule 4), so that stays a drag-and-drop; and Python 3
+stays a requirement (bundling a Python runtime is its own redistribution question).
+
+**Tested (2026-10-12):** `--selftest` shows the fifth check green on a machine where the map is
+already built, and `python --version` resolves (3.11.0) — which is exactly what the probe tests.
+**The button's own run is not tested**: it would rebuild the ~80 MB map and rewrite the rail pool,
+so it is the user's to press.
+
 ### 8.38 Where our files live, so a downloaded copy works (user 2026-10-12)
 
 **The problem.** The folder the project was compiled in was baked into the plugins

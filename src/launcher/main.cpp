@@ -76,7 +76,7 @@ constexpr wchar_t kSdlRawInputVar[] = L"SDL_JOYSTICK_RAWINPUT";
 constexpr wchar_t kSdlRawInputValue[] = L"0";
 
 // Window controls.
-constexpr int kCheckCount = 4;
+constexpr int kCheckCount = 5;
 constexpr int IDC_PLAY = 1001;
 constexpr int IDC_HIDDEN = 1002;
 constexpr int IDC_LOGS = 1003;
@@ -85,6 +85,7 @@ constexpr int IDC_BROWSE_GTA = 1005;
 constexpr int IDC_BROWSE_THAW = 1006;
 constexpr int IDC_GTA_PATH = 1007;
 constexpr int IDC_THAW_PATH = 1008;
+constexpr int IDC_BUILDMAP = 1009;
 constexpr int IDC_CHECK0 = 1010; // .. 1010 + kCheckCount - 1
 constexpr UINT WM_MP_STATUS = WM_APP + 1;
 constexpr UINT WM_MP_DONE = WM_APP + 2;
@@ -111,6 +112,7 @@ std::wstring g_rethawedDir;
 std::wstring g_modHome; // 8.38: told to the games as SKATEANDREAS_DIR
 HWND g_gtaPathHwnd = nullptr;
 HWND g_thawPathHwnd = nullptr;
+HWND g_buildHwnd = nullptr;
 
 // ---- logging (same shape as the console launcher) ----
 
@@ -456,6 +458,16 @@ std::vector<SetupCheck> RunChecks()
             c.ok = true;
         out.push_back(c);
     }
+    // 5. the map itself (the map tool's output). Without it there are no rails at all.
+    {
+        SetupCheck c{L"SkateAndreas map built", false, L""};
+        const std::wstring railList = g_modHome + L"\\extracted\\thaw_maps\\_railpool\\rails_in_map.csv";
+        if (GetFileAttributesW(railList.c_str()) == INVALID_FILE_ATTRIBUTES)
+            c.note = L"not built yet - press \"Build the map\" below (needs Python 3)";
+        else
+            c.ok = true;
+        out.push_back(c);
+    }
     return out;
 }
 
@@ -509,6 +521,88 @@ void RefreshChecks()
         SetWindowTextW(g_checkHwnd[i], text.c_str());
         InvalidateRect(g_checkHwnd[i], nullptr, TRUE);
     }
+}
+
+// 8.39: find a working Python 3. Returns the command to use ("python", "python3" or
+// "py -3"), or an empty string when there is none.
+std::wstring FindPython()
+{
+    const wchar_t* candidates[] = {L"python", L"python3", L"py"};
+    for (const wchar_t* exe : candidates) {
+        std::wstring cmd = exe + std::wstring(exe[0] == L'p' && exe[1] == L'y' ? L" -3 --version" : L" --version");
+        STARTUPINFOW si = {};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi = {};
+        if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
+                            &pi))
+            continue;
+        WaitForSingleObject(pi.hProcess, 10000);
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        if (code == 0) return exe;
+    }
+    return L"";
+}
+
+// 8.39: build the map from the player's own GTA (the map tool), in its own console window so
+// they can watch the progress. Then say what to do with the result. The map cannot be shipped
+// with the mod - it is GTA's own collision, converted (DESIGN 8.39).
+void RunMapBuild()
+{
+    const std::wstring python = FindPython();
+    if (python.empty()) {
+        Log("build map: no python found on PATH");
+        SetStatus(L"Python 3 was not found. Install it from python.org (tick \"Add Python to PATH\"), then press Build the map again.");
+        return;
+    }
+    const std::wstring tool = g_modHome + L"\\tools\\gta_to_thaw_map.py";
+    if (GetFileAttributesW(tool.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        Log("build map: %ls is missing", tool.c_str());
+        SetStatus(L"tools\\gta_to_thaw_map.py is missing - it must sit next to the launcher.");
+        return;
+    }
+
+    const std::wstring cmd =
+        python + L" \"" + tool + L"\" \"" + g_gtaDir +
+        L"\" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0"
+        L" --name \"San Andreas (SkateAndreas)\" --folder \"SkateAndreas San Andreas\"";
+    Log("build map: %ls", cmd.c_str());
+    SetStatus(L"Building the map - watch the new window. This takes a few minutes.");
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    std::wstring mutableCmd = cmd;
+    if (!CreateProcessW(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr,
+                        g_modHome.c_str(), &si, &pi)) {
+        Log("build map: could not start it (Windows error %lu)", GetLastError());
+        SetStatus(L"Could not start the map tool. See the logs folder.");
+        return;
+    }
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    Log("build map: finished, exit code %lu", code);
+
+    if (code != 0) {
+        SetStatus(L"The map build stopped with an error - the window that just closed shows where.");
+        return;
+    }
+    SetStatus(L"Map built. Copy its folder from extracted\\thaw_maps\\ into reTHAWed's data\\mod\\UserMods\\Maps\\ "
+              L"- the folder is open for you.");
+    const std::wstring maps = g_modHome + L"\\extracted\\thaw_maps";
+    ShellExecuteW(nullptr, L"open", maps.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+DWORD WINAPI BuildMapThread(LPVOID)
+{
+    RunMapBuild();
+    if (g_hwnd) PostMessageW(g_hwnd, WM_MP_DONE, 0, 0);
+    return 0;
 }
 
 // One line of the launch sequence, run on the worker thread.
@@ -658,22 +752,25 @@ void LayoutControls()
 
     // 8.36: the game folders, so a player on another PC can point them out.
     MakeControl(L"STATIC", L"Game folders:", SS_LEFT, 20, 78, 520, 18, -1, g_fontBold);
-    MakeControl(L"STATIC", L"GTA San Andreas:", SS_LEFT, 28, 102, 116, 18, -1, g_font);
-    g_gtaPathHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 148, 102, 300, 18, IDC_GTA_PATH, g_font);
-    MakeControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 456, 100, 80, 22, IDC_BROWSE_GTA, g_font);
-    MakeControl(L"STATIC", L"reTHAWed:", SS_LEFT, 28, 128, 116, 18, -1, g_font);
-    g_thawPathHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 148, 128, 300, 18, IDC_THAW_PATH, g_font);
-    MakeControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 456, 126, 80, 22, IDC_BROWSE_THAW, g_font);
+    MakeControl(L"STATIC", L"GTA San Andreas:", SS_LEFT, 28, 100, 116, 18, -1, g_font);
+    g_gtaPathHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 148, 100, 300, 18, IDC_GTA_PATH, g_font);
+    MakeControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 456, 98, 80, 22, IDC_BROWSE_GTA, g_font);
+    MakeControl(L"STATIC", L"reTHAWed:", SS_LEFT, 28, 126, 116, 18, -1, g_font);
+    g_thawPathHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 148, 126, 300, 18, IDC_THAW_PATH, g_font);
+    MakeControl(L"BUTTON", L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, 456, 124, 80, 22, IDC_BROWSE_THAW, g_font);
 
-    MakeControl(L"STATIC", L"Setup:", SS_LEFT, 20, 160, 520, 18, -1, g_fontBold);
+    MakeControl(L"STATIC", L"Setup:", SS_LEFT, 20, 156, 520, 18, -1, g_fontBold);
     for (int i = 0; i < kCheckCount; ++i)
-        g_checkHwnd[i] = MakeControl(L"STATIC", L"...", SS_LEFT, 28, 182 + i * 20, 508, 18, IDC_CHECK0 + i, g_font);
+        g_checkHwnd[i] = MakeControl(L"STATIC", L"...", SS_LEFT, 28, 178 + i * 20, 508, 18, IDC_CHECK0 + i, g_font);
     g_hiddenHwnd = MakeControl(L"BUTTON", L"Start reTHAWed minimised (only GTA on screen)",
-                               BS_AUTOCHECKBOX | WS_TABSTOP, 24, 270, 508, 22, IDC_HIDDEN, g_font);
-    MakeControl(L"STATIC", L"Status:", SS_LEFT, 20, 300, 520, 18, -1, g_fontBold);
-    g_statusHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 28, 320, 508, 60, IDC_STATUS, g_font);
-    g_playHwnd = MakeControl(L"BUTTON", L"Play", BS_PUSHBUTTON | WS_TABSTOP, 24, 392, 240, 46, IDC_PLAY, g_fontBold);
-    MakeControl(L"BUTTON", L"Open logs folder", BS_PUSHBUTTON | WS_TABSTOP, 280, 402, 200, 28, IDC_LOGS, g_font);
+                               BS_AUTOCHECKBOX | WS_TABSTOP, 24, 284, 508, 22, IDC_HIDDEN, g_font);
+    MakeControl(L"STATIC", L"Status:", SS_LEFT, 20, 314, 520, 18, -1, g_fontBold);
+    g_statusHwnd = MakeControl(L"STATIC", L"", SS_LEFT, 28, 334, 508, 56, IDC_STATUS, g_font);
+    g_playHwnd = MakeControl(L"BUTTON", L"Play", BS_PUSHBUTTON | WS_TABSTOP, 24, 400, 240, 46, IDC_PLAY, g_fontBold);
+    // 8.39: make the map from GTA's collision, for players who do not want a command prompt.
+    g_buildHwnd = MakeControl(L"BUTTON", L"Build the map...", BS_PUSHBUTTON | WS_TABSTOP, 280, 400, 200, 22,
+                              IDC_BUILDMAP, g_font);
+    MakeControl(L"BUTTON", L"Open logs folder", BS_PUSHBUTTON | WS_TABSTOP, 280, 424, 200, 22, IDC_LOGS, g_font);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -712,6 +809,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_MP_DONE:
         g_running = false;
         if (g_playHwnd) EnableWindow(g_playHwnd, TRUE);
+        if (g_buildHwnd) EnableWindow(g_buildHwnd, TRUE);
+        RefreshChecks(); // the map check may have just gone green
         return 0;
 
     case WM_COMMAND:
@@ -730,6 +829,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (g_playHwnd) EnableWindow(g_playHwnd, FALSE);
             SetStatus(L"Starting...");
             CloseHandle(CreateThread(nullptr, 0, WorkerThread, nullptr, 0, nullptr));
+            break;
+        }
+        case IDC_BUILDMAP: {
+            if (g_running) break;
+            g_running = true;
+            if (g_playHwnd) EnableWindow(g_playHwnd, FALSE);
+            if (g_buildHwnd) EnableWindow(g_buildHwnd, FALSE);
+            SetStatus(L"Looking for Python 3...");
+            CloseHandle(CreateThread(nullptr, 0, BuildMapThread, nullptr, 0, nullptr));
             break;
         }
         case IDC_LOGS: {
@@ -796,7 +904,7 @@ int RunGui(HINSTANCE inst)
         return 1;
     }
 
-    RECT rect = {0, 0, 560, 460};
+    RECT rect = {0, 0, 560, 480};
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRect(&rect, style, FALSE);
 

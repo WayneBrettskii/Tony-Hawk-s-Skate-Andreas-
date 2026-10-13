@@ -45,22 +45,27 @@ folder:
 ## 3. Build the map (once)
 
 SkateAndreas skates on a reTHAWed map made **from your own GTA's collision**, so it can't be
-shipped with the download (it's game data). You make it once:
+shipped with the download — it is GTA's own data, converted. You make it once.
 
-1. Open a command prompt **in the folder holding `SkateAndreas-launcher.exe`**.
-2. Run (adjust the GTA path to yours):
+**The easy way:** press **Build the map...** in the launcher. It opens its own window and runs for
+a few minutes, then opens the folder for you. It needs **Python 3** installed with *"Add Python to
+PATH"* ticked at install time — the launcher tells you if it can't find it.
+
+**The same thing by hand,** if you prefer a command prompt in the launcher's folder:
 
 ```
 python tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0
 ```
 
-   It only reads your GTA. It takes a while and the result is large (tens of MB) — that's normal.
-3. It writes everything into an `extracted\` folder **next to the launcher**. **Leave that folder
-   exactly where it is** — the mod reads the rail list from it every time you play. If you move
-   the launcher, move `extracted\` with it.
-4. Copy the map folder it made there (`extracted\thaw_maps\<something>`) into reTHAWed's
-   `data\mod\UserMods\Maps\`.
-5. **Only one SkateAndreas map may be installed at a time.** If you already have one there,
+Either way, it only reads your GTA, and afterwards:
+
+1. Everything lands in an `extracted\` folder **next to the launcher**. **Leave that folder exactly
+   where it is** — the mod reads the rail list from it every time you play. If you move the
+   launcher, move `extracted\` with it.
+2. Copy the map folder it made (`extracted\thaw_maps\<something>`) into reTHAWed's
+   `data\mod\UserMods\Maps\`. (The launcher cannot do this for you — nothing of ours ever writes
+   inside your reTHAWed folder.)
+3. **Only one SkateAndreas map may be installed at a time.** If you already have one there,
    remove it first.
 
 ---

@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.39 "Build the map..." button in the launcher
+
+**Changed:** `src/launcher/main.cpp`: a **Build the map...** button that finds Python 3 (`python`, `python3`, `py -3`), runs `tools\gta_to_thaw_map.py` in its **own console window** with the whole-map pool arguments (`--box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0`), waits for it, then opens `extracted\thaw_maps\` and says where to copy the result. A **fifth setup check** — "SkateAndreas map built" — looks for `<home>\extracted\thaw_maps\_railpool\rails_in_map.csv`, and says "press Build the map" when it is missing. The window grew to 560x480; Play and the button are disabled while a build runs; `INSTALL.md` step 3 now offers the button first.
+
+**Why:** user 2026-10-12 — making the map from a command prompt is a poor first experience. The map itself **cannot be shipped**: it is GTA's own collision, converted, and redistributing that is what AGENTS.md rule 1 forbids (DESIGN 8.39, and the discussion behind it).
+
+**Tested how:** `--selftest` → **all five checks pass** (the map check green, on a machine where the map is built); `python --version` → `Python 3.11.0`, exit 0, which is exactly what the probe tests; built clean.
+
+**Still broken / not tested:** **the button's own run is not tested** — it would rebuild the ~80 MB map and rewrite the rail pool, so it is the user's to press. The launcher cannot copy the map into reTHAWed (rule 4), so that step stays manual, and **Python 3 stays a requirement**.
+
+**Next:** press Build the map once (the existing map keeps working either way).
+
 ## [2026-10-12] 8.38 a downloaded copy now works wherever it is unzipped
 
 **Changed:** new `src/common/paths.h` — `HomeFolderW()` (the mod's folder, from `SKATEANDREAS_DIR`), `LogFolderW()` and `ExtractedFolderA()`. The launcher (`src/launcher/main.cpp`) computes the home (`ModHome()`: its own folder, unless it is running from a build output folder inside the project — `..\..\logs` exists — in which case the project folder), sets `SKATEANDREAS_DIR` for both games to inherit, and uses the same log folder for its own log and its "Open logs folder" button. `src/gta/main.cpp` and `src/thaw/main.cpp` take their log folder from it; `src/thaw/railscan.cpp` finds the rail pool's two csv files through it (`PoolPath()`). New launcher switch **`--where`** writes the resolved folders to `launcher.log` and exits.
