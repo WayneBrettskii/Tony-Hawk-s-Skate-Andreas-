@@ -35,4 +35,10 @@ void RailTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const floa
 // is on a placed rail (so grinds that stop - e.g. at a palm in a hedge - show).
 void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*log)(const char*, ...));
 
+// 8.33 C2: write the cars' roof rails (published by the GTA plugin over the link)
+// into the pool's reserved slots, so reTHAWed's skater can grind a GTA car.
+// pos = the skater's position: a reserved rail near him is never moved (a rail
+// teleporting under him is what blows the grind up).
+void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)(const char*, ...));
+
 } // namespace mp::thaw

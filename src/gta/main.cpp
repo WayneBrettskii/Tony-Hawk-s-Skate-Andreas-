@@ -49,6 +49,7 @@
 #include "spawner.h"
 #include "tags.h"
 #include "bmxmode.h"
+#include "cars.h"
 #include "gps.h"
 #include "testrail.h"
 #include <atomic>
@@ -123,6 +124,7 @@ void AddHooks()
         g_processCount.fetch_add(1, std::memory_order_relaxed);
         // Phase 2-2: skate mode (does nothing unless toggled on with F7 / L3 + R3).
         mp::gta::SkateModeFrameSafe(g_link, &Log);
+mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
         // Test helper: F8 = move CJ to the map waypoint.
         mp::gta::TeleportFrameSafe(&Log);
         // Phase 3-2: controller into the link (installs its hook the first time).
@@ -490,6 +492,8 @@ DWORD WINAPI MainThread(LPVOID)
             LogThawSkater();
         }
         mp::gta::PadLinkSecond(&Log);
+mp::gta::SkateModeBailTick(); // 8.33 C5: back to skate mode after a car hit
+mp::gta::CarScanSecond(&Log); // 8.33 C1: the GTA cars near CJ (log only)
 
         // 5 s in: has another mod re-hooked the same places since we did?
         if (second == 5 && g_hooksAdded) {

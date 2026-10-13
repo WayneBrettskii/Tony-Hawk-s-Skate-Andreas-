@@ -739,6 +739,8 @@ DWORD WINAPI MainThread(LPVOID)
         // 8.32 R3c: fill the rail pool with the GTA rails near the skater (pool maps only)
         mp::thaw::RailPoolTick(inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
                                sample.readOk && sample.skater ? sample.vel : nullptr, &Log);
+        // 8.33 C2: put the GTA cars' roof rails into the pool's reserved slots
+        mp::thaw::CarRailTick(g_link, inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr, &Log);
         // 8.32 research: F3 (on foot) / F4 (on board) dump the skater's state fields
         mp::thaw::StateFindTick(quickSkater, &Log);
 

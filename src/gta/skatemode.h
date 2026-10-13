@@ -30,6 +30,10 @@ void SkateModeRequestOn(const char* why, unsigned long forMs);
 // rider got on his bike with Square). Also drops a pending request.
 void SkateModeTurnOffNow(LinkBlock* link, LogFn log, const char* why);
 
+// 8.33 C5: after a car hit turned skate mode off, ask for it again once CJ has had
+// time to get up. Call once a second (GTA main thread).
+void SkateModeBailTick();
+
 // 8.29 B3: true while BMX mode is on (bmxmode.cpp).
 bool BmxModeIsOn();
 

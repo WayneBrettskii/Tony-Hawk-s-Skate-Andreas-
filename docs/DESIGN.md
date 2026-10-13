@@ -912,6 +912,24 @@ Asked before special-mode look / map / GTA HUD: (a) tags, (b) freak-out on bails
     - **Steps:** (0) rail sources — grow the finder with tiers B–G above (research the no-collision wires/cables, the train paths, and the Natas marker first, one tier at a time); (1) R3b tool — full rail list + the pool map mode; (2) R3c-1, log only — the plugin finds the pool records by name checksum, parks and reports the pool; (3) R3c-2 — copy local 2-node rails in and out as the skater moves (and, for F, one-node rails); (4) R3d test — grind kerbs, ledges, **bridges, power lines, railroad tracks, building tops and Natas points** anywhere; long runs across a re-fill; no stutter from the updates.
 - **Quality, alongside:** rails are now guessed from shapes (kerb / ledge edges). Once many more fit, the guesses that feel wrong (rails on roof edges, in the middle of slopes) will show; tune the finder then.
 
+### 8.33 GTA cars: grind, stall and skitch (user 2026-10-12; on the wish list since 2026-10-10)
+
+**Asked:** in skate mode, be able to (a) **grind** a GTA car (a rail along its roof/edges) and (b) **skitch** it (hold on and be towed); "stall" alongside.
+
+**What reTHAWed has:** skitching is a reTHAWed/THAW mechanic — rthw.dll has `RT_ToggleSkitching`. But **our level has no vehicles of its own**: the cars are GTA's, and reTHAWed only knows the converted GTA collision. So both features must be driven by our **GTA plugin**, with reTHAWed's skater moved to follow (the same idea as BMX mode, where the GTA bike follows reTHAWed's rider).
+
+**Plan (one step at a time; each tested before the next):**
+- **C1, research (log only, GTA side):** in skate mode, log every GTA car within ~40 m of CJ a few times a second: pool index, model id, position, velocity, whether it has a driver, and the distance. Read only. Tells us what is around, how big the roofs are, and what a skitch would grab.
+- **C2, grind a car:** the pool already moves rails, so add a few **"car rails"** rewritten every frame from a nearby car's matrix — two rails along the roof's long edges at roof height. It is a rail that moves under the skater, so start with a **stopped/slow** car and decide afterwards about moving ones. Never touch the rail the skater is on (as with the pool).
+- **C3, skitch:** when CJ/the skater is behind a moving car and the player asks (a held button), drive the skater to follow the car (position behind its rear, velocity matched) and show CJ holding on. First try reTHAWed's own skitch: if `RT_ToggleSkitching` on makes reTHAWed skitch a moving object, we may be able to feed it the car's proxy rather than faking the tow ourselves.
+- **C4, stall:** decide what "stall" means here (reTHAWed's stall is a trick on a ramp lip) and whether cars can host it; likely last.
+
+**Risks:** a rail moving under the skater while he grinds it (we write from our plugin thread); the car driving away mid-grind; CJ's own collision with the car while he is supposed to be holding on.
+
+**State so far (2026-10-12, committed):** the car scan (C1) works; parks/slow cars give roof rails and **that grind works**; buildings/rails unaffected. **A moving rail cannot be ground** — reTHAWed's grind maths goes to NaN and takes GTA's screen with it, so car rails are stopped/slow only, and a reserved car rail near the skater is never moved (that teleport was the trigger). The velocity tow (C3) does not save a moving grind. The solid push-out (C5) works against the car's collision box, but a **moving** car still drives through CJ (his position is re-imposed every frame). The car-hit bail fires but is unreliable. **Next:** skitch (a grab / tow on a moving car, no rail).
+
+**Order:** C1 (data) → C2 (grind) and C3 (skitch); C4 later.
+
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 
 **Asked:** the slow motion already works in GTA (CJ follows the skater, who moves slower), but it should also look like reTHAWed's: its screen effect. Not planned yet. To find first: how reTHAWed knows Focus is on (a flag or time scale we can read), and what its effect draws (probably a full-screen pass near the end of the frame; the H1 frame log taken during Focus will show it). Then choose: copy the effect's look in GTA with our own full-screen pass, or catch reTHAWed's. Sound (if Focus changes it) to check too.

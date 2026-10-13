@@ -317,13 +317,14 @@ constexpr float kPoolParkX = -30000.0f;   // spare rails park here, below the ma
 constexpr float kPoolParkY = -6000.0f;
 
 struct RealRail { float a[3], b[3]; };
-struct PoolSlot { unsigned long a = 0, b = 0; int rail = -1; };
+struct PoolSlot { unsigned long a = 0, b = 0; int rail = -1; bool reserved = false; };
 
 std::vector<RealRail> g_realRails;
 int g_realSkipped = 0;
 bool g_realTried = false, g_realOk = false;
 
 std::vector<PoolSlot> g_slots;
+int g_carFirst = 0; // first pool slot reserved for GTA car roof rails (8.33)
 std::vector<int> g_mark, g_held;
 int g_fillId = 0;
 bool g_poolBuilt = false, g_poolOff = false;
@@ -402,6 +403,10 @@ bool BuildSlots(void (*log)(const char*, ...))
         g_slots.push_back(s);
     }
     log("rail pool: %zu pool rails in the block (0x%08lX..0x%08lX)", g_slots.size(), base, base + count * 0x60);
+    // 8.33: reserve the last few slots for GTA car roof rails (the fill must not touch them)
+    g_carFirst = static_cast<int>(g_slots.size()) - kCarRailCars * 2;
+    if (g_carFirst < 0) g_carFirst = 0;
+    for (size_t s = static_cast<size_t>(g_carFirst); s < g_slots.size(); ++s) g_slots[s].reserved = true;
     return !g_slots.empty();
 }
 
@@ -457,7 +462,7 @@ void PoolFill(const float* pos, void (*log)(const char*, ...))
     for (size_t i = 0; i < keep; ++i) {
         const int idx = cand[i].second;
         if (g_held[idx] == g_fillId) continue;
-        while (freeAt < slots && g_slots[freeAt].rail >= 0) ++freeAt;
+        while (freeAt < slots && (g_slots[freeAt].rail >= 0 || g_slots[freeAt].reserved)) ++freeAt;
         if (freeAt >= slots) break;
         PoolSlot& sl = g_slots[freeAt++];
         WriteRail(sl.a, sl.b, g_realRails[idx].a, g_realRails[idx].b);
@@ -659,6 +664,48 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
                 log("rail pool: left the placed rail");
             g_onRail = on;
         }
+    }
+}
+
+
+void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)(const char*, ...))
+{
+    (void)log;
+    if (!inOurLevel || !link || !g_poolBuilt) return;
+    if (g_slots.empty() || g_carFirst >= static_cast<int>(g_slots.size())) return;
+    static float pts[kCarRailCars * kCarRailPts * 3];
+    int cars = ReadCarRails(link, pts, static_cast<int>(sizeof(pts) / sizeof(pts[0])));
+    if (cars < 0) cars = 0;
+    if (cars > kCarRailCars) cars = kCarRailCars;
+    int used = 0;
+    for (int c = 0; c < cars; ++c) {
+        // reject a bad car (NaN / absurd coordinates) before touching the pool
+        bool ok = true;
+        for (int k = 0; k < kCarRailPts * 3; ++k) {
+            const float f = pts[c * kCarRailPts * 3 + k];
+            if (!(f > -5.0e6f && f < 5.0e6f)) ok = false;
+        }
+        if (!ok) continue;
+        for (int r = 0; r < 2; ++r) {
+            const int slot = g_carFirst + c * 2 + r;
+            if (slot >= static_cast<int>(g_slots.size())) break;
+            const float* a = pts + (c * kCarRailPts + r * 2) * 3;
+            WriteRail(g_slots[slot].a, g_slots[slot].b, a, a + 3);
+            ++used;
+        }
+    }
+    // park the reserved slots that have no car this pass - but never move one the
+    // skater is near (that teleport is what turns his physics to NaN)
+    for (int slot = g_carFirst + used; slot < static_cast<int>(g_slots.size()); ++slot) {
+        if (pos) {
+            __try {
+                const float* cur = reinterpret_cast<const float*>(g_slots[slot].a + 0x20);
+                const float dx = pos[0] - cur[0], dy = pos[1] - cur[1], dz = pos[2] - cur[2];
+                if (dx * dx + dy * dy + dz * dz < 4.0f * 4.0f) continue;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            }
+        }
+        ParkRail(g_slots[slot].a, g_slots[slot].b, slot);
     }
 }
 

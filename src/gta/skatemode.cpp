@@ -27,6 +27,11 @@
 #include "CStreaming.h"
 #include "CTimer.h"
 #include "CWorld.h"
+#include "CPools.h"
+#include "CVehicle.h"
+#include "CModelInfo.h"
+#include "CColModel.h"
+#include "CBox.h"
 #include "common.h"
 #include <windows.h>
 
@@ -514,6 +519,104 @@ void PlaceBoardFromThaw(const SkaterShared& s, const Vec3& t, float scale, LogFn
 const char* g_requestWhy = nullptr;
 ULONGLONG g_requestUntil = 0;
 
+// 8.33 C5: is a fast car on top of CJ? (then he should bail)
+ULONGLONG g_bailResumeAt = 0;
+
+bool FastCarOnCj(CPlayerPed* ped, LogFn log)
+{
+    __try {
+        auto* pool = CPools::ms_pVehiclePool;
+        if (!pool || !ped) return false;
+        const CVector c = ped->GetPosition();
+        for (int i = 0; i < pool->m_nSize; ++i) {
+            CVehicle* v = pool->GetAt(i);
+            if (!v) continue;
+            const CVector p = v->GetPosition();
+            const CVector d = c - p;
+            const float dist = d.Magnitude();
+            if (dist > 4.0f) continue;
+            const CVector sp = v->m_vecMoveSpeed;
+            const float speed = sp.Magnitude();
+            const float toward = dist > 1e-3f ? (sp.x * d.x + sp.y * d.y) / (dist * speed > 1e-3f ? dist * speed : 1e-3f) : 0.0f;
+            // diagnostic: a car this close, with its speed and how head-on it is
+            static DWORD lastLog = 0;
+            const DWORD now = GetTickCount();
+            if (speed > 0.05f && now - lastLog > 500) {
+                lastLog = now;
+                log("car hit check: model %d %.1f m away, speed %.2f, head-on %.2f (bail if < 2.2 m, > 0.2, > 0.5)",
+                    static_cast<int>(v->m_nModelIndex), dist, speed, toward);
+            }
+            if (dist > 2.2f) continue; // must be right on top of him
+            if (speed < 0.3f) continue; // faster than ordinary traffic (the Julius Thruway sort of speed)
+            if (toward < 0.5f) continue; // and driving into him, not just passing
+            return true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return false;
+}
+
+// 8.33: cars are solid to CJ (user 2026-10-12). If the spot we are about to put him
+// at is inside a car, move it to the nearest face of that car: usually up onto the
+// roof, else out to a side. So he stands on or against the car instead of clipping
+// through it or shoving it.
+void PushOutOfCars(Vec3& t, LogFn log)
+{
+    __try {
+        auto* pool = CPools::ms_pVehiclePool;
+        if (!pool) return;
+        static DWORD lastLog = 0;
+        for (int i = 0; i < pool->m_nSize; ++i) {
+            CVehicle* v = pool->GetAt(i);
+            if (!v) continue;
+            const CVector p = v->GetPosition();
+            if (fabsf(p.x - t.x) > 6.0f || fabsf(p.y - t.y) > 6.0f || fabsf(p.z - t.z) > 6.0f) continue;
+            const CVector r = v->GetRight(), f = v->GetForward(), u = v->GetUp();
+            const float rx = t.x - p.x, ry = t.y - p.y, rz = t.z - p.z;
+            float l[3] = {rx * r.x + ry * r.y + rz * r.z, rx * f.x + ry * f.y + rz * f.z,
+                          rx * u.x + ry * u.y + rz * u.z};
+            float mn[3] = {-0.9f, -2.2f, -0.8f}, mx[3] = {0.9f, 2.2f, 0.8f};
+            CBaseModelInfo* mi =
+                CModelInfo::ms_modelInfoPtrs ? CModelInfo::ms_modelInfoPtrs[v->m_nModelIndex] : nullptr;
+            CColModel* col = mi ? mi->m_pColModel : nullptr;
+            if (col) {
+                mn[0] = col->m_boundBox.m_vecMin.x;
+                mn[1] = col->m_boundBox.m_vecMin.y;
+                mn[2] = col->m_boundBox.m_vecMin.z;
+                mx[0] = col->m_boundBox.m_vecMax.x;
+                mx[1] = col->m_boundBox.m_vecMax.y;
+                mx[2] = col->m_boundBox.m_vecMax.z;
+            }
+            const float rad = 0.3f, bodyUp = 1.8f;
+            const bool inside = !(l[0] < mn[0] - rad || l[0] > mx[0] + rad || l[1] < mn[1] - rad ||
+                                  l[1] > mx[1] + rad || l[2] > mx[2] || l[2] + bodyUp < mn[2]);
+            const DWORD now = GetTickCount();
+            if (now - lastLog > 500) {
+                lastLog = now;
+                log("car solid check: model %d box %.2f %.2f %.2f .. %.2f %.2f %.2f | CJ local %.2f %.2f %.2f | %s",
+                    static_cast<int>(v->m_nModelIndex), mn[0], mn[1], mn[2], mx[0], mx[1], mx[2], l[0], l[1], l[2],
+                    inside ? "INSIDE -> push out" : "outside");
+            }
+            if (!inside) continue;
+            // move him the least distance out: up onto the roof, or out the nearest side
+            const float oTop = mx[2] - l[2];
+            const float oXl = l[0] - (mn[0] - rad), oXr = (mx[0] + rad) - l[0];
+            const float oYl = l[1] - (mn[1] - rad), oYr = (mx[1] + rad) - l[1];
+            float best = oTop;
+            int axis = 2;
+            float goal = mx[2];
+            if (oXl < best) { best = oXl; axis = 0; goal = mn[0] - rad; }
+            if (oXr < best) { best = oXr; axis = 0; goal = mx[0] + rad; }
+            if (oYl < best) { best = oYl; axis = 1; goal = mn[1] - rad; }
+            if (oYr < best) { best = oYr; axis = 1; goal = mx[1] + rad; }
+            l[axis] = goal;
+            t = Vec3{p.x + r.x * l[0] + f.x * l[1] + u.x * l[2], p.y + r.y * l[0] + f.y * l[1] + u.y * l[2],
+                     p.z + r.z * l[0] + f.z * l[1] + u.z * l[2]};
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void SkateModeFrame(LinkBlock* link, LogFn log)
 {
     CPlayerPed* ped = FindPlayerPed();
@@ -626,6 +729,15 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         TurnOff(ped, pad, link, log, "reTHAWed changed level");
         return;
     }
+    // 8.33 C5: a fast car hit CJ -> he bails. Skate mode goes off so GTA's own
+    // physics knocks him over (while we drive him he would just shove the car),
+    // and it is requested again after he has had a moment to get up.
+    if (FastCarOnCj(ped, log)) {
+        log("skate mode: a fast car hit CJ: bailing (skate mode off; back on once he is up)");
+        g_bailResumeAt = GetTickCount64() + 3500;
+        TurnOff(ped, pad, link, log, "hit by a car");
+        return;
+    }
     // 8.32: do NOT keep our control bit set here: while any DisablePlayerControls bit
     // is set, GTA's camera ignores the right stick (user 2026-10-12: "can't move the
     // camera in skate mode"). The pad is blanked every frame anyway, so CJ still gets
@@ -723,6 +835,9 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         ++g.clamps;
     }
 
+    // 8.33: keep CJ out of the cars (they are solid to him)
+    PushOutOfCars(t, log);
+
     ped->SetPosn(CVector(t.x, t.y, t.z));
     ped->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
     float heading = 0.0f;
@@ -804,6 +919,14 @@ bool SkateModeThawToGta(const float thawPos[3], const float thawDir[3], float gt
     gtaPos[0] = t.x; gtaPos[1] = t.y; gtaPos[2] = t.z;
     gtaDir[0] = d.x / len; gtaDir[1] = d.y / len; gtaDir[2] = d.z / len;
     return true;
+}
+
+void SkateModeBailTick()
+{
+    if (g_bailResumeAt && GetTickCount64() >= g_bailResumeAt) {
+        g_bailResumeAt = 0;
+        SkateModeRequestOn("getting up after a car hit", 3000);
+    }
 }
 
 void SkateModeRequestOn(const char* why, unsigned long forMs)

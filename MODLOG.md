@@ -2,6 +2,46 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.33 C5: car-hit bail + solid cars (state as committed)
+
+**Changed:** `src/gta/skatemode.cpp`: `FastCarOnCj` (a car within 2.2 m, faster than ~18 m/s, driving into CJ -> skate mode off; `SkateModeBailTick`, called once a second from `main.cpp`, asks for it again after 3.5 s). `PushOutOfCars` (the spot we are about to put CJ at is moved to the nearest face of a car's box, so he stands on / against it). `src/gta/cars.cpp`: cars give roof rails only when stopped / slow (`m_vecMoveSpeed < 0.05`). `src/thaw/railscan.cpp`: a reserved car rail the skater is near is never moved.
+
+**Why:** user 2026-10-12: cars should be solid to CJ, and a fast car should knock him off (bail).
+
+**Tested how:** many in-game runs; `gta.log` diagnostics `car solid check` (car box + CJ's local spot + inside/outside) and `car hit check` (distance, speed, head-on).
+
+**Result / state:** the push-out works (log: "INSIDE -> push out") but against the car's **collision box**, which can be smaller than the visible car. A **moving** car still drives through CJ: his position is re-imposed every frame, so a re-posed ped cannot block a car. The bail fires but its window (on him + head-on + fast) is narrow: it is unreliable and can fire when CJ skates into traffic. The trail: moving-car grinds blew the skater's physics to NaN (a moving rail cannot be ground), so rails are for stopped / slow cars only; parked-car grinding works. **Next:** skitch — a grab / tow on a moving car with no rail.
+
+## [2026-10-12] 8.33 C3 (first cut): the car tow (velocity match)
+
+**Changed:** `src/thaw/bmx.cpp`: new `CarTowGameThread` (called from the game thread). While the skater is on a car roof rail (nearest published car segment, close sideways, part way along), it sets the skater's **velocity** (object +0xC8) to the car's, worked out from how far the rail moved since the last tick. Also validates the delta (finite, plausible) first. New `cars: towing ...` log line in `BmxSecond`.
+
+**Why:** user 2026-10-12: grinding a **moving** car rails blew the skater's physics to NaN (reTHAWed's grind assumes a still rail). Matching his velocity to the car's carries him along, so the rail stays ~still relative to him — THAW's skitch.
+
+**Tested how:** builds clean with MSVC. Not run in the game yet.
+
+**Result:** not tested yet. Test: grind a moving NPC car; expect it to hold and carry him (no yellow-screen glitch); `thaw.log` shows `cars: towing in N frames`.
+
+## [2026-10-12] 8.33 C2 (first cut): car roof rails into the rail pool
+
+**Changed:** `src/common/link.h` (version 14, `PublishCarRails` / `ReadCarRails`): the GTA plugin publishes up to 8 cars' roof rails (each car: 2 rails along the roof's long edges, a 2-point segment each) in THAW units. `src/gta/cars.cpp`: `CarTick` (every frame, skate mode) finds cars within 22 m of CJ, sizes the roof from the model's bounding box (fallbacks), converts to THAW, validates every coordinate, and publishes. `src/thaw/railscan.cpp`: `CarRailTick` reserves the pool's last 16 slots for cars and rewrites them each pass (validating too); the pool fill skips reserved slots.
+
+**Why:** user 2026-10-12: grind GTA cars (all cars, including moving). DESIGN 8.33.
+
+**Tested how:** builds; user ran it.
+
+**Result:** the user could grind the spawned car and NPC cars, but then **the skater's velocity went NaN**, reTHAWed stopped producing frames, and GTA's screen went yellow (CJ's position came from the NaN skater). Two likely causes: (a) a bad roof box producing bad/NaN rail coordinates (now blocked by validation on both sides); (b) grinding a **moving** rail — reTHAWed's grind physics assumes a static rail, so a rail sliding under the skater can blow up (this is why THAW uses skitch for moving cars). Next test decides which; move to C3 (skitch/tow) for moving cars if it is (b).
+
+## [2026-10-12] 8.33 C1: list the GTA cars near CJ (log only)
+
+**Changed:** new `src/gta/cars.{h,cpp}` (+ `main.cpp`, `CMakeLists.txt`): once a second while skate / BMX mode is on, walks GTA's vehicle pool and logs every car within 40 m of CJ — pool index, model id, position, speed, whether it has a driver, health. Read only.
+
+**Why:** user 2026-10-12: make GTA cars grindable and skitchable. reTHAWed has skitching (`RT_ToggleSkitching` in rthw.dll) but our level has no vehicles; the cars are GTA's, so both features must be driven from the GTA plugin. Plan in DESIGN 8.33; this is step C1 (data).
+
+**Tested how:** builds clean with MSVC. Not run in the game yet.
+
+**Result:** not tested yet. Test: spawn a car near CJ (F6), turn skate mode on, check `gta.log` for `car N: model ...` lines.
+
 ## [2026-10-12] 8.32 research: Natas spins (ruled out; needs THAW objects) + rail terrain/flag options
 
 **Changed:** `tools/gta_to_thaw_map.py`: new `--rail-terrain NAME` and `--rail-flag NAME` (write a TerrainType / an extra flag item on every rail node; defaults unchanged). `src/thaw/railscan.cpp`: F4 places a degenerate "point" rail (~10 cm, hydrant/pole height) beside the existing F5 25 m rail.

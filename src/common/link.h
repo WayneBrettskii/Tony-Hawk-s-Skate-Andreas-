@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 13;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2); 11: bike parts (8.29 B7); 12: dropped bike (8.29 B12); 13: test rail (8.32 R3b)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v13";
+constexpr LONG kLinkVersion = 14;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2); 11: bike parts (8.29 B7); 12: dropped bike (8.29 B12); 13: test rail (8.32 R3b); 14: car roof rails (8.33)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v14";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -100,6 +100,13 @@ constexpr LONG kTagNow = 0x10000;        // bit 16: skater is spraying a tag rig
 constexpr LONG kTagWatchOk = 0x20000;    // bit 17: the THAW side's tag watch is working
 constexpr LONG kTagOnWall = 0x40000;     // bit 18: the last finished tag went on a wall (else the ground)
 constexpr LONG kTagSpotOk = 0x80000;     // bit 19: thawTagPos / thawTagNormal hold the last tag's spot
+
+// 8.33 cars (version 14): the GTA plugin publishes the roof rails of the cars
+// near CJ so reTHAWed's skater can grind them. Each car gives two rails (its
+// roof's left and right edge), each a 2-point segment, in THAW units:
+// gtaCarRail[(car*4 + i)*3 + 0..2], i = 0..3 (rail 0 a/b, rail 1 a/b).
+constexpr int kCarRailCars = 8;
+constexpr int kCarRailPts = 4;
 
 struct LinkBlock {
     volatile LONG magic;    // kLinkMagic once set up (0 in a brand-new block)
@@ -184,8 +191,14 @@ struct LinkBlock {
     // 0 = no test rail (none placed yet, or the level went away).
     volatile float thawTestRail[6];
     volatile LONG thawTestRailOn;
+    // ---- 8.33 cars (version 14), written by the GTA plugin: the roof rails of
+    // the cars near CJ (see kCarRailCars above), under gtaCarSeq (a sequence
+    // lock like thawSeq). gtaCarCount cars, 0 = none.
+    volatile LONG gtaCarSeq;
+    volatile LONG gtaCarCount;
+    volatile float gtaCarRail[kCarRailCars * kCarRailPts * 3];
 };
-static_assert(sizeof(LinkBlock) == 664, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 1056, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {
@@ -296,8 +309,43 @@ inline bool ReadInputShared(const LinkBlock* b, InputShared& out)
     return false;
 }
 
-enum class LinkOpenResult { Ok, MappingFailed, ViewFailed, WrongLayout };
+// 8.33 cars, GTA side (the only writer): publish the roof rails of the cars near
+// CJ (count cars x kCarRailPts x 3 floats, see kCarRailCars).
+inline void PublishCarRails(LinkBlock* b, int count, const float* pts)
+{
+    if (count < 0) count = 0;
+    if (count > kCarRailCars) count = kCarRailCars;
+    const LONG seq = b->gtaCarSeq;
+    InterlockedExchange(&b->gtaCarSeq, seq + 1); // odd: writing
+    b->gtaCarCount = count;
+    const int n = count * kCarRailPts * 3;
+    for (int i = 0; i < n; ++i) b->gtaCarRail[i] = pts[i];
+    InterlockedExchange(&b->gtaCarSeq, seq + 2); // even: done
+}
 
+// THAW side: copy them out. Returns the number of cars (0 if none / unstable).
+inline int ReadCarRails(const LinkBlock* b, float* out, int floats)
+{
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const LONG s1 = b->gtaCarSeq;
+        if (s1 & 1) { YieldProcessor(); continue; }
+        MemoryBarrier();
+        int count = b->gtaCarCount;
+        if (count < 0) count = 0;
+        if (count > kCarRailCars) count = kCarRailCars;
+        int n = count * kCarRailPts * 3;
+        if (n > floats) {
+            count = floats / (kCarRailPts * 3);
+            n = count * kCarRailPts * 3;
+        }
+        for (int i = 0; i < n; ++i) out[i] = b->gtaCarRail[i];
+        MemoryBarrier();
+        if (b->gtaCarSeq == s1) return count;
+    }
+    return 0;
+}
+
+enum class LinkOpenResult { Ok, MappingFailed, ViewFailed, WrongLayout };
 // Open the shared block, creating it if this side is first.
 // On success `block` points into the shared memory and `createdHere` says
 // whether this side created it. `error` gets the Windows error number on failure.

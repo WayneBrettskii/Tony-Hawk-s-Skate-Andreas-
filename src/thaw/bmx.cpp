@@ -159,6 +159,91 @@ bool BmxCodeChecksPass(void (*log)(const char*, ...))
     return true;
 }
 
+// 8.33 C3: the car tow. While the skater is on a car's roof rail (published by the
+// GTA plugin), set his velocity to that car's, so the game carries him along with
+// the car and the rail stays (almost) still relative to him: grinding a moving car,
+// THAW-skitch style. Setting the velocity (not the position) is smooth and cannot
+// teleport him, so it cannot blow the physics up the way a moving rail alone did.
+LONG g_towFrames = 0;
+bool g_towValid = false;
+int g_towCar = -1, g_towRail = -1;
+float g_towMid[3] = {};
+ULONGLONG g_towTick = 0;
+
+void CarTowGameThread(LinkBlock* link, unsigned long skater)
+{
+    if (!link || !skater || link->gtaSkateMode != 1) {
+        g_towValid = false;
+        return;
+    }
+    float pts[kCarRailCars * kCarRailPts * 3];
+    const int cars = ReadCarRails(link, pts, static_cast<int>(sizeof(pts) / sizeof(pts[0])));
+    if (cars <= 0) {
+        g_towValid = false;
+        return;
+    }
+    float sp[3];
+    __try {
+        const float* p = reinterpret_cast<const float*>(skater + 0x68);
+        sp[0] = p[0];
+        sp[1] = p[1];
+        sp[2] = p[2];
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_towValid = false;
+        return;
+    }
+    // the car roof rail the skater is on (nearest segment, close sideways, part way along)
+    int bc = -1, br = -1;
+    float bestSide = 1e9f, bestMid[3] = {};
+    for (int c = 0; c < cars; ++c) {
+        for (int r = 0; r < 2; ++r) {
+            const float* a = pts + (c * kCarRailPts + r * 2) * 3;
+            const float* b = a + 3;
+            float d[3], s[3];
+            for (int k = 0; k < 3; ++k) { d[k] = b[k] - a[k]; s[k] = sp[k] - a[k]; }
+            const float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if (dd < 1e-6f) continue;
+            const float t = (s[0] * d[0] + s[1] * d[1] + s[2] * d[2]) / dd;
+            if (t <= 0.0f || t >= 1.0f) continue;
+            float off[3];
+            for (int k = 0; k < 3; ++k) off[k] = sp[k] - (a[k] + d[k] * t);
+            const float side = sqrtf(off[0] * off[0] + off[2] * off[2]);
+            if (side < 20.0f && fabsf(off[1]) < 30.0f && side < bestSide) {
+                bestSide = side;
+                bc = c;
+                br = r;
+                for (int k = 0; k < 3; ++k) bestMid[k] = a[k] + d[k] * 0.5f;
+            }
+        }
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (bc < 0) {
+        g_towValid = false;
+        return;
+    }
+    if (g_towValid && g_towCar == bc && g_towRail == br && now > g_towTick) {
+        const float dt = static_cast<float>(now - g_towTick) / 1000.0f;
+        float delta[3];
+        for (int k = 0; k < 3; ++k) delta[k] = bestMid[k] - g_towMid[k];
+        const float dl = sqrtf(delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]);
+        if (dt > 0.005f && dl > 0.5f && dl < 400.0f) { // the car actually moved: tow
+            __try {
+                float* v = reinterpret_cast<float*>(skater + 0xC8);
+                v[0] = delta[0] / dt;
+                v[1] = delta[1] / dt;
+                v[2] = delta[2] / dt;
+                ++g_towFrames;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            }
+        }
+    }
+    g_towCar = bc;
+    g_towRail = br;
+    for (int k = 0; k < 3; ++k) g_towMid[k] = bestMid[k];
+    g_towTick = now;
+    g_towValid = true;
+}
+
 void BmxGameThreadTick(LinkBlock* link)
 {
     if (!g_ok || !link) return;
@@ -190,6 +275,9 @@ void BmxGameThreadTick(LinkBlock* link)
         }
         InterlockedExchange(&link->thawPlaceDone, placeSeq); // done (or given up), either way once
     }
+
+    // 8.33 C3: carry the skater with a moving car he is grinding
+    CarTowGameThread(link, skater);
 
     LONG wish = link->gtaBikeWish;
     if (now - static_cast<DWORD>(link->reserved[2]) > kStaleMs) wish = kBikeLeave; // GTA gone
@@ -235,6 +323,9 @@ void BmxSecond(void (*log)(const char*, ...))
             g_posBefore[1], g_posBefore[2], g_oldBefore[0], g_oldBefore[1], g_oldBefore[2],
             sqrtf(dx * dx + dy * dy + dz * dz));
     }
+    const LONG tf = InterlockedExchange(&g_towFrames, 0);
+    if (tf)
+        log("cars: towing in %ld frames this second (skater velocity matched to the car)", tf);
 }
 
 } // namespace mp::thaw

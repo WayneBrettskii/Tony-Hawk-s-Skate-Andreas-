@@ -21,7 +21,7 @@ if(NOT EXISTS "${PLUGIN_SDK_LIB}")
 endif()
 
 # --- GTA San Andreas plugin: my-passthrough.asi ---
-add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp src/gta/recorder.cpp src/gta/pacer.cpp src/gta/hudshow.cpp src/gta/radio.cpp src/gta/spawner.cpp src/gta/tags.cpp src/gta/bmxmode.cpp src/gta/blend.cpp src/gta/gps.cpp src/gta/testrail.cpp)
+add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp src/gta/recorder.cpp src/gta/pacer.cpp src/gta/hudshow.cpp src/gta/radio.cpp src/gta/spawner.cpp src/gta/tags.cpp src/gta/bmxmode.cpp src/gta/blend.cpp src/gta/gps.cpp src/gta/testrail.cpp src/gta/cars.cpp)
 
 # Match plugin-sdk's own settings for SA plugins (its tools/premake/premake5.lua):
 # GTA SA 1.0 US, newest C++ standard, multi-byte characters, /sdl- off.
