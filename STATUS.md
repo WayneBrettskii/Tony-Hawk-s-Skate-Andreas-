@@ -1,4 +1,76 @@
-# WHERE WE LEFT OFF (2026-10-12 10:45)
+# WHERE WE LEFT OFF (2026-10-12 23:30)
+
+**Read in this order:** `AGENTS.md` (the hard rules — they are not optional), `README.md` (what
+works / what doesn't, kept honest), then this. `docs/DESIGN.md` is "how it works", one numbered
+section per feature; `MODLOG.md` is the change history, newest first. Where this file and the
+code disagree, the code and the logs win — and fix this file.
+
+**What the project is.** reTHAWed (a Tony Hawk's American Wasteland reimplementation) runs
+hidden behind GTA San Andreas: GTA draws the world and keeps its story, reTHAWed does the
+skating. The two talk over a named shared-memory block (`src/common/link.h`) — **both plugins
+include it, so they must always be rebuilt together.**
+
+**Names (renamed 2026-10-12).** The mod is **Tony Hawk's SkateAndreas**. Files:
+`SkateAndreas.asi` (GTA), `SkateAndreas-thaw.dll` (reTHAWed), `SkateAndreas-launcher.exe`. GTA's
+Mod Loader folder is `D:\Games\GTA San Andreas\modloader\SkateAndreas\`. **The repo folder is
+still `D:\Mods\my-passthrough`** (deliberate — it is not worth the churn). Anything that reads
+like a *folder* path still says `my-passthrough`; do not "fix" those.
+
+**Build and test.**
+- Build: `cmake --build build --config Release`, with CMake at
+  `C:\Program Files\Microsoft Visual Studio\18\Community\...\CMake\bin\cmake.exe`. It copies
+  `SkateAndreas.asi` into the Mod Loader folder.
+- **GTA must be restarted** for a new `.asi`; reTHAWed must be restarted (through the launcher)
+  for a new `.dll`. A stale build is the most common false result.
+- MSBuild sometimes does not relink: if the `.asi` timestamp does not change, touch a source
+  file and rebuild.
+- **The launcher window holds its own `.exe` open** — close it before rebuilding or the link
+  fails with LNK1104.
+- Logs: `logs\gta.log`, `logs\thaw.log`, `logs\launcher.log` (previous run kept as `.prev.log`).
+  `SkateAndreas-launcher.exe --selftest` runs the setup checks without starting a game.
+- The agent cannot see the game. **Instrument and read the logs** (AGENTS.md). The user plays and
+  reports; they are the only eye on the screen.
+
+**Traps that cost the most time — read before touching anything.**
+- **THAW units are inches** (`scale = 0.0254` m per unit). A range check written in "metres" is
+  ~40x off. This wasted a whole round on the skitch.
+- The plugin only recognises levels it has an alignment for (`src/common/convert.h`). With no
+  alignment it falls back to "relative" placement and **CJ floats**. The whole-map level is
+  `0x9F014B98` = `qbkey("load_MPGTALSE")`.
+- `0x99CE4D72` is **`qbkey("load_z_mainmenu")`** — reTHAWed's *front-end* level, not a map. Do
+  not add it as an alignment (that mistake is recorded in `convert.h` and DESIGN 8.35).
+- A rail that **moves** under the skater blows reTHAWed's grind maths to NaN → GTA yellow screen
+  + `drawn 0`. Never move a rail the skater is near (the pool has reserved slots for this).
+- reTHAWed's front end **only polls the pad once the player touches it**, and reads nothing
+  while GTA is the front window. Feeding it synthetic input cannot work (DESIGN 8.35).
+
+**Working now (all tested on the real games).** Skate mode across the whole map; the camera fix
+(the right stick works in skate / BMX mode); rails everywhere (a 4,500-rail pool that follows
+the skater, long rails, tall ledges, building and bridge tops, GTA's railroad tracks); parked
+and slow cars are grindable on their roofs and **skitch** works (hold **L1** near a moving car);
+BMX mode with GTA's bike following reTHAWed's rider; the radio wheel; graffiti tags; the GPS
+route line; smooth 60 fps; the **GUI launcher** (Play starts both games, setup checks, game
+folders pickable, remembered in `SkateAndreas.ini`); and the **on-screen hints**
+(`Press L3+R3 to Skate` once a session, `Press L3+R3 to toggle BMX mode`).
+
+**Dead ends and known-bad — do not re-tread.**
+- **Grinding a moving car** → NaN. The skitch is the answer; do not try to tow the rail.
+- **Starting in free skate on Play** — dead end, DESIGN 8.35, code in `src/thaw/autostart.cpp`
+  switched off. Two routes tried; both explained there.
+- **Natas spins** need THAW objects our map has no equivalent for (DESIGN 8.33 F).
+- **Power lines / cables** as rails — deferred (the wire geometry is quantised).
+- A moving car still drives through CJ, and cars brake for him: a re-posed ped cannot block a
+  car. This is inherent, not a bug to chase.
+
+**Wish list (user, 2026-10-10, DESIGN 8.28):** park-editor ramps across San Andreas, board whack
+(a melee hit with the board), shoot mode for skate / BMX; then water.
+
+**Nothing is in flight** — the user is playing and reporting. Take whatever they ask for next,
+write the plan into `docs/DESIGN.md` first (AGENTS.md), and do one change at a time.
+
+---
+
+# (older) WHERE WE LEFT OFF (2026-10-12 10:45)
 
 Whole map done (8.31). **Rails (8.32):** whole map = 101,404 rails / 245,951 nodes; 30,000 nodes froze
 reTHAWed after loading. User chose **R3, a rail pool** that follows the skater.
