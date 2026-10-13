@@ -20,6 +20,9 @@
 !/*.md
 !/docs/**/*.md
 
+# The licence (our own file, not a game asset - AGENTS.md rule 1 is about game data)
+!/LICENSE
+
 # Mod source code (only inside src/)
 !/src/**/*.cpp
 !/src/**/*.c
