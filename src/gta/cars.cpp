@@ -36,18 +36,36 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     const CVector c = ped->GetPosition();
     static float pts[kCarRailCars * kCarRailPts * 3];
     int count = 0;
+    float skPos[3] = {}, skVel[3] = {}; // 8.33 skitch: nearest moving car
+    bool skOk = false;
+    float skBest = kRailNear * kRailNear;
     __try {
         auto* pool = CPools::ms_pVehiclePool;
         if (!pool) return;
-        for (int i = 0; i < pool->m_nSize && count < kCarRailCars; ++i) {
+        const float railNear2 = kRailNear * kRailNear;
+        for (int i = 0; i < pool->m_nSize; ++i) {
             CVehicle* v = pool->GetAt(i);
             if (!v) continue;
             const CVector p = v->GetPosition();
-            if ((p - c).Magnitude() > kRailNear) continue;
-            // 8.33: rails on STOPPED / slow cars only. A rail that moves under the
-            // skater blows reTHAWed's grind maths to NaN, so a moving car gives no
-            // rail (user 2026-10-12: option a).
-            if (v->m_vecMoveSpeed.Magnitude() > 0.05f) continue;
+            const float ddx = p.x - c.x, ddy = p.y - c.y, ddz = p.z - c.z;
+            const float dCj = ddx * ddx + ddy * ddy + ddz * ddz;
+            if (dCj > railNear2) continue;
+            const CVector vs = v->m_vecMoveSpeed;
+            const float cspeed = vs.Magnitude();
+            // 8.33 skitch: remember the nearest MOVING car (position + velocity, THAW units)
+            if (cspeed > 0.1f && dCj < skBest) {
+                skBest = dCj;
+                skOk = true;
+                skPos[0] = (p.x - align->offset.x) / align->scale;
+                skPos[1] = (p.z - align->offset.z) / align->scale;
+                skPos[2] = (p.y - align->offset.y) / (align->scale * align->ySign);
+                skVel[0] = vs.x / align->scale;
+                skVel[1] = vs.z / align->scale;
+                skVel[2] = vs.y / (align->scale * align->ySign);
+            }
+            // 8.33: rails on STOPPED / slow cars only (a rail that moves under the
+            // skater blows reTHAWed's grind maths to NaN); at most kCarRailCars of them
+            if (cspeed > 0.05f || count >= kCarRailCars) continue;
             const CVector right = v->GetRight(), fwd = v->GetForward();
             // roof box: from the model's bounding box, with sane fallbacks
             float hw = 0.9f, hl = 2.0f, roof = 1.35f;
@@ -98,6 +116,14 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     PublishCarRails(link, count, pts);
+    // 8.33 skitch: the nearest moving car (values first, then the flag)
+    if (skOk) {
+        for (int k = 0; k < 3; ++k) {
+            link->gtaSkitchPos[k] = skPos[k];
+            link->gtaSkitchVel[k] = skVel[k];
+        }
+    }
+    link->gtaSkitchValid = skOk ? 1 : 0;
 }
 
 void CarScanSecond(void (*log)(const char*, ...))

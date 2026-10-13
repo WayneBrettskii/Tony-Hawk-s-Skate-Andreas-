@@ -2,6 +2,16 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.33 skitch: hold L1 near a moving car and be towed (first cut)
+
+**Changed:** `src/common/link.h`: link **version 15** (name `_v15`, size 1084) + `gtaSkitchValid`, `gtaSkitchPos[3]`, `gtaSkitchVel[3]`. `src/gta/cars.cpp` `CarTick`: while scanning cars it also remembers the nearest **MOVING** car (speed > 0.1, within the same range) and publishes its position and velocity in **THAW units** (no rail). `src/thaw/bmx.cpp`: `CarSkitchGameThread` — while **L1 is held** and that car is within 7 m, the skater's **velocity** (`+0xC8`) is set to the car's every game-thread call; his position is never touched. Called from `BmxGameThreadTick` before its 100 ms gate, so it runs every pad query. Logs `cars: skitching in N frames this second`.
+
+**Why:** user 2026-10-12: "try to get skitching going at least". Moving-car **grinding** was ruled out (a moving rail NaN's the skater's physics); a **tow** (velocity only, no rail) is the safe way to ride a moving car, THAW-skitch style.
+
+**Tested how:** not yet in game — needs a run: hold **L1** next to a moving car and see whether the skater is carried along; `thaw.log` should show `cars: skitching in N frames`.
+
+**Result:** pending. The button (L1) and the 7 m range are the first guesses and can be changed.
+
 ## [2026-10-12] 8.33 C5: car-hit bail + solid cars (state as committed)
 
 **Changed:** `src/gta/skatemode.cpp`: `FastCarOnCj` (a car within 2.2 m, faster than ~18 m/s, driving into CJ -> skate mode off; `SkateModeBailTick`, called once a second from `main.cpp`, asks for it again after 3.5 s). `PushOutOfCars` (the spot we are about to put CJ at is moved to the nearest face of a car's box, so he stands on / against it). `src/gta/cars.cpp`: cars give roof rails only when stopped / slow (`m_vecMoveSpeed < 0.05`). `src/thaw/railscan.cpp`: a reserved car rail the skater is near is never moved.

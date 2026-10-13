@@ -23,8 +23,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 14;         // 2: skater (2-1); 3: controller (3-2); 4: facing + board (R4-2); 5: body (5-3d); 8: tag spot (8.28 a); 9: BMX (8.29); 10: place the rider (8.29 B2); 11: bike parts (8.29 B7); 12: dropped bike (8.29 B12); 13: test rail (8.32 R3b); 14: car roof rails (8.33)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v14";
+constexpr LONG kLinkVersion = 15;         // ... 14: car roof rails (8.33); 15: skitch (8.33)
+constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v15";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -197,8 +197,14 @@ struct LinkBlock {
     volatile LONG gtaCarSeq;
     volatile LONG gtaCarCount;
     volatile float gtaCarRail[kCarRailCars * kCarRailPts * 3];
+    // ---- 8.33 skitch (version 15), written by the GTA plugin: the nearest MOVING
+    // car, so the skater can grab it and be towed (THAW's skitch). Position and
+    // velocity in THAW units; gtaSkitchValid = 1 when there is one.
+    volatile LONG gtaSkitchValid;
+    volatile float gtaSkitchPos[3];
+    volatile float gtaSkitchVel[3];
 };
-static_assert(sizeof(LinkBlock) == 1056, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 1084, "LinkBlock layout changed: bump kLinkVersion");
 
 // One skater sample, as copied out of the block.
 struct SkaterShared {

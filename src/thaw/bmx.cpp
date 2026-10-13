@@ -244,15 +244,50 @@ void CarTowGameThread(LinkBlock* link, unsigned long skater)
     g_towValid = true;
 }
 
+// 8.33 skitch. Hold L1 near a MOVING car and the skater is towed along with it, the
+// skater's own velocity set to the car's (THAW's skitch). No rail is involved, so a
+// moving rail can never blow the grind maths up. The GTA plugin publishes the nearest
+// moving car (position + velocity, THAW units). His position is never touched, only
+// his velocity, so it is smooth and cannot teleport him.
+LONG g_skitchFrames = 0;
+
+void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
+{
+    if (!link || !skater || link->gtaSkateMode != 1) return;
+    InputShared in;
+    if (!ReadInputShared(link, in) || !(in.buttons & kBtnL1)) return;
+    if (link->gtaSkitchValid != 1) return;
+    float cp[3], cv[3];
+    for (int k = 0; k < 3; ++k) {
+        cp[k] = link->gtaSkitchPos[k];
+        cv[k] = link->gtaSkitchVel[k];
+    }
+    __try {
+        const float* p = reinterpret_cast<const float*>(skater + 0x68);
+        const float dx = p[0] - cp[0], dy = p[1] - cp[1], dz = p[2] - cp[2];
+        if (dx * dx + dy * dy + dz * dz > 49.0f) return; // only when he is near the car
+        float* v = reinterpret_cast<float*>(skater + 0xC8);
+        v[0] = cv[0];
+        v[1] = cv[1];
+        v[2] = cv[2];
+        ++g_skitchFrames;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void BmxGameThreadTick(LinkBlock* link)
 {
     if (!g_ok || !link) return;
+
+    unsigned long skater = 0;
+    const int onBike = ReadOnBike(skater);
+    // 8.33 skitch: every call, because it sets a velocity and wants every frame
+    CarSkitchGameThread(link, skater);
+
     const DWORD now = GetTickCount();
     if (g_next && static_cast<LONG>(now - g_next) < 0) return;
     g_next = now + 100;
 
-    unsigned long skater = 0;
-    const int onBike = ReadOnBike(skater);
     const LONG state = onBike < 0 ? kBikeStateUnknown : (onBike ? kBikeStateOn : kBikeStateOff);
     if (state != g_state) InterlockedIncrement(&g_changes);
     InterlockedExchange(&g_state, state);
@@ -326,6 +361,9 @@ void BmxSecond(void (*log)(const char*, ...))
     const LONG tf = InterlockedExchange(&g_towFrames, 0);
     if (tf)
         log("cars: towing in %ld frames this second (skater velocity matched to the car)", tf);
+    const LONG sf = InterlockedExchange(&g_skitchFrames, 0);
+    if (sf)
+        log("cars: skitching in %ld frames this second (L1 held near a moving car)", sf);
 }
 
 } // namespace mp::thaw
