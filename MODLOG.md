@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-13] Release package built (release\SkateAndreas.zip)
+
+**Changed:** built **`release\SkateAndreas.zip`** (0.47 MB) holding `SkateAndreas.asi`, `SkateAndreas-thaw.dll`, `SkateAndreas-launcher.exe`, `tools\` (`gta_to_thaw_map.py` plus the two modules it imports, `gta_area_dump.py` and `gta_extras.py`), `INSTALL.md` and `README.md`. The `.gitignore` whitelist covers `release\`, so the package can never be committed by accident (`git check-ignore` confirms).
+
+**Why:** the last item of DESIGN 11; the user asked for it 2026-10-13.
+
+**Tested how:** the packaged map tool runs on its own — `python release\SkateAndreas\tools\gta_to_thaw_map.py --help` → exit 0 — which proves `tools\` is complete (the first `-1` was just the output pipe being closed early). `git check-ignore` confirms the zip is not committable.
+
+**Still broken / not tested:** the package has **not been run on another machine**. The launcher's game folders are baked to this machine's paths, so a new player must press **Browse** the first time (by design, 8.36). Building the map still needs **Python 3** installed (8.39) unless a Python runtime is bundled with the package.
+
+**Next:** publish the zip, and/or bundle Python so a player needs nothing at all.
+
 ## [2026-10-12] 8.39 "Build the map..." button in the launcher
 
 **Changed:** `src/launcher/main.cpp`: a **Build the map...** button that finds Python 3 (`python`, `python3`, `py -3`), runs `tools\gta_to_thaw_map.py` in its **own console window** with the whole-map pool arguments (`--box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0`), waits for it, then opens `extracted\thaw_maps\` and says where to copy the result. A **fifth setup check** — "SkateAndreas map built" — looks for `<home>\extracted\thaw_maps\_railpool\rails_in_map.csv`, and says "press Build the map" when it is missing. The window grew to 560x480; Play and the button are disabled while a build runs; `INSTALL.md` step 3 now offers the button first.
