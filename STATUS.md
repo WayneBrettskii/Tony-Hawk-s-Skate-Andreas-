@@ -78,6 +78,11 @@ The one hop not yet observed: the games have never been run from a **player-styl
 rail reader reading `SKATEANDREAS_DIR` inside reTHAWed on someone else's PC is reasoned (shared
 `src/common/paths.h`) rather than seen — see DESIGN 8.38/8.40.
 
+**reTHAWed 5.0.0.2 is already out, and this mod is pinned to 5.0.0.1** (user 2026-10-13). The
+launcher refuses any other build and the plugin's code checks are 5.0.0.1 byte signatures — they
+disable their feature rather than misbehave, and the log names each address that moved. What an
+update costs: DESIGN 11, first bullet. Do not assume "the version doesn't matter" — it does.
+
 ---
 
 # (older) WHERE WE LEFT OFF (2026-10-12 10:45)
