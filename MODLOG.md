@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-13] 8.40 the release carries its own Python, plus an MIT licence and a build script
+
+**Changed:** `tools/make-release.ps1` (**new**) builds the whole package reproducibly: the three built binaries, the map tools, `INSTALL.md`/`README.md`/`LICENSE`, and the **Windows embeddable Python** (3.11.9 amd64, ~11 MB, with its own `LICENSE.txt`) under `tools\python\`, zipped to `release\SkateAndreas.zip` (~11 MB). `src/launcher/main.cpp`: `FindPython` now tries the bundled interpreter first (`<home>\tools\python\python.exe`), then `python` / `python3` / `py -3`, so a machine where the bundled one cannot run (a **32-bit Windows**) still works; `--where` prints the Python it chose. `LICENSE` (**new**): **MIT**, so the code can be reused freely (compatible with the zlib-licensed plugin-sdk). `INSTALL.md`: no Python install, a folder layout, and what to do if the interpreter is missing.
+
+**Why:** user 2026-10-13 — "will players need Python installed?" and, if it makes life easier, bundle it. The map itself cannot be shipped (it is GTA's own collision, converted — AGENTS.md rule 1, DESIGN 8.39), so bundling a runtime is what gets to a single-download, one-button install.
+
+**Tested how (2026-10-13):** the bundled Python runs the map tool alone — `release\SkateAndreas\tools\python\python.exe release\SkateAndreas\tools\gta_to_thaw_map.py --help` → **exit 0**, so its sibling imports resolve. The **packaged launcher, run from a folder outside the project**, picks its own bundled Python and resolves home/logs/extracted to that folder (`--where`); the dev launcher still picks the system `python` and the project folder. The launcher's home rule was tightened to need **both** `CMakeLists.txt` and `logs` two levels up, so a player's ordinary folder can never be mistaken for this project.
+
+**Still broken / not tested:** the games have **not** been run from a player-style folder, so the last hop — the rail reader inside reTHAWed reading `SKATEANDREAS_DIR` on someone else's PC — is reasoned (the launcher and the plugins share `src/common/paths.h`), not observed. The user asked for a public release so players can report any launcher trouble.
+
+**Next:** publish `release\SkateAndreas.zip`.
+
 ## [2026-10-13] Release package built (release\SkateAndreas.zip)
 
 **Changed:** built **`release\SkateAndreas.zip`** (0.47 MB) holding `SkateAndreas.asi`, `SkateAndreas-thaw.dll`, `SkateAndreas-launcher.exe`, `tools\` (`gta_to_thaw_map.py` plus the two modules it imports, `gta_area_dump.py` and `gta_extras.py`), `INSTALL.md` and `README.md`. The `.gitignore` whitelist covers `release\`, so the package can never be committed by accident (`git check-ignore` confirms).

@@ -1050,6 +1050,38 @@ but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so 
 
 **Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
 
+### 8.40 The release carries its own Python, and a licence (user 2026-10-13)
+
+**Asked:** "players will need Python installed?" — and, if the download can make it easier, bundle it.
+
+**What was done.** The release package includes the **Windows embeddable Python** (3.11.9, amd64,
+~11 MB) under `tools\python\`. `FindPython` in the launcher tries, in order: the bundled one
+(`<home>\tools\python\python.exe`), then `python`, `python3` and `py -3` from PATH — so a machine
+where the bundled interpreter cannot run (a **32-bit Windows**) still works with an installed
+Python, and vice versa. Python's own `LICENSE.txt` ships inside it, as the PSF licence requires.
+**Result: a player installs nothing.**
+
+**The package is built by a script, `tools\make-release.ps1`**, so it is reproducible rather than a
+hand-assembled folder: it copies the three built binaries, the map tools, `INSTALL.md`, `README.md`
+and `LICENSE`, downloads and unpacks the embeddable Python, and zips the lot to
+`release\SkateAndreas.zip` (~11 MB). `release\` is covered by the `.gitignore` whitelist, so the
+package can never be committed by accident.
+
+**Why not ship the map instead:** it is GTA's own collision, converted — redistributing that is
+what AGENTS.md rule 1 forbids (see 8.39). Bundling a runtime keeps the install a single download
+without that.
+
+**Licence:** the project gained an **MIT `LICENSE`** so the code can be reused freely (compatible
+with the zlib-licensed plugin-sdk it builds against). The copyright line reads "SkateAndreas
+contributors" — put a real name or handle there if you want one.
+
+**Tested (2026-10-13):** the bundled Python runs the map tool on its own —
+`release\SkateAndreas\tools\python\python.exe release\SkateAndreas\tools\gta_to_thaw_map.py --help`
+→ exit 0, so the sibling imports resolve too; the **packaged launcher run from a folder outside the
+project** picks its *own* bundled Python and resolves home/logs/extracted to that folder
+(`--where`); the dev launcher still picks the system `python` and the project folder. `--where`
+now prints the Python it chose, so this is checkable at any time.
+
 ### 8.39 "Build the map..." in the launcher (user 2026-10-12)
 
 **Asked:** a way to make the map without a command prompt.
@@ -1071,8 +1103,8 @@ when it is missing — so an install that has not built its map explains itself,
 player later finding that nothing grinds.
 
 **Deliberately not done:** the launcher does **not** copy the map into reTHAWed (nothing of ours
-writes inside the reTHAWed install — AGENTS.md rule 4), so that stays a drag-and-drop; and Python 3
-stays a requirement (bundling a Python runtime is its own redistribution question).
+writes inside the reTHAWed install — AGENTS.md rule 4), so that stays a drag-and-drop. Python is no
+longer a requirement: the release carries its own (**8.40**).
 
 **Tested (2026-10-12):** `--selftest` shows the fifth check green on a machine where the map is
 already built, and `python --version` resolves (3.11.0) — which is exactly what the probe tests.

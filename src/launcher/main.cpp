@@ -212,9 +212,10 @@ std::wstring SettingsPath()
 
 // 8.38: the folder this launcher treats as the mod's home, and tells both games about
 // through SKATEANDREAS_DIR. Normally that is the launcher's own folder — but when it is
-// running from a build output folder inside the project (`..\..\logs` exists, which is
-// how this project is laid out), the project folder is the home: that is where the
-// logs and `extracted\` already are.
+// running from a build output folder inside this project (`..\..` holds both `logs` and
+// `CMakeLists.txt`, which is how this project is laid out), the project folder is the home:
+// that is where the logs and `extracted\` already are. Both markers are required, so an
+// ordinary folder a player unzipped into is never mistaken for the project.
 std::wstring ModHome()
 {
     wchar_t full[MAX_PATH] = {};
@@ -222,7 +223,9 @@ std::wstring ModHome()
     if (GetFullPathNameW(up.c_str(), MAX_PATH, full, nullptr) > 0) {
         std::wstring s = full;
         while (!s.empty() && s.back() == L'\\') s.pop_back();
-        if (GetFileAttributesW((s + L"\\logs").c_str()) != INVALID_FILE_ATTRIBUTES) return s;
+        if (GetFileAttributesW((s + L"\\CMakeLists.txt").c_str()) != INVALID_FILE_ATTRIBUTES &&
+            GetFileAttributesW((s + L"\\logs").c_str()) != INVALID_FILE_ATTRIBUTES)
+            return s;
     }
     std::wstring own = LauncherDir();
     while (!own.empty() && own.back() == L'\\') own.pop_back();
@@ -471,6 +474,9 @@ std::vector<SetupCheck> RunChecks()
     return out;
 }
 
+// 8.40: a Python 3 to run the map tool with (defined with the map build below).
+std::wstring FindPython();
+
 // 8.38: --where — write down the folders the launcher and the plugins will use, then
 // stop. Handy for checking that a downloaded copy points at its own folder and not at
 // the one this project was built in.
@@ -482,6 +488,8 @@ int RunWhere()
     Log("where: extracted = %s", mp::ExtractedFolderA().c_str());
     Log("where: GTA       = %ls", g_gtaDir.c_str());
     Log("where: reTHAWed  = %ls", g_rethawedDir.c_str());
+    const std::wstring python = FindPython();
+    Log("where: python    = %ls", python.empty() ? L"(none found - the map cannot be built)" : python.c_str());
     return 0;
 }
 
@@ -523,13 +531,19 @@ void RefreshChecks()
     }
 }
 
-// 8.39: find a working Python 3. Returns the command to use ("python", "python3" or
-// "py -3"), or an empty string when there is none.
+// 8.40: a Python 3 to run the map tool with. The release ships an embeddable one under
+// tools\python, so a player needs nothing installed; if that cannot run (a 32-bit Windows, say)
+// a Python from PATH is used instead. Returns the command to run, or "" when there is none.
 std::wstring FindPython()
 {
-    const wchar_t* candidates[] = {L"python", L"python3", L"py"};
-    for (const wchar_t* exe : candidates) {
-        std::wstring cmd = exe + std::wstring(exe[0] == L'p' && exe[1] == L'y' ? L" -3 --version" : L" --version");
+    std::vector<std::wstring> commands;
+    commands.push_back(L"\"" + g_modHome + L"\\tools\\python\\python.exe\"");
+    commands.push_back(L"python");
+    commands.push_back(L"python3");
+    commands.push_back(L"py -3"); // the Windows Python launcher, when only that is installed
+
+    for (const std::wstring& exe : commands) {
+        std::wstring cmd = exe + L" --version";
         STARTUPINFOW si = {};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};
@@ -541,7 +555,10 @@ std::wstring FindPython()
         GetExitCodeProcess(pi.hProcess, &code);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
-        if (code == 0) return exe;
+        if (code == 0) {
+            Log("build map: using python = %ls", exe.c_str());
+            return exe;
+        }
     }
     return L"";
 }
@@ -553,8 +570,9 @@ void RunMapBuild()
 {
     const std::wstring python = FindPython();
     if (python.empty()) {
-        Log("build map: no python found on PATH");
-        SetStatus(L"Python 3 was not found. Install it from python.org (tick \"Add Python to PATH\"), then press Build the map again.");
+        Log("build map: no python found (no tools\\python, and none on PATH)");
+        SetStatus(L"No Python 3 found. The release normally carries its own in tools\\python - if it "
+                  L"is missing, install Python 3 from python.org (tick \"Add Python to PATH\").");
         return;
     }
     const std::wstring tool = g_modHome + L"\\tools\\gta_to_thaw_map.py";

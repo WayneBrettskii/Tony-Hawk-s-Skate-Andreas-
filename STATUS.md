@@ -71,6 +71,13 @@ folders pickable, remembered in `SkateAndreas.ini`); and the **on-screen hints**
 **Nothing is in flight** — the user is playing and reporting. Take whatever they ask for next,
 write the plan into `docs/DESIGN.md` first (AGENTS.md), and do one change at a time.
 
+**Releasing (2026-10-13).** `tools\make-release.ps1` builds `release\SkateAndreas.zip` (~11 MB):
+the three binaries, `tools\` with its **own embeddable Python** (so players install nothing),
+`INSTALL.md` (the player guide), `README.md` and the **MIT `LICENSE`**. `release\` is gitignored.
+The one hop not yet observed: the games have never been run from a **player-style folder**, so the
+rail reader reading `SKATEANDREAS_DIR` inside reTHAWed on someone else's PC is reasoned (shared
+`src/common/paths.h`) rather than seen — see DESIGN 8.38/8.40.
+
 ---
 
 # (older) WHERE WE LEFT OFF (2026-10-12 10:45)

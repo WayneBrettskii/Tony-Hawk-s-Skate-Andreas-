@@ -16,7 +16,9 @@ None of these come with SkateAndreas — you install them yourself, in any order
 | **GTA San Andreas, 1.0 US** | The "HoodLum" build. SkateAndreas checks the executable and **won't run on other versions** (including the Steam 3.0 one). |
 | **ASI Loader + Mod Loader** | Most GTA modding setups already have these. Without them, `.asi` files are ignored. |
 | **reTHAWed 5.0.0.1** | Its own folder, anywhere. We only *read* from it — nothing of ours is written inside it. |
-| **Python 3** | Only for step 3, to build the map from your own copy of GTA. |
+
+**You do not need Python.** The download carries a small Python of its own for the map tool
+(step 3), so there is nothing else to install.
 
 **Run GTA in a window or borderless — not exclusive full screen.** In exclusive full screen,
 switching to reTHAWed freezes it. Alt+Enter in GTA cycles the display mode, or install
@@ -33,12 +35,22 @@ Unzip the release. You get three files; where they go matters:
 | `SkateAndreas.asi` | `...\GTA San Andreas\modloader\SkateAndreas\` — make that folder |
 | `SkateAndreas-thaw.dll` | **right next to** `SkateAndreas-launcher.exe` |
 | `SkateAndreas-launcher.exe` | anywhere you like (a `SkateAndreas` folder in Documents is fine) |
-| `tools\gta_to_thaw_map.py` | in a `tools` folder **next to** `SkateAndreas-launcher.exe` — it makes the map for step 3 |
+| `tools\` (the map tool, and a small Python) | **next to** `SkateAndreas-launcher.exe` |
+| `INSTALL.md`, `README.md`, `LICENSE` | leave them where they are |
 
-Don't rename any of them. `SkateAndreas-launcher.exe` always loads the `.dll` beside it,
-`SkateAndreas.asi` must be inside the Mod Loader folder or GTA won't load it, and the map tool
-in step 3 writes its output beside the launcher — so keep those three together in the same
-folder:
+Don't rename anything, and **keep the folder together** — `SkateAndreas-launcher.exe`
+always loads the `.dll` beside it, `SkateAndreas.asi` must be inside the Mod Loader folder or GTA
+won't load it, and the map tool (step 3) writes its output beside the launcher, which is where the
+mod looks for it.
+
+```
+SkateAndreas\                       <- unzip here
+   SkateAndreas-launcher.exe
+   SkateAndreas-thaw.dll
+   INSTALL.md   README.md   LICENSE
+   tools\gta_to_thaw_map.py   (+ a small python\ inside)
+   extracted\ ...                    <- created by step 3, must stay here
+```
 
 ---
 
@@ -47,9 +59,11 @@ folder:
 SkateAndreas skates on a reTHAWed map made **from your own GTA's collision**, so it can't be
 shipped with the download — it is GTA's own data, converted. You make it once.
 
-**The easy way:** press **Build the map...** in the launcher. It opens its own window and runs for
-a few minutes, then opens the folder for you. It needs **Python 3** installed with *"Add Python to
-PATH"* ticked at install time — the launcher tells you if it can't find it.
+**The easy way:** press **Build the map...** in the launcher. It opens its own window, uses the
+small Python that came in the download, runs for a few minutes, then opens the folder for you.
+*(Nothing to install. If it ever says it can't find Python — only likely on a 32-bit Windows,
+where the bundled 64-bit Python cannot run — install Python 3 from python.org with "Add Python to
+PATH" ticked and press the button again.)*
 
 **The same thing by hand,** if you prefer a command prompt in the launcher's folder:
 
