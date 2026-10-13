@@ -1,4 +1,4 @@
-// my-passthrough: keep reTHAWed running when its window isn't in front (phase 3-1).
+// SkateAndreas: keep reTHAWed running when its window isn't in front (phase 3-1).
 //
 // Found in phase 3-0: reTHAWed pauses itself the moment it loses focus.
 // Attempt 1 (docs/DESIGN.md section 8.7): wrap reTHAWed's window procedure and

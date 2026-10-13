@@ -1,4 +1,4 @@
-// my-passthrough: 8.33 C1, research (log only). See cars.h.
+// SkateAndreas: 8.33 C1, research (log only). See cars.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CPools.h"

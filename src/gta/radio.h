@@ -1,4 +1,4 @@
-// my-passthrough: radio while skating (docs/DESIGN.md 8.27, step R1).
+// SkateAndreas: radio while skating (docs/DESIGN.md 8.27, step R1).
 //
 // Stations: reTHAWed's own soundtrack (played by reTHAWed), GTA's radio stations
 // (played by GTA on foot), Off. Hold Back (Create / Share on PlayStation, View

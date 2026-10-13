@@ -1,4 +1,4 @@
-// my-passthrough: 8.33 GTA cars (grind / skitch). C1: log only (DESIGN 8.33).
+// SkateAndreas: 8.33 GTA cars (grind / skitch). C1: log only (DESIGN 8.33).
 // Lists the GTA cars near CJ while skate / BMX mode is on, so the grind and
 // skitch steps can be built on real data. Read only.
 

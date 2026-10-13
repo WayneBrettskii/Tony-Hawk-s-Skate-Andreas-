@@ -1,4 +1,4 @@
-// my-passthrough: a skateboard under CJ's feet while skate mode is on
+// SkateAndreas: a skateboard under CJ's feet while skate mode is on
 // (phase 5-1, docs/DESIGN.md 8.13).
 //
 // GTA SA has no skateboard model, so this is a simple stand-in board made by

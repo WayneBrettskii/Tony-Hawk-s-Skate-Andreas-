@@ -1,4 +1,4 @@
-"""my-passthrough: things GTA San Andreas shows but has no collision for (phase 4-3).
+"""SkateAndreas: things GTA San Andreas shows but has no collision for (phase 4-3).
 
 GTA draws some walls, fences and railings that its collision files leave out,
 so in our reTHAWed map there is nothing to ride or grind there. This file

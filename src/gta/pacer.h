@@ -1,4 +1,4 @@
-// my-passthrough: an even 60 frames a second for GTA (phase 5-3j,
+// SkateAndreas: an even 60 frames a second for GTA (phase 5-3j,
 // docs/DESIGN.md 8.20).
 //
 // GTA's own frame limiter (with FramerateVigilante at 60) lets frames come

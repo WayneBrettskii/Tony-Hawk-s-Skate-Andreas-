@@ -1,4 +1,4 @@
-// my-passthrough: test helper for the GTA plugin. F8 moves CJ to the waypoint
+// SkateAndreas: test helper for the GTA plugin. F8 moves CJ to the waypoint
 // marker placed on GTA's pause-menu map (user's request 2026-10-07).
 //
 // Only acts when F8 is pressed with GTA in front, CJ on foot, no cutscene /

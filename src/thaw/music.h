@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed's music follows GTA's radio choice (8.27 step R1).
+// SkateAndreas: reTHAWed's music follows GTA's radio choice (8.27 step R1).
 //
 // GTA writes what it wants into the link (reserved[1]: kMusicPlay / kMusicPause /
 // kMusicLeave, reserved[2]: its tick). On reTHAWed's own game thread we then

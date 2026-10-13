@@ -1,4 +1,4 @@
-// my-passthrough: radio while skating. See radio.h and docs/DESIGN.md 8.27.
+// SkateAndreas: radio while skating. See radio.h and docs/DESIGN.md 8.27.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CAudioEngine.h"
@@ -216,7 +216,7 @@ int ThawVolume()
 }
 
 // ---------------------------------------------------------------------------
-// Settings (R3): radio-settings.ini next to our plugin (modloader\my-passthrough\)
+// Settings (R3): radio-settings.ini next to our plugin (modloader\SkateAndreas\)
 // ---------------------------------------------------------------------------
 
 wchar_t g_iniPath[MAX_PATH] = L"";

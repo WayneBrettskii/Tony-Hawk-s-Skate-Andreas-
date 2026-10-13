@@ -1,4 +1,4 @@
-// my-passthrough: CJ's skating poses while skate mode is on (phase 5-0,
+// SkateAndreas: CJ's skating poses while skate mode is on (phase 5-0,
 // docs/DESIGN.md 8.13).
 //
 // GTA has no skateboard and no skateboard animations, but it has the

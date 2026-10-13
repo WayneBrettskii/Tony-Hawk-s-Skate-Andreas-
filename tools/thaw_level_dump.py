@@ -1,4 +1,4 @@
-"""my-passthrough: look inside a reTHAWed user map (phase 4-2a). READ ONLY.
+"""SkateAndreas: look inside a reTHAWed user map (phase 4-2a). READ ONLY.
 
 Opens a reTHAWed map's .pak.wpc, lists the files inside it, and writes:
   - pak_index.txt   every file in the PAK: type, size, name
@@ -132,7 +132,7 @@ def read_collision(blob):
 
 def write_collision(blob, col, out_path, transform=None, flag_counts=None):
     with open(out_path, "w", newline="\n") as f:
-        f.write("# collision from a reTHAWed map (my-passthrough tools/thaw_level_dump.py)\n")
+        f.write("# collision from a reTHAWed map (SkateAndreas tools/thaw_level_dump.py)\n")
         base_index = 1
         for obj in col["objects"]:
             if obj["nv"] == 0:

@@ -1,4 +1,4 @@
-// my-passthrough: 8.32 R3b test (docs/DESIGN.md 8.32): show the F5 test rail.
+// SkateAndreas: 8.32 R3b test (docs/DESIGN.md 8.32): show the F5 test rail.
 //
 // The THAW plugin moves one of reTHAWed's rails in front of the skater when F5
 // is pressed and puts its two ends in the link. Rails are invisible in GTA, so

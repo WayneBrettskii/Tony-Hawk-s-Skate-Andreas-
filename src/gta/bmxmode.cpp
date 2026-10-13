@@ -1,4 +1,4 @@
-// my-passthrough: BMX mode, GTA side. See bmxmode.h and docs/DESIGN.md 8.29.
+// SkateAndreas: BMX mode, GTA side. See bmxmode.h and docs/DESIGN.md 8.29.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CCamera.h"

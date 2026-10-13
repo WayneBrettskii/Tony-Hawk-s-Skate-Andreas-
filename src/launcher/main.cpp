@@ -1,4 +1,4 @@
-// my-passthrough launcher (GUI)
+// Tony Hawk's SkateAndreas launcher (GUI)
 //
 // What it does, in plain language (see docs/DESIGN.md, section 8.34):
 //   - a small window with a Play button, a few setup checks, a tick box and a
@@ -172,7 +172,7 @@ std::wstring PluginPath()
     std::wstring p = self;
     const size_t slash = p.find_last_of(L'\\');
     p = (slash == std::wstring::npos) ? L"" : p.substr(0, slash + 1);
-    return p + L"my-passthrough-thaw.dll";
+    return p + L"SkateAndreas-thaw.dll";
 }
 
 // Load our plugin into the game. Logs every step; returns true on success.
@@ -285,7 +285,7 @@ struct SetupCheck {
 // Path of our GTA plugin (in GTA's Mod Loader folder).
 std::wstring GtaPluginPath()
 {
-    return Widen(MP_GTA_DIR) + L"\\modloader\\my-passthrough\\my-passthrough.asi";
+    return Widen(MP_GTA_DIR) + L"\\modloader\\SkateAndreas\\SkateAndreas.asi";
 }
 
 std::vector<SetupCheck> RunChecks()
@@ -312,7 +312,7 @@ std::vector<SetupCheck> RunChecks()
     }
     // 2. our plugin next to the launcher.
     {
-        SetupCheck c{L"reTHAWed plugin (my-passthrough-thaw.dll)", false, L""};
+        SetupCheck c{L"reTHAWed plugin (SkateAndreas-thaw.dll)", false, L""};
         const std::wstring dll = PluginPath();
         if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not found next to the launcher: " + dll;
@@ -322,7 +322,7 @@ std::vector<SetupCheck> RunChecks()
     }
     // 3. our plugin in GTA's Mod Loader folder.
     {
-        SetupCheck c{L"GTA plugin (my-passthrough.asi)", false, L""};
+        SetupCheck c{L"GTA plugin (SkateAndreas.asi)", false, L""};
         const std::wstring asi = GtaPluginPath();
         if (GetFileAttributesW(asi.c_str()) == INVALID_FILE_ATTRIBUTES)
             c.note = L"not found: " + asi;
@@ -446,8 +446,8 @@ void RunSequence()
 
     SetStatus(L"Loading the plugin into reTHAWed...");
     if (InjectPlugin(pi.hProcess, dllPath)) {
-        if (ListModules(pi.dwProcessId, modules) && HasModule(modules, L"my-passthrough-thaw.dll"))
-            Log("confirmed: my-passthrough-thaw.dll is loaded in reTHAWed");
+        if (ListModules(pi.dwProcessId, modules) && HasModule(modules, L"SkateAndreas-thaw.dll"))
+            Log("confirmed: SkateAndreas-thaw.dll is loaded in reTHAWed");
         else
             Log("WARNING: plugin reported loaded but is not in the module list");
     } else {
@@ -522,7 +522,7 @@ HWND MakeControl(const wchar_t* cls, const wchar_t* text, DWORD style, int x, in
 
 void LayoutControls()
 {
-    MakeControl(L"STATIC", L"my-passthrough", SS_LEFT, 20, 16, 480, 30, -1, g_fontTitle);
+    MakeControl(L"STATIC", L"Tony Hawk's SkateAndreas", SS_LEFT, 20, 16, 480, 30, -1, g_fontTitle);
     MakeControl(L"STATIC", L"Skate in GTA San Andreas with reTHAWed's skating.", SS_LEFT, 20, 50, 480, 20, -1,
                 g_font);
     MakeControl(L"STATIC", L"Setup:", SS_LEFT, 20, 82, 480, 18, -1, g_fontBold);
@@ -626,7 +626,7 @@ int RunGui(HINSTANCE inst)
     wc.hInstance = inst;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
-    wc.lpszClassName = L"MyPassthroughLauncher";
+    wc.lpszClassName = L"SkateAndreasLauncher";
     if (!RegisterClassExW(&wc)) {
         Log("ERROR: could not register the window class (Windows error %lu)", GetLastError());
         return 1;
@@ -636,7 +636,7 @@ int RunGui(HINSTANCE inst)
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRect(&rect, style, FALSE);
 
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"my-passthrough", style, CW_USEDEFAULT, CW_USEDEFAULT,
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Tony Hawk's SkateAndreas", style, CW_USEDEFAULT, CW_USEDEFAULT,
                                 rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, inst, nullptr);
     if (!hwnd) {
         Log("ERROR: could not create the window (Windows error %lu)", GetLastError());

@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed's bike for GTA. READ ONLY. See bikeparts.h.
+// SkateAndreas: reTHAWed's bike for GTA. READ ONLY. See bikeparts.h.
 
 #include <windows.h>
 

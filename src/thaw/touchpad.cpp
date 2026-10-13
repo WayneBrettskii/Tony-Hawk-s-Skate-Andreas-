@@ -1,4 +1,4 @@
-// my-passthrough: direct DualSense read for the test shortcuts. See touchpad.h.
+// SkateAndreas: direct DualSense read for the test shortcuts. See touchpad.h.
 
 #include <windows.h>
 #include <hidsdi.h>

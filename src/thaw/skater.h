@@ -1,4 +1,4 @@
-// my-passthrough: reading the local skater from reTHAWed's memory (phase 1).
+// SkateAndreas: reading the local skater from reTHAWed's memory (phase 1).
 //
 // READ ONLY: nothing here writes into the game or hooks anything.
 //

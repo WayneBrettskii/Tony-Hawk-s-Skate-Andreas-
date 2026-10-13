@@ -1,4 +1,4 @@
-// my-passthrough: Grove Street tags in GTA. See tags.h and docs/DESIGN.md 8.28 a.
+// SkateAndreas: Grove Street tags in GTA. See tags.h and docs/DESIGN.md 8.28 a.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CColPoint.h"

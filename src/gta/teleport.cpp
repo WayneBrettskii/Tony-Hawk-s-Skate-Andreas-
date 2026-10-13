@@ -1,4 +1,4 @@
-// my-passthrough: F8 = move CJ to the map waypoint (test helper). See teleport.h.
+// SkateAndreas: F8 = move CJ to the map waypoint (test helper). See teleport.h.
 //
 // How (all GTA's own functions, via plugin-sdk):
 //   - the waypoint: FrontEndMenuManager.m_nTargetBlipIndex (0 = none), turned

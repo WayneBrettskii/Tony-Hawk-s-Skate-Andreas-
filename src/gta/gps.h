@@ -1,4 +1,4 @@
-// my-passthrough: GPS route to the map waypoint, like GTA V (docs/DESIGN.md 8.31 D5).
+// SkateAndreas: GPS route to the map waypoint, like GTA V (docs/DESIGN.md 8.31 D5).
 //
 // Reads GTA's car roads from <GTA>\data\Paths\NODES*.DAT (read only, once),
 // finds the shortest route along them from CJ to the waypoint set on the pause

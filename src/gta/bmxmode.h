@@ -1,4 +1,4 @@
-// my-passthrough: BMX mode, GTA side (docs/DESIGN.md 8.29).
+// SkateAndreas: BMX mode, GTA side (docs/DESIGN.md 8.29).
 //
 // B1: tells reTHAWed (link gtaBikeWish) whether CJ is riding a BMX, so
 // reTHAWed's rider gets on / off its bike too.

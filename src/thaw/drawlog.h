@@ -1,4 +1,4 @@
-// my-passthrough: research step H1 for copying reTHAWed's HUD into GTA
+// SkateAndreas: research step H1 for copying reTHAWed's HUD into GTA
 // (docs/DESIGN.md 8.22). LOG ONLY: watches how reTHAWed draws one frame.
 //
 // reTHAWed keeps its Direct3D 9 device at 0x00852044 (set at 0x0052CDC0;

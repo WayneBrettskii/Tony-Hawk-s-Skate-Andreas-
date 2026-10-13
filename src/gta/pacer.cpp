@@ -1,4 +1,4 @@
-// my-passthrough: even frame pacing for GTA. See pacer.h.
+// SkateAndreas: even frame pacing for GTA. See pacer.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CMenuManager.h"

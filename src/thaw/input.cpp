@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed takes its controller input from GTA (phase 3-3).
+// SkateAndreas: reTHAWed takes its controller input from GTA (phase 3-3).
 // See input.h.
 
 #include <windows.h>

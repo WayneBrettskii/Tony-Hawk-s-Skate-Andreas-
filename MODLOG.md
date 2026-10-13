@@ -2,13 +2,31 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] Rename to "Tony Hawk's SkateAndreas"
+
+**Changed:** the mod's name, and the files it ships as. The **display name** (what a player sees) is now **Tony Hawk's SkateAndreas**; file and folder names use **SkateAndreas** (no apostrophe, no space, so scripts and build tools stay happy):
+- `my-passthrough.asi` → **`SkateAndreas.asi`**, `my-passthrough-thaw.dll` → **`SkateAndreas-thaw.dll`**, `my-passthrough-launcher.exe` → **`SkateAndreas-launcher.exe`** (`CMakeLists.txt`: project name, the three `OUTPUT_NAME`s, `GTA_DEPLOY_DIR`).
+- GTA's Mod Loader folder: `modloader\my-passthrough\` → **`modloader\SkateAndreas\`**. The user approved this write; `radio-settings.ini` was copied across, the new plugin built into the new folder, and only then was the old folder deleted — so GTA never had two copies of the plugin at once (which would have double-loaded our hooks).
+- The internal shared-memory names: `Local\MyPassthrough_v16` → **`Local\SkateAndreas_v16`**, `Local\MyPassthrough_Hud_v1` → **`Local\SkateAndreas_Hud_v1`** (`src/common/link.h`, `src/common/hudlink.h`).
+- The level label `GTA East LS (my-passthrough)` → `GTA East LS (SkateAndreas)` (`src/common/convert.h`), the tools' map name/author (`tools/gta_to_thaw_map.py`), the plugin "loaded" log lines, and the header comment in every source file.
+
+**Deliberately NOT changed:** the **repo folder** `D:\Mods\my-passthrough` and `build\` (so the CMake cache, the paths in `AGENTS.md` and the docs, and the working folder stay valid), the **Mod Loader folder in `AGENTS.md`** was updated to the new path, and the map's internal **prefix `MPGTALSE`** (the plugin matches the level by that prefix and its ID; changing it would break every map).
+
+**Why:** user 2026-10-12, for release.
+
+**Tested how:** `build\Release\SkateAndreas-launcher.exe --selftest` → exit code 0, all four checks OK (they look for the new names in the new folder). The build copies `SkateAndreas.asi` to `modloader\SkateAndreas\`. Verified the old `modloader\my-passthrough\` folder is gone and the new one holds `SkateAndreas.asi` + `radio-settings.ini`.
+
+**Still broken / not tested:** the **Play path** (starting both games) still has not been run — not tested. Already-generated **maps** keep their old names until made again (`extracted\thaw_maps\...`); the one installed in reTHAWed is untouched and still works, because the level is matched by ID, not by name. Any **desktop shortcut** pointing at the old `my-passthrough-launcher.exe` is now broken (the launcher is `build\Release\SkateAndreas-launcher.exe`).
+
+**Next:** the user plays once through the GUI launcher; then read `logs\launcher.log` and `logs\gta.log` / `logs\thaw.log`.
+
 ## [2026-10-12] 8.34 GUI launcher
 
 **Changed:** `src/launcher/main.cpp` rewritten as a **Windows GUI app** (was a console app). The window has: a **Play** button, **four setup checks** shown green (OK) / red (with the reason), a **"Start reTHAWed minimised"** tick box, and an **"Open logs folder"** button. Play checks the setup, starts reTHAWed and loads the THAW plugin into it, starts **GTA San Andreas**, then closes reTHAWed (we started it) when GTA exits. The long work runs on a **background thread** so the window never freezes. The log now **appends** to `logs\launcher.log` with a run header. A hidden **`--selftest`** switch runs the checks and exits without starting anything. `CMakeLists.txt`: new `GTA_DIR` cache setting (default `D:/Games/GTA San Andreas`) + `MP_GTA_DIR`, `WIN32` subsystem, `shell32` link. `docs/DESIGN.md`: new section **8.34** (the plan, written before the code).
 
 **Why:** user 2026-10-12: "build a launcher with a gui that is easy for end users to understand" — one window, one button, both games (their choice out of the options offered).
 
-**Tested how:** ran `build\Release\my-passthrough-launcher.exe --selftest` → exit code 0, `launcher.log` shows all four checks OK, no game started. Launched the window and closed it after 3 s → `launcher.log` shows `launcher: Ready. Click Play to start.`, so the window, controls and checks all built.
+**Tested how:** ran `build\Release\SkateAndreas-launcher.exe --selftest` → exit code 0, `launcher.log` shows all four checks OK, no game started. Launched the window and closed it after 3 s → `launcher.log` shows `launcher: Ready. Click Play to start.`, so the window, controls and checks all built.
 
 **Still broken / not tested:** the **Play path itself** (start reTHAWed, inject, start GTA, close reTHAWed) has **not been run yet** — not tested. **"Start reTHAWed minimised"** is a first guess (`SW_SHOWMINNOACTIVE`); if reTHAWed pauses when it is not on screen it could affect its rendering and the HUD copy — untested. The controller fix is still always on (section 11: make it a tick box).
 

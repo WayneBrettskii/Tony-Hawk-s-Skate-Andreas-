@@ -1,4 +1,4 @@
-// my-passthrough: 8.32 R3b test: show the F5 test rail. See testrail.h.
+// SkateAndreas: 8.32 R3b test: show the F5 test rail. See testrail.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CCoronas.h"

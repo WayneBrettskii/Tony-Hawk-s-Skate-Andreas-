@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed's rider gets on / off the BMX when CJ does
+// SkateAndreas: reTHAWed's rider gets on / off the BMX when CJ does
 // (docs/DESIGN.md 8.29, step B1).
 //
 // GTA says in the link whether CJ is riding a BMX (gtaBikeWish). On reTHAWed's

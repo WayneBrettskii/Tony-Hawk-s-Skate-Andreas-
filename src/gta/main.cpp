@@ -1,4 +1,4 @@
-// my-passthrough: GTA San Andreas plugin (.asi)
+// SkateAndreas: GTA San Andreas plugin (.asi)
 //
 // Phase 0a-2c: counts GTA's frames. It writes a log file to the project's logs
 // folder (logs\gta.log):
@@ -416,7 +416,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough GTA plugin: loaded (phase 4-0: F9 marks)");
+    Log("SkateAndreas GTA plugin: loaded (phase 4-0: F9 marks)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 

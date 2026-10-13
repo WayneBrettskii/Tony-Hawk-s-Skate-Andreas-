@@ -72,7 +72,7 @@ We are creating a mod that implements gameplay mechanics and features from Retha
 - Which game is authoritative for the player: A (GTA), except while skate mode
   is on, when B (reTHAWed) is authoritative for the player's movement. See
   `docs/DESIGN.md` section 2.
-- Approved write path in a game install: `D:\Games\GTA San Andreas\modloader\my-passthrough\`
+- Approved write path in a game install: `D:\Games\GTA San Andreas\modloader\SkateAndreas\`
   (our plugin files only). Nothing is ever written to `D:\Games\reTHAWed`.
 - Also approved (2026-10-07): `D:\Games\GTA San Andreas\modloader\WindowedMode\` for
   ThirteenAG's Windowed Mode plugin v2.1 (third-party, not our code), installed so GTA

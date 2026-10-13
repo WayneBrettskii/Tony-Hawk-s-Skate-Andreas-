@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed's HUD shown in GTA. See hudshow.h.
+// SkateAndreas: reTHAWed's HUD shown in GTA. See hudshow.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "RenderWare.h"

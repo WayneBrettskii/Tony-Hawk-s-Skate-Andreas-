@@ -1,4 +1,4 @@
-// my-passthrough: find reTHAWed's bike skeleton. READ ONLY. See bikefind.h.
+// SkateAndreas: find reTHAWed's bike skeleton. READ ONLY. See bikefind.h.
 
 #include <windows.h>
 

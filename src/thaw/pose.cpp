@@ -1,4 +1,4 @@
-// my-passthrough: skater facing and skeleton reader. See pose.h. READ ONLY.
+// SkateAndreas: skater facing and skeleton reader. See pose.h. READ ONLY.
 
 #include "pose.h"
 

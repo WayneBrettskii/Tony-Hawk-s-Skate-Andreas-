@@ -1,4 +1,4 @@
-// my-passthrough: shared memory block for reTHAWed's HUD picture (phase 6 H3,
+// SkateAndreas: shared memory block for reTHAWed's HUD picture (phase 6 H3,
 // docs/DESIGN.md 8.25). Written by the THAW plugin (src/thaw/hud.cpp), read by
 // the GTA plugin (src/gta/hudshow.cpp).
 //
@@ -21,7 +21,7 @@ constexpr int kHudMaxH = 1200;
 constexpr DWORD kHudHeaderBytes = 4096;
 constexpr DWORD kHudSlotBytes = kHudMaxW * kHudMaxH * 4;
 constexpr DWORD kHudTotalBytes = kHudHeaderBytes + 2 * kHudSlotBytes;
-constexpr const wchar_t* kHudName = L"Local\\MyPassthrough_Hud_v1";
+constexpr const wchar_t* kHudName = L"Local\\SkateAndreas_Hud_v1";
 
 struct HudLinkHeader {
     volatile LONG magic;       // kHudMagic once the writer set it up

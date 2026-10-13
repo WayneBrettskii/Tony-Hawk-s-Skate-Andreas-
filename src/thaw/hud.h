@@ -1,4 +1,4 @@
-// my-passthrough: phase 6 H2 (docs/DESIGN.md 8.23). Catches reTHAWed's HUD in
+// SkateAndreas: phase 6 H2 (docs/DESIGN.md 8.23). Catches reTHAWed's HUD in
 // a see-through picture of our own instead of reTHAWed's screen, so it can
 // later be shown in GTA (H3, H4: not done yet).
 //

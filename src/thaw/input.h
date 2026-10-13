@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed takes its controller input from GTA (phase 3-3).
+// SkateAndreas: reTHAWed takes its controller input from GTA (phase 3-3).
 //
 // reTHAWed (rthw.dll, following partymod's input.c) reads the controller only by
 // asking SDL2.dll two questions, over and over:

@@ -1,4 +1,4 @@
-// my-passthrough: GPS route to the map waypoint (docs/DESIGN.md 8.31 D5). See gps.h.
+// SkateAndreas: GPS route to the map waypoint (docs/DESIGN.md 8.31 D5). See gps.h.
 //
 // Road data: GTA's own path files <GTA>\data\Paths\NODES0..63.DAT, read once
 // (read only). Format (checked 2026-10-10 on the user's files with a Python

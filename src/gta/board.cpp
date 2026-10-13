@@ -1,4 +1,4 @@
-// my-passthrough: the stand-in skateboard. See board.h.
+// SkateAndreas: the stand-in skateboard. See board.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CPlayerPed.h"

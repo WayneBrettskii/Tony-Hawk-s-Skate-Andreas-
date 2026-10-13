@@ -1,4 +1,4 @@
-// my-passthrough: Grove Street tags in GTA for reTHAWed's graffiti tags
+// SkateAndreas: Grove Street tags in GTA for reTHAWed's graffiti tags
 // (docs/DESIGN.md 8.28 a, step T1).
 //
 // When the THAW side reports a finished tag (link reserved[5]) while skate mode

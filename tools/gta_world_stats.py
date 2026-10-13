@@ -1,4 +1,4 @@
-"""my-passthrough: how much collision does all of San Andreas have? (phase 4-4 R1)
+"""SkateAndreas: how much collision does all of San Andreas have? (phase 4-4 R1)
 READ ONLY.
 
 Reads the whole map from the GTA install with the same reader as

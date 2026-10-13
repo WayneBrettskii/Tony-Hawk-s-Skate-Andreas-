@@ -1,4 +1,4 @@
-// my-passthrough: even motion from uneven reTHAWed frames. See blend.h.
+// SkateAndreas: even motion from uneven reTHAWed frames. See blend.h.
 // The code is skate mode's (5-3f, 5-3g, 5-3k), moved here unchanged.
 
 #include "blend.h"

@@ -1,4 +1,4 @@
-// my-passthrough: reading the local skater from reTHAWed's memory (phase 1).
+// SkateAndreas: reading the local skater from reTHAWed's memory (phase 1).
 // See skater.h for where every address comes from. READ ONLY.
 
 #include "skater.h"

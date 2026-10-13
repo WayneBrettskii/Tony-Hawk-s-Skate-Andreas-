@@ -1,4 +1,4 @@
-// my-passthrough: GTA's controller state into the link (phase 3-2).
+// SkateAndreas: GTA's controller state into the link (phase 3-2).
 //
 // GTA reads the controller in CPad::UpdatePads (0x541DD0). The world update,
 // CGame::Process (0x53BEE0), calls it first thing, at 0x53BEE6, before the pause

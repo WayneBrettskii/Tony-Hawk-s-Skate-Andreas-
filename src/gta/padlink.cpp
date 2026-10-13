@@ -1,4 +1,4 @@
-// my-passthrough: GTA's controller state into the link (phase 3-2). See padlink.h.
+// SkateAndreas: GTA's controller state into the link (phase 3-2). See padlink.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CPad.h"

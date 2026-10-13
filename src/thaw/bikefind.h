@@ -1,4 +1,4 @@
-// my-passthrough: find reTHAWed's bike skeleton (docs/DESIGN.md 8.29 B8, B9).
+// SkateAndreas: find reTHAWed's bike skeleton (docs/DESIGN.md 8.29 B8, B9).
 // READ ONLY.
 //
 // B8's memory scan (test 13:45) found it: reTHAWed's bike (model veh_bmx) has

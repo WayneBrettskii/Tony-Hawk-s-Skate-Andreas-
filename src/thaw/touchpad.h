@@ -1,4 +1,4 @@
-// my-passthrough: TEMPORARY test shortcut (user plays on a TV, 2026-10-09).
+// SkateAndreas: TEMPORARY test shortcut (user plays on a TV, 2026-10-09).
 // Remove before release (docs/DESIGN.md 11).
 //
 // Reads the PS5 controller (DualSense) directly, only to see the touchpad

@@ -1,4 +1,4 @@
-// my-passthrough: reading the skater's facing and skeleton from reTHAWed
+// SkateAndreas: reading the skater's facing and skeleton from reTHAWed
 // (phase R4-1, docs/DESIGN.md 8.15). READ ONLY.
 //
 // Where the numbers come from (read from a copy of reTHAWed.exe 5.0.0.1):

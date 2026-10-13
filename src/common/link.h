@@ -1,4 +1,4 @@
-// my-passthrough: the shared memory block both plugins use to talk (phase 0c;
+// SkateAndreas: the shared memory block both plugins use to talk (phase 0c;
 // version 2 adds the skater, phase 2-1; version 3 adds the controller, phase 3-2;
 // version 4 adds the skater's facing and the board bone, phase R4-2;
 // version 5 adds the body bone positions, phase 5-3d; version 6: 20 of them;
@@ -8,7 +8,7 @@
 // plugin starts first creates it; the other opens the same block. Each side
 // writes only its own fields and reads the other's.
 //
-// Name "Local\MyPassthrough_v12": only programs in the user's own Windows
+// Name "Local\SkateAndreas_v12": only programs in the user's own Windows
 // session can open it. Nothing goes over the network.
 //
 // Layout rules: fixed-size 32-bit numbers only, so the GTA plugin and the THAW
@@ -24,7 +24,7 @@ namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
 constexpr LONG kLinkVersion = 16;         // ... 15: skitch (8.33); 16: skitching flag (8.33)
-constexpr wchar_t kLinkName[] = L"Local\\MyPassthrough_v16";
+constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v16";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to

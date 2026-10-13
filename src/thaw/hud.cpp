@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed HUD catcher (phase 6 H2). See hud.h.
+// SkateAndreas: reTHAWed HUD catcher (phase 6 H2). See hud.h.
 
 #include "hud.h"
 

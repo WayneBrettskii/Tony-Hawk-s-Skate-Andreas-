@@ -1,4 +1,4 @@
-// my-passthrough: CJ's body copies the reTHAWed skater's body (phase 5-3d,
+// SkateAndreas: CJ's body copies the reTHAWed skater's body (phase 5-3d,
 // docs/DESIGN.md 8.17).
 //
 // Each frame the THAW plugin sends 18 bone positions of the skater (hips,

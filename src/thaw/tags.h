@@ -1,4 +1,4 @@
-// my-passthrough: watches reTHAWed's graffiti tags (docs/DESIGN.md 8.28 a, step T1).
+// SkateAndreas: watches reTHAWed's graffiti tags (docs/DESIGN.md 8.28 a, step T1).
 //
 // Two small hooks in reTHAWed:
 //   - the graffiti component's per-frame update (vtable slot 0x006EE3C8): we

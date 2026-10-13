@@ -1,4 +1,4 @@
-"""my-passthrough: GTA San Andreas collision for one area, as a 3D file (phase 4-2b).
+"""SkateAndreas: GTA San Andreas collision for one area, as a 3D file (phase 4-2b).
 READ ONLY.
 
 Reads, from the GTA install (nothing is changed there):

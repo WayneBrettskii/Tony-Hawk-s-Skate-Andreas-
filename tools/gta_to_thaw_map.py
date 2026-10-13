@@ -1,4 +1,4 @@
-"""my-passthrough: make a reTHAWed user map from GTA San Andreas collision (phase 4-2d).
+"""SkateAndreas: make a reTHAWed user map from GTA San Andreas collision (phase 4-2d).
 
 Reads GTA's collision for an area (via gta_area_dump.py, read only from the
 GTA install) and writes a reTHAWed user map into
@@ -46,8 +46,8 @@ K = 39.3701  # THAW units per metre (inches)
 LEAF_FACES = 24
 MAX_DEPTH = 12
 DEFAULT_PREFIX = "MPGTALSE"
-DEFAULT_NAME = "GTA East Los Santos (my-passthrough)"
-DEFAULT_FOLDER = "my-passthrough GTA East LS"
+DEFAULT_NAME = "GTA East Los Santos (SkateAndreas)"
+DEFAULT_FOLDER = "SkateAndreas GTA East LS"
 DEFAULT_SPAWN = (1976.1, -1449.7, 12.5)  # GTA: right corner of the skatepark (4-0 landmark 1)
 
 
@@ -1192,9 +1192,9 @@ def main():
     open(os.path.join(out, args.prefix + "_sky.pak.wpc"), "wb").write(write_sky_pak(args.prefix))
     open(os.path.join(out, args.prefix + "_sfx.pak.wpc"), "wb").write(write_pak([]))
     with open(os.path.join(out, "level.ini"), "w", newline="\r\n") as f:
-        f.write("[ModInfo]\nDescription=GTA San Andreas collision, made by my-passthrough (local use only).\n"
-                "Author=my-passthrough\nVersion=0.1\n\n[LevelInfo]\nName=%s\n"
-                "Description=GTA San Andreas collision, made by my-passthrough.\nTODPreset=THUG2\nLevelPrefix=%s\n"
+        f.write("[ModInfo]\nDescription=GTA San Andreas collision, made by SkateAndreas (local use only).\n"
+                "Author=SkateAndreas\nVersion=0.1\n\n[LevelInfo]\nName=%s\n"
+                "Description=GTA San Andreas collision, made by SkateAndreas.\nTODPreset=THUG2\nLevelPrefix=%s\n"
                 % (args.name, args.prefix))
     with open(os.path.join(out, "map_info.txt"), "w", newline="\n") as f:
         f.write("prefix %s, level ID (load_<prefix>) 0x%08X\n" % (args.prefix, qbkey("load_" + args.prefix)))

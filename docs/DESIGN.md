@@ -1,4 +1,4 @@
-# my-passthrough: Design
+# Tony Hawk's SkateAndreas: Design
 
 > Skate through GTA San Andreas with reTHAWed's real skating: its physics, tricks, grinds and manuals, while GTA keeps its world, story, missions and saves.
 
@@ -78,7 +78,7 @@ Like SkyCraft's empty Minecraft world, the hidden THAW needs a nearly empty leve
 
 Rule 4 in `AGENTS.md`: we never write to the game folders unless the user names the path.
 
-- **GTA:** our plugin is an `.asi` file. The ASI Loader 1.3 and Mod Loader are already installed. The plugin lives in **`D:\Games\GTA San Andreas\modloader\my-passthrough\`** (approved by the user 2026-10-07; recorded in `AGENTS.md`). Only our files go there; deleting that folder removes the mod.
+- **GTA:** our plugin is an `.asi` file. The ASI Loader 1.3 and Mod Loader are already installed. The plugin lives in **`D:\Games\GTA San Andreas\modloader\SkateAndreas\`** (approved by the user 2026-10-07; recorded in `AGENTS.md`). Only our files go there; deleting that folder removes the mod.
 - **reTHAWed:** our **launcher** starts `reTHAWed.exe` and loads our plugin into it (known as "DLL injection"). Nothing is written to the reTHAWed folder. reTHAWed has no anti-cheat that we have found.
 - **How reTHAWed starts (found 2026-10-07 by reading its files):** its settings program `reTHAWedLaunch.exe` (.NET) starts `reTHAWed.exe`. That is the game with the retail SecuROM 7 protection already removed and `rthw.dll` (reTHAWed's code) added to the files it loads at start. The retail `THAW.exe` still has SecuROM; **we never use it.** See the decision under rule 5 in `AGENTS.md`.
 
@@ -143,12 +143,12 @@ Expected (to be confirmed, not known yet):
 
 **Two new pieces** (both built by our CMake into the `build` folder; nothing goes into `D:\Games\reTHAWed`):
 
-1. **`my-passthrough-thaw.dll`, the THAW plugin.** Like the first GTA plugin: when loaded, it starts its own thread and writes `logs\thaw.log`:
+1. **`SkateAndreas-thaw.dll`, the THAW plugin.** Like the first GTA plugin: when loaded, it starts its own thread and writes `logs\thaw.log`:
    - "loaded", the game exe path and size (expect `reTHAWed.exe`, 3,612,672 bytes),
    - the list of program files loaded in the game at that moment (to confirm `rthw.dll` is there, i.e. reTHAWed is active),
    - a heartbeat once per second.
    No plugin-sdk (it's GTA-only). No hooks.
-2. **`my-passthrough-launcher.exe`, the launcher.**
+2. **`SkateAndreas-launcher.exe`, the launcher.**
    1. Checks `D:\Games\reTHAWed\reTHAWed.exe` exists and is the expected size; refuses `THAW.exe`.
    2. Starts `reTHAWed.exe` with `D:\Games\reTHAWed` as its working folder, the way reTHAWed's own launcher does (it does not run `Updater.exe`).
    3. Waits until `rthw.dll` shows up inside the game (checks every 100 ms, gives up after 30 s), so reTHAWed has started its own setup first.
@@ -163,7 +163,7 @@ Expected (to be confirmed, not known yet):
 | 0b-2 | Launcher also injects our plugin. | **Done 2026-10-07:** plugin loaded 0.3 s after start, `rthw.dll PRESENT; this plugin PRESENT`, 24 heartbeats, normal exit, controller detected (step 0b-1 also done: identical start-up to a normal launch) |
 | 0b-3 (later, own plan) | Find a once-per-frame spot inside THAW to hook (no plugin-sdk here, so this needs reverse engineering). | Planned separately |
 
-**Test procedure (both steps):** user runs `build\Release\my-passthrough-launcher.exe` (from the project folder), plays reTHAWed's menus for ~30 s, quits normally. Claude reads `logs\launcher.log`, `logs\thaw.log` and reTHAWed's `debug.txt` (read-only).
+**Test procedure (both steps):** user runs `build\Release\SkateAndreas-launcher.exe` (from the project folder), plays reTHAWed's menus for ~30 s, quits normally. Claude reads `logs\launcher.log`, `logs\thaw.log` and reTHAWed's `debug.txt` (read-only).
 
 **Risks:**
 - **Antivirus:** starting a game and loading a DLL into it is also what some malware does, so Windows Defender may warn about or quarantine our launcher. If so we stop and look, rather than switching protection off.
@@ -186,7 +186,7 @@ Expected (to be confirmed, not known yet):
 | `gtaBeat`, `thawBeat` | each side, once per second | a counter that rises while that side's plugin is running |
 | `gtaDrawn` | GTA side, once per second | GTA's total drawn frames (from phase 0a-2c), to see whether GTA keeps drawing while the other window has focus |
 
-- Name: `Local\MyPassthrough_v1` (`Local` = only programs in the user's own Windows session can see it; nothing on the network).
+- Name: `Local\SkateAndreas_v1` (`Local` = only programs in the user's own Windows session can see it; nothing on the network).
 - Once per second each plugin: bumps its own beat, then logs the other side's process id and beat, and by how much it rose since last time. If the other side isn't there yet, it logs "other side: not connected" (once, until it changes).
 
 **Steps:** a single step, 0c-1 (both plugins + the shared header together, since one side alone can't show anything).
@@ -283,7 +283,7 @@ This only **reads** game memory. It writes nothing into the game and hooks nothi
 | Step | What | Changes a game? | Done when |
 |---|---|---|---|
 | 2-0 | **GTA keeps running when not in front.** Set `autoPause=0` in `modloader\WindowedMode\iii.vc.sa.windowedmode.ini` (approved folder). If GTA still stops, ask the user to approve `AllowAltTabbingWithoutPausing=1` in Widescreen Fix's settings (a different folder). | Settings only | **Done 2026-10-07:** with reTHAWed in front for ~50 s, GTA drew 60/s throughout; Widescreen Fix change not needed |
-| 2-1 | **Link v2: reTHAWed publishes the skater.** Shared block grows to version 2 (`Local\MyPassthrough_v2`): skater position, velocity, in-level, paused, level ID, sample time, protected by a sequence counter so GTA never reads a half-written set. THAW plugin publishes about every 15 ms (logs still 10/s). GTA plugin reads it and logs it once per second. Plus `convert.h` and its unit test. | No | `gta.log` shows the same skater numbers as `thaw.log`; unit test passes (**passes in the cloud: 20/20**). **Done 2026-10-07:** GTA gets 93 to 96 samples/s, 0 to 16 ms old, values on reTHAWed's path, states and pause on/off arrive correctly |
+| 2-1 | **Link v2: reTHAWed publishes the skater.** Shared block grows to version 2 (`Local\SkateAndreas_v2`): skater position, velocity, in-level, paused, level ID, sample time, protected by a sequence counter so GTA never reads a half-written set. THAW plugin publishes about every 15 ms (logs still 10/s). GTA plugin reads it and logs it once per second. Plus `convert.h` and its unit test. | No | `gta.log` shows the same skater numbers as `thaw.log`; unit test passes (**passes in the cloud: 20/20**). **Done 2026-10-07:** GTA gets 93 to 96 samples/s, 0 to 16 ms old, values on reTHAWed's path, states and pause on/off arrive correctly |
 | 2-2 | *(**Done 2026-10-07** after fix 1: CJ follows 1:1, faces the right way (ySign −1, left turns now left), holds through GTA's menu and reTHAWed's pause, toggles work. L3 + R3 is not hidden from GTA)* **Skate mode moves CJ.** F7 or L3 + R3 (only while GTA is the front window) toggles it. While on, after each GTA world update: CJ placed at the mapped position (plus velocity × age of the sample, for smoothness), speed zeroed, heading set, our controls-off flag set. | **Yes: CJ's position, heading, speed, one control flag** | Logs show CJ's position matches the target each second; user sees CJ move as the skater moves |
 
 **Shared controller (found in the first test):** while skating in reTHAWed, GTA also reads the controller (through DualSenseX). Start opens GTA's pause menu; skate mode now holds while it is open. Fixed properly in phase 3 (GTA keeps the controller and passes it to reTHAWed).
@@ -536,7 +536,7 @@ Why not a GTA model file: that would need a model ID, a model file writer and st
 **R4-1 result (user test 01:52): works on the first attempt.** All 9 code checks match; 52 bones, every one named by our list (board #47, pelvis #1); the menu pose looks like a person holding a board. In the level: orientation rows are unit length; the "at" row points along the velocity while skating straight (0.96 to 1.00); the "up" row tilts up to 90 degrees on the bowl's walls (orientation includes ramps and walls). Board bone while riding: 3.7 units above the skater's feet; its "at" axis comes out of the deck (= skater up), its "up" axis points to the tail. In flips the deck normal turns over (138 to 166 degrees seen); after a pop shove-it the bone is turned 180 degrees about the deck normal. (10 samples per second catch only parts of a flip.)
 
 **Step R4-2 + 5-3b (one step, written 2026-10-09):**
-- link version 4 (`Local\MyPassthrough_v4`, 212 bytes): the THAW plugin reads facing and board every pass (about 65 times a second) and sends the facing (3 rows) and the board bone (4 rows) with each skater sample, flag `kPoseValid`.
+- link version 4 (`Local\SkateAndreas_v4`, 212 bytes): the THAW plugin reads facing and board every pass (about 65 times a second) and sends the facing (3 rows) and the board bone (4 rows) with each skater sample, flag `kPoseValid`.
 - GTA board placed from the bone each frame: skater orientation x bone = THAW world direction, mapped to GTA like any THAW movement (scale, y mirror). The bone sits 9 cm above the wheels' contact; CJ's feet = the skater's origin. The old slope guess stays only as fallback when the bone is missing.
 - CJ's heading from the skater's facing ("at" row) when it points enough sideways (not straight up a wall); from the speed otherwise.
 - Not changed: CJ stays upright (no tilt on ramps yet) and keeps the roller-skating poses.
@@ -660,7 +660,7 @@ GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src
 ### 8.25 Phase 6 H3 + H4: reTHAWed's HUD picture shown in GTA (user OK 19:35)
 
 **H3, sharing (reTHAWed side, `src/thaw/hud.cpp`, new `src/common/hudlink.h`):**
-- A second shared memory block, `Local\MyPassthrough_Hud_v1` (~18 MB): a small header + 2 picture slots of up to 1920x1200 (BGRA, colours pre-multiplied by alpha).
+- A second shared memory block, `Local\SkateAndreas_Hud_v1` (~18 MB): a small header + 2 picture slots of up to 1920x1200 (BGRA, colours pre-multiplied by alpha).
 - Each frame, right after the HUD was caught: the GPU shrinks our full-size picture to fit 1920x1200 (here 3840x2160 -> 1920x1080, smooth filter) and starts copying it to memory. The copy is picked up **one frame later** (so reTHAWed doesn't wait for its graphics card), then written into the slot GTA isn't reading, with a counter that tells GTA if a slot changed while it was reading (same idea as the link's seqlock). The header says which slot is newest, its size, a frame number and a time stamp.
 - Cost per frame: ~8 MB copied by the processor. thaw.log reports the time per frame every 10 s.
 
@@ -708,7 +708,7 @@ GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src
 
 **R1 test (user 20:45):** Back hold steps stations, names right (log: 1 Playback FM ... 11 WCTR, 12 user tracks, 13 radio off); reTHAWed station plays, reTHAWed music pauses/resumes. GTA stations did not play and GTA stuttered: GTA's interior-radio code (CAEAmbienceTrackManager 0x4D6E60, read from gta_sa.exe) stops any radio every frame while CJ is outside a club/house (StopRadio calls at 0x4D71D2, 0x4D71FD, 0x4D7221), and our restart every 3 s loaded the station each time (hitch). **Fix 1:** those 3 calls go to our function, which skips the stop only while our skate-mode GTA station plays (calls checked first: E8 -> 0x506F70); at most one restart per station.
 
-**R2 (next): GTA V-style wheel with station icons** (user 20:45). Icons are not shipped with the mod or put in the repo (game artwork, AGENTS.md rule 1). **GTA's own station logos are in the game** (found 21:20): `models\fronten1.txd` (the Audio Setup menu's file) has 128x128 DXT1 textures `radio_playback`, `radio_krose`, `radio_KDST`, `radio_bounce`, `radio_SFUR`, `radio_RLS`, `radio_RADIOX`, `radio_csr`, `radio_kjah`, `radio_mastersounds`, `radio_WCTR`, `radio_TPLAYER`. The mod loads that file at run time from the install (read only, through GTA's own texture store) and uses them directly; nothing is copied or downloaded. Optional: PNG files in `GTA San Andreas\modloader\my-passthrough\radio\` (`1.png` ... `11.png`, `rethawed.png`) would replace them. A missing icon = the station name in its slot. The reTHAWed station's icon is reTHAWed's own logo, read at run time (read only) from `D:\Games\reTHAWed\ReTHAWed_NotifIcon.ico` (256x256, checked 20:50); a `rethawed.png` in the folder above would replace it.
+**R2 (next): GTA V-style wheel with station icons** (user 20:45). Icons are not shipped with the mod or put in the repo (game artwork, AGENTS.md rule 1). **GTA's own station logos are in the game** (found 21:20): `models\fronten1.txd` (the Audio Setup menu's file) has 128x128 DXT1 textures `radio_playback`, `radio_krose`, `radio_KDST`, `radio_bounce`, `radio_SFUR`, `radio_RLS`, `radio_RADIOX`, `radio_csr`, `radio_kjah`, `radio_mastersounds`, `radio_WCTR`, `radio_TPLAYER`. The mod loads that file at run time from the install (read only, through GTA's own texture store) and uses them directly; nothing is copied or downloaded. Optional: PNG files in `GTA San Andreas\modloader\SkateAndreas\radio\` (`1.png` ... `11.png`, `rethawed.png`) would replace them. A missing icon = the station name in its slot. The reTHAWed station's icon is reTHAWed's own logo, read at run time (read only) from `D:\Games\reTHAWed\ReTHAWed_NotifIcon.ico` (256x256, checked 20:50); a `rethawed.png` in the folder above would replace it.
 
 **R2 result (21:28):** the wheel works. **Volume:** GTA's stations were much louder than reTHAWed's skating sounds; GTA's per-frame music fader call (0x50B815 -> 0x506E40) now goes through ours, which scales it by a skate-radio level (default 50%) while our GTA station plays; D-pad Up/Down on the open wheel change it.
 
@@ -718,7 +718,7 @@ GTA's own limiter at 60 gives frames 14 / 19.5 ms apart in turn. Our pacer (`src
 
 **21:55 (user):** works. User Track Player with no songs plays GTA's commercials; not tested with real songs: revisit only if players report problems.
 
-**R3 (user OK 21:56): remember the station and the volumes.** File `radio-settings.ini` next to our plugin (`GTA San Andreas\modloader\my-passthrough\`, an approved write path), section `[Radio]`: `Station` (rethawed / 1-12 / off), `GtaVolume` (0-100, default 50), `RethawedVolume` (0-100, or -1 = leave reTHAWed's own setting). Read once at the first world update; written with Windows' own ini functions when the wheel closes after a change. No other file is written.
+**R3 (user OK 21:56): remember the station and the volumes.** File `radio-settings.ini` next to our plugin (`GTA San Andreas\modloader\SkateAndreas\`, an approved write path), section `[Radio]`: `Station` (rethawed / 1-12 / off), `GtaVolume` (0-100, default 50), `RethawedVolume` (0-100, or -1 = leave reTHAWed's own setting). Read once at the first world update; written with Windows' own ini functions when the wheel closes after a change. No other file is written.
 
 **Then (maybe):** skip track (SkipMusicTrack).
 
@@ -941,7 +941,7 @@ a few **status lines**, and one or two options.
 
 1. check the setup and show each result as a green OK or a red reason;
 2. start reTHAWed (paused, the sound fix, the controller environment) and load
-   `my-passthrough-thaw.dll` into it — exactly what the console launcher does now;
+   `SkateAndreas-thaw.dll` into it — exactly what the console launcher does now;
 3. start GTA San Andreas (`gta_sa.exe` in its own folder);
 4. stay open and show what is happening, then once both games have closed, be
    ready to Play again.
@@ -951,7 +951,7 @@ a few **status lines**, and one or two options.
 - **Start reTHAWed hidden** — a tick box, so only GTA is on screen.
 - **Open logs folder** — a button, so a user can find the logs to report a problem.
 - **Status lines** — for reTHAWed (present + the expected 5.0.0.1 build),
-  `my-passthrough-thaw.dll` (next to the launcher), `my-passthrough.asi` (in GTA's
+  `SkateAndreas-thaw.dll` (next to the launcher), `SkateAndreas.asi` (in GTA's
   modloader folder), and `gta_sa.exe`. Red lines say what is missing.
 
 **How it is built (plain language).** A plain Windows window using the controls that
@@ -980,7 +980,7 @@ mode (section 11) is a later tick box on this window.
 
 - **Remove the temporary controller shortcuts** (PS5 touchpad + D-pad Down = frame recorder, touchpad + D-pad Up = draw log, touchpad + D-pad Left = HUD catch, touchpad + D-pad Right = lean drawing (keep lean drawing itself on); `src/thaw/touchpad.*`, link `reserved[0]`; added 2026-10-09).
 
-- **Controller fix must become an option** (asked by the user 2026-10-07). Right now the launcher always tells reTHAWed to ignore Xbox 360 controllers (045E:028E) and turns off SDL's raw input reading. That is right for a PS5 controller + DualSenseX, but a player with a **real Xbox 360 controller** would have no controller in reTHAWed at all. Plan: a settings file next to the launcher (for example `my-passthrough.ini`, `[Controller] Mode=`), with at least:
+- **Controller fix must become an option** (asked by the user 2026-10-07). Right now the launcher always tells reTHAWed to ignore Xbox 360 controllers (045E:028E) and turns off SDL's raw input reading. That is right for a PS5 controller + DualSenseX, but a player with a **real Xbox 360 controller** would have no controller in reTHAWed at all. Plan: a settings file next to the launcher (for example `SkateAndreas.ini`, `[Controller] Mode=`), with at least:
   - `ps-with-dualsensex`: today's behaviour (reTHAWed uses the real PlayStation controller, ignores the virtual Xbox 360 one).
   - `xbox`: no controller changes at all; reTHAWed and GTA both use the Xbox controller directly.
   - Possibly `auto`: pick one by checking which controllers are plugged in. Not designed yet.

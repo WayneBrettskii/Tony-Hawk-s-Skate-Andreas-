@@ -1,4 +1,4 @@
-// my-passthrough: 8.32 rails (docs/DESIGN.md 8.32).
+// SkateAndreas: 8.32 rails (docs/DESIGN.md 8.32).
 //
 // R3a: once our GTA map has been loaded for 15 s, finds reTHAWed's block of rail
 // node records (one 0x60-byte record per node, see railscan.cpp) on its own

@@ -1,4 +1,4 @@
-// my-passthrough: frame recorder for finding the shimmy / stutter (STATUS.md,
+// SkateAndreas: frame recorder for finding the shimmy / stutter (STATUS.md,
 // docs/DESIGN.md 8.18).
 //
 // While skate mode is on, F9 (GTA in front) records the next 3 seconds: one row

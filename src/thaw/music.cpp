@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed music control for the radio. See music.h.
+// SkateAndreas: reTHAWed music control for the radio. See music.h.
 
 #include <windows.h>
 

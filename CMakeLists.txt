@@ -1,14 +1,14 @@
-# my-passthrough build setup.
+# SkateAndreas build setup.
 # Build from "Developer PowerShell for VS 2026":
 #   cmake -B build -A Win32
 #   cmake --build build --config Release
 
 cmake_minimum_required(VERSION 3.20)
-project(my_passthrough LANGUAGES CXX)
+project(SkateAndreas LANGUAGES CXX)
 
 # Both games are 32-bit, so our plugins must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-    message(FATAL_ERROR "my-passthrough must be built as 32-bit. Delete the build folder and run: cmake -B build -A Win32")
+    message(FATAL_ERROR "SkateAndreas must be built as 32-bit. Delete the build folder and run: cmake -B build -A Win32")
 endif()
 
 # --- plugin-sdk (GTA SA library), built beforehand by tools/build-plugin-sdk.ps1 ---
@@ -20,7 +20,7 @@ if(NOT EXISTS "${PLUGIN_SDK_LIB}")
         "  powershell -ExecutionPolicy Bypass -File tools\\build-plugin-sdk.ps1")
 endif()
 
-# --- GTA San Andreas plugin: my-passthrough.asi ---
+# --- GTA San Andreas plugin: SkateAndreas.asi ---
 add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp src/gta/recorder.cpp src/gta/pacer.cpp src/gta/hudshow.cpp src/gta/radio.cpp src/gta/spawner.cpp src/gta/tags.cpp src/gta/bmxmode.cpp src/gta/blend.cpp src/gta/gps.cpp src/gta/testrail.cpp src/gta/cars.cpp)
 
 # Match plugin-sdk's own settings for SA plugins (its tools/premake/premake5.lua):
@@ -38,7 +38,7 @@ target_compile_options(gta_plugin PRIVATE /std:c++latest /sdl- /MP)
 target_link_libraries(gta_plugin PRIVATE "${PLUGIN_SDK_LIB}")
 
 set_target_properties(gta_plugin PROPERTIES
-    OUTPUT_NAME "my-passthrough"
+    OUTPUT_NAME "SkateAndreas"
     SUFFIX ".asi"
     # Build the C++ runtime into the plugin so nothing extra needs installing.
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -51,26 +51,26 @@ target_compile_definitions(gta_plugin PRIVATE "MP_LOG_DIR=\"${MP_LOG_DIR}\"")
 # After each build, copy the plugin to the one approved folder in the GTA install
 # (AGENTS.md, Environment section). Set to empty to turn copying off:
 #   cmake -B build -A Win32 -DGTA_DEPLOY_DIR=
-set(GTA_DEPLOY_DIR "D:/Games/GTA San Andreas/modloader/my-passthrough" CACHE PATH
+set(GTA_DEPLOY_DIR "D:/Games/GTA San Andreas/modloader/SkateAndreas" CACHE PATH
     "Folder the GTA plugin is copied to after building (empty = don't copy)")
 if(GTA_DEPLOY_DIR)
     add_custom_command(TARGET gta_plugin POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${GTA_DEPLOY_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:gta_plugin>" "${GTA_DEPLOY_DIR}"
-        COMMENT "Copying my-passthrough.asi to ${GTA_DEPLOY_DIR}")
+        COMMENT "Copying SkateAndreas.asi to ${GTA_DEPLOY_DIR}")
 endif()
 
-# --- reTHAWed plugin: my-passthrough-thaw.dll (loaded into reTHAWed by the launcher) ---
+# --- reTHAWed plugin: SkateAndreas-thaw.dll (loaded into reTHAWed by the launcher) ---
 # Stays in the build folder next to the launcher; nothing goes into the reTHAWed install.
 add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp src/thaw/drawlog.cpp src/thaw/touchpad.cpp src/thaw/hud.cpp src/thaw/music.cpp src/thaw/tags.cpp src/thaw/bmx.cpp src/thaw/bikeparts.cpp src/thaw/bikefind.cpp src/thaw/railscan.cpp src/thaw/statefind.cpp)
 set_target_properties(thaw_plugin PROPERTIES
-    OUTPUT_NAME "my-passthrough-thaw"
+    OUTPUT_NAME "SkateAndreas-thaw"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_compile_features(thaw_plugin PRIVATE cxx_std_17)
 target_compile_definitions(thaw_plugin PRIVATE "MP_LOG_DIR=\"${MP_LOG_DIR}\"")
 target_link_libraries(thaw_plugin PRIVATE hid setupapi) # touchpad.cpp (temporary test shortcut)
 
-# --- Launcher: my-passthrough-launcher.exe (starts reTHAWed) ---
+# --- Launcher: SkateAndreas-launcher.exe (starts reTHAWed) ---
 # Stays in the build folder; nothing is copied into the reTHAWed install.
 set(RETHAWED_DIR "D:/Games/reTHAWed" CACHE PATH "reTHAWed install folder (read only)")
 # 8.27 radio wheel: the GTA plugin reads reTHAWed's logo (ReTHAWed_NotifIcon.ico) from there at run time
@@ -80,7 +80,7 @@ target_compile_definitions(gta_plugin PRIVATE "MP_RETHAWED_DIR=\"${RETHAWED_DIR}
 set(GTA_DIR "D:/Games/GTA San Andreas" CACHE PATH "GTA San Andreas install folder (read only; the launcher starts gta_sa.exe)")
 add_executable(launcher WIN32 src/launcher/main.cpp)
 set_target_properties(launcher PROPERTIES
-    OUTPUT_NAME "my-passthrough-launcher"
+    OUTPUT_NAME "SkateAndreas-launcher"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_compile_features(launcher PRIVATE cxx_std_17)
 target_compile_definitions(launcher PRIVATE

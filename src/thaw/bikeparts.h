@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed's bike for GTA (docs/DESIGN.md 8.29 B7, B9).
+// SkateAndreas: reTHAWed's bike for GTA (docs/DESIGN.md 8.29 B7, B9).
 // READ ONLY inside reTHAWed.
 //
 // B9: from reTHAWed's own bike skeleton (bikefind.h), not the rider's "board"

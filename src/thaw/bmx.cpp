@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed's rider on / off the BMX. See bmx.h.
+// SkateAndreas: reTHAWed's rider on / off the BMX. See bmx.h.
 
 #include <windows.h>
 

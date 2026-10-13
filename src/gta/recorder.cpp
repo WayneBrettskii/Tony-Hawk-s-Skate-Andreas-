@@ -1,4 +1,4 @@
-// my-passthrough: frame recorder. See recorder.h.
+// SkateAndreas: frame recorder. See recorder.h.
 
 #include <windows.h>
 

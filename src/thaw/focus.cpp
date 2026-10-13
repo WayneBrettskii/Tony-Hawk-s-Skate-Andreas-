@@ -1,4 +1,4 @@
-// my-passthrough: keep reTHAWed running when its window isn't in front (phase 3-1).
+// SkateAndreas: keep reTHAWed running when its window isn't in front (phase 3-1).
 // See focus.h.
 
 #include <windows.h>

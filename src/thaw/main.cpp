@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed plugin (my-passthrough-thaw.dll)
+// SkateAndreas: reTHAWed plugin (SkateAndreas-thaw.dll)
 //
 // Phase 0b-2: proves our code runs inside reTHAWed. It does nothing to the game.
 // Our launcher loads it into reTHAWed.exe after reTHAWed's own code (rthw.dll)
@@ -607,7 +607,7 @@ DWORD WINAPI MainThread(LPVOID)
 
     SYSTEMTIME now;
     GetLocalTime(&now);
-    Log("my-passthrough THAW plugin: loaded (phase 4-0: F9 marks)");
+    Log("SkateAndreas THAW plugin: loaded (phase 4-0: F9 marks)");
     Log("date: %04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond);
 

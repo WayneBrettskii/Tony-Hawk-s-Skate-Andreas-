@@ -1,4 +1,4 @@
-// my-passthrough: CJ's body copies the skater's body. See body.h.
+// SkateAndreas: CJ's body copies the skater's body. See body.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CPed.h"

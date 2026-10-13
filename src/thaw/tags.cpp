@@ -1,4 +1,4 @@
-// my-passthrough: watches reTHAWed's graffiti tags. See tags.h.
+// SkateAndreas: watches reTHAWed's graffiti tags. See tags.h.
 //
 // Found 2026-10-09 (docs/DESIGN.md 8.28 a): holding Triangle off the board runs
 // the skater's graffiti command (C code 0x005F8B20), which sets byte +0x1C of

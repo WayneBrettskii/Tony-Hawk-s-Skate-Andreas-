@@ -1,4 +1,4 @@
-// my-passthrough: reTHAWed frame drawing log. See drawlog.h.
+// SkateAndreas: reTHAWed frame drawing log. See drawlog.h.
 
 #include <windows.h>
 #include <d3d9.h>

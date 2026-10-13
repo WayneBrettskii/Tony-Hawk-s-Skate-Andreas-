@@ -1,4 +1,4 @@
-// my-passthrough: converting reTHAWed (THAW) positions into GTA San Andreas ones.
+// SkateAndreas: converting reTHAWed (THAW) positions into GTA San Andreas ones.
 // docs/DESIGN.md sections 4 and 8.6. Plain C++ (no Windows), so the unit test
 // (convert_test.cpp) can run anywhere.
 //
@@ -65,7 +65,7 @@ constexpr LevelAlignment kLosSantosEast{0x0274F7DEul, "Los Santos East", 0.02422
 // prefix MPGTALSE, level ID = checksum of "load_MPGTALSE". Built in inches
 // (39.3701 units per metre) around the Los Santos East area's centre
 // (1975, -1525), heights from GTA's 0: exact by construction.
-constexpr LevelAlignment kGtaEastLs{0x9F014B98ul, "GTA East LS (my-passthrough)", 0.0254f, -1.0f,
+constexpr LevelAlignment kGtaEastLs{0x9F014B98ul, "GTA East LS (SkateAndreas)", 0.0254f, -1.0f,
                                     Vec3{1975.0f, -1525.0f, 0.0f}};
 
 // The aligned level for this level ID, or nullptr.

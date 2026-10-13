@@ -1,4 +1,4 @@
-// my-passthrough: F9 = log CJ's position as a "mark" (phase 4-0). See mark.h.
+// SkateAndreas: F9 = log CJ's position as a "mark" (phase 4-0). See mark.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CPlayerPed.h"

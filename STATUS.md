@@ -334,13 +334,13 @@ project, so this follows the MODLOG headings.)
 
 `tools/gta_to_thaw_map.py` turns GTA San Andreas collision for the Los Santos
 East area into a reTHAWed user map (`MPGTALSE`, folder
-`my-passthrough GTA East LS`). Wanted result: the map loads in reTHAWed and the
+`SkateAndreas GTA East LS`). Wanted result: the map loads in reTHAWed and the
 skater stands on invisible GTA ground.
 
 ## What works
 
 - reTHAWed finds the map in `UserMods\Maps` and lists it ("GTA East Los Santos
-  (my-passthrough)").
+  (SkateAndreas)").
 - The sky PAK (empty) loads without complaint.
 - Attempt 2: our texture file (0 textures) and our scene (no materials, 2,486
   empty sectors) both **load without crashing**.
@@ -399,7 +399,7 @@ Compared with Los Santos East's (read only, in the cloud):
 ## Files
 
 - Tool: `tools/gta_to_thaw_map.py` (attempt 2 version).
-- Map output: `extracted\thaw_maps\my-passthrough GTA East LS\` (gitignored).
+- Map output: `extracted\thaw_maps\SkateAndreas GTA East LS\` (gitignored).
 - Log: `D:\Games\reTHAWed\debug.txt` (overwritten on each run).
 - History: `MODLOG.md` (both attempts), `docs/DESIGN.md` section 8.9.
 - The map folder is still in `reTHAWed\data\mod\UserMods\Maps\`. It crashes

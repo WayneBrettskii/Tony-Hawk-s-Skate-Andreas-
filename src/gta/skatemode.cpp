@@ -1,4 +1,4 @@
-// my-passthrough: skate mode for the GTA plugin (phase 2-2). See skatemode.h.
+// SkateAndreas: skate mode for the GTA plugin (phase 2-2). See skatemode.h.
 //
 // What it changes in GTA, and only while skate mode is on:
 //   - CJ's position and heading (SetPosn / SetHeading / m_fHeadingCurrent+Goal)

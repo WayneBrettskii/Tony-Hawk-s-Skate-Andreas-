@@ -1,4 +1,4 @@
-// my-passthrough: skate mode for the GTA plugin (phase 2-2, docs/DESIGN.md 8.6).
+// SkateAndreas: skate mode for the GTA plugin (phase 2-2, docs/DESIGN.md 8.6).
 //
 // While skate mode is on, CJ is moved to follow the reTHAWed skater (position
 // and facing), his speed is zeroed, and one control flag of our own is set so

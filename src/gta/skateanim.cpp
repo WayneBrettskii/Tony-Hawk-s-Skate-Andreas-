@@ -1,4 +1,4 @@
-// my-passthrough: CJ's skating poses. See skateanim.h.
+// SkateAndreas: CJ's skating poses. See skateanim.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CAnimManager.h"

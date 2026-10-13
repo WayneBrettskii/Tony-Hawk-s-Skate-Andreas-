@@ -1,4 +1,4 @@
-// my-passthrough: even motion from uneven reTHAWed frames (docs/DESIGN.md
+// SkateAndreas: even motion from uneven reTHAWed frames (docs/DESIGN.md
 // 8.19, 8.20, 8.29 B5). Moved out of skatemode.cpp unchanged so BMX mode can
 // use it too.
 //

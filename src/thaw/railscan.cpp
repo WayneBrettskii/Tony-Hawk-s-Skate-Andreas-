@@ -1,4 +1,4 @@
-// my-passthrough: 8.32 rails: find reTHAWed's rail node records (R3a) and the F5 move-one-rail test (R3b). See railscan.h.
+// SkateAndreas: 8.32 rails: find reTHAWed's rail node records (R3a) and the F5 move-one-rail test (R3b). See railscan.h.
 
 #include <windows.h>
 

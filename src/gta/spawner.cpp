@@ -1,4 +1,4 @@
-// my-passthrough: vehicle spawner. See spawner.h.
+// SkateAndreas: vehicle spawner. See spawner.h.
 
 #include "plugin.h" // plugin-sdk; must come before windows.h
 #include "CCheat.h"
