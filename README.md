@@ -38,6 +38,8 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 - **Wall marks** (new, not tested yet): in skate mode, click the touchpad on its own when you hit an invisible wall; gta.log gets a "WALL MARK" line with the spot.
 - **Vehicle spawner** (tested 2026-10-09): F6 (skate mode off) opens a list of all GTA vehicles except trains, BMX at the top; D-pad / stick to move, Cross spawns, Circle or F6 closes.
 
+- **On-screen hints** (tested 2026-10-12): GTA's own black message box says **`Press L3+R3 to Skate`** when you are on foot (once per session), and **`Press L3+R3 to toggle BMX mode`** while you are on a BMX (at most once a minute). It never covers a message GTA itself is showing, and stays quiet in cars.
+
 ## What doesn't work / not tested
 
 - **Play cannot start you in free skate on our map** (tried 2026-10-12, stopped). reTHAWed has no setting or command-line option for it; running its own level script loads the map but leaves the game's "current level" on the front end, so the plugin cannot line the world up and CJ floats; and replaying the player's own presses cannot work, because reTHAWed's front end only reads the controller once the player touches it. **Load the map by hand as before.** The whole investigation is in `docs/DESIGN.md` 8.35 (the code is in the tree but switched off).

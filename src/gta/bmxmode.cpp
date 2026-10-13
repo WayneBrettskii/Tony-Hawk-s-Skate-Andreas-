@@ -1311,4 +1311,14 @@ void BmxFrame(LinkBlock* link, LogFn log)
     }
 }
 
+// 8.37: the "CJ is on a BMX" test, for the on-screen hints.
+bool BmxCjRidesBmx()
+{
+    __try {
+        return CjRidesBmx();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 } // namespace mp::gta

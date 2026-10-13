@@ -20,4 +20,7 @@ void BmxFrame(LinkBlock* link, LogFn log);
 // Once, from DllMain: B4b, the GTA bike drawn turned like reTHAWed's bike.
 void BmxAddHook();
 
+// True while CJ is riding a BMX (the test the HUD hints use).
+bool BmxCjRidesBmx();
+
 } // namespace mp::gta

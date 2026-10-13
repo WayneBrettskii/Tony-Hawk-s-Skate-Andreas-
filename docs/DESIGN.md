@@ -1050,6 +1050,26 @@ but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so 
 
 **Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
 
+### 8.37 On-screen hints (user 2026-10-12)
+
+**Asked:** the standard San Andreas black and white message box, saying something like
+"Press L3+R3 to Skate", and on a BMX "Press L3+R3 to toggle BMX mode".
+
+**How:** GTA's own help box — `CHud::SetHelpMessage`, the same black box its own tips
+use — so it looks native by construction. It is shown when **no mode is on**: on foot
+`Press L3+R3 to Skate`, on a BMX `Press L3+R3 to toggle BMX mode`. It stays quiet while
+GTA is showing a message of its own (`CHud::HelpMessageDisplayed()`), shows nothing
+while a car is being driven, and waits ~10 s after the plugin loads so the game is up
+first. **The skate hint appears once per run of the game** (the player has to load free
+skate by hand anyway, so once is enough); the **BMX hint repeats at most once a
+minute** while CJ is on a bike with no mode on.
+
+**Where:** `src/gta/hint.h` / `.cpp`, called each world update from `src/gta/main.cpp`.
+The "is CJ on a BMX" test is exported from BMX mode (`BmxCjRidesBmx`) so there is one
+copy of it, not two.
+
+**Tested (user 2026-10-12):** both messages show as intended.
+
 ### 8.24 Wish list: reTHAWed's slow motion ("Focus") look in GTA (user 19:04, after the H2 test)
 
 **Asked:** the slow motion already works in GTA (CJ follows the skater, who moves slower), but it should also look like reTHAWed's: its screen effect. Not planned yet. To find first: how reTHAWed knows Focus is on (a flag or time scale we can read), and what its effect draws (probably a full-screen pass near the end of the frame; the H1 frame log taken during Focus will show it). Then choose: copy the effect's look in GTA with our own full-screen pass, or catch reTHAWed's. Sound (if Focus changes it) to check too.

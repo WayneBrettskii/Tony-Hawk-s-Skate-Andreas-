@@ -51,6 +51,7 @@
 #include "bmxmode.h"
 #include "cars.h"
 #include "gps.h"
+#include "hint.h"
 #include "testrail.h"
 #include <atomic>
 #include <cstdarg>
@@ -141,6 +142,8 @@ mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
         mp::gta::BmxFrame(g_link, &Log);
         // 8.31 D5: GPS route to the map waypoint.
         mp::gta::GpsFrameSafe(&Log);
+        // 8.37: "Press L3 + R3 to Skate" / BMX, in GTA's own black message box.
+        mp::gta::HintFrame(&Log);
         // 8.32 R3b test: show the F5 test rail as a row of lights.
         mp::gta::TestRailFrame(g_link, &Log);
     });

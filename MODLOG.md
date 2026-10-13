@@ -2,6 +2,20 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.37 on-screen hints in GTA's own black message box
+
+**Changed:** new `src/gta/hint.h` / `.cpp` (added to `CMakeLists.txt`, called from `src/gta/main.cpp` on every world update). With no mode on it shows GTA's **own help box** — **`Press L3+R3 to Skate`** on foot, **`Press L3+R3 to toggle BMX mode`** while riding a BMX. The "is CJ on a BMX" test is now exported from BMX mode (`BmxCjRidesBmx()` in `src/gta/bmxmode.*`) so there is only one copy of it. It never overwrites a message GTA itself is showing (`CHud::HelpMessageDisplayed()`), shows nothing while a car is being driven, and waits ~10 s after the plugin loads so the game is fully up first.
+
+**Repeat behaviour (user's choice, 2026-10-12):** the **skate** hint is shown **once per run of the game** (`g_skateHintShown` — the player has to load free skate by hand anyway, so they only need telling once); the **BMX** hint repeats at most once a minute (`kHintRepeatMs`) while CJ is on a bike with no mode on.
+
+**Why:** user 2026-10-12 — nothing told a player how to start skating (or BMX mode).
+
+**Tested how:** played in GTA (user 2026-10-12): **both messages appear as intended** — the skate line once on foot, the BMX line on a bike. It logs `hint: showed "..."` to `logs\gta.log`.
+
+**Still broken / not tested:** nothing known; the wording and the BMX repeat interval are the user's to change if they want.
+
+**Next:** play in GTA: on foot, the skate line should appear once, shortly after you get control; getting on a BMX should show the BMX line.
+
 ## [2026-10-12] GUI launcher: the game folders can be pointed out by hand
 
 **Changed:** `src/launcher/main.cpp`: the window now has a **Game folders** section showing the **GTA San Andreas** and **reTHAWed** folders, each with a **Browse...** button (the standard Windows folder picker). The choices are saved next to the launcher in **`SkateAndreas.ini`** (`[Paths] GtaDir=` / `RethawedDir=`) and are used both by the setup checks and by Play. With no ini, the paths the build was made with are used, so nothing changes on the current machine. The window is larger (560x460) to fit the new rows. `CMakeLists.txt`: the launcher links `ole32` for the picker.
