@@ -55,6 +55,8 @@
 #error "MP_GTA_DIR must be set by CMakeLists.txt"
 #endif
 
+#include "../common/paths.h" // 8.38: the mod's home folder, set from here
+
 namespace {
 
 // reTHAWed 5.0.0.1's reTHAWed.exe on the user's PC (see MODLOG, phase 0b research).
@@ -106,6 +108,7 @@ bool g_startHidden = false;
 // remembered in SkateAndreas.ini next to the launcher.
 std::wstring g_gtaDir;
 std::wstring g_rethawedDir;
+std::wstring g_modHome; // 8.38: told to the games as SKATEANDREAS_DIR
 HWND g_gtaPathHwnd = nullptr;
 HWND g_thawPathHwnd = nullptr;
 
@@ -203,6 +206,25 @@ std::wstring LauncherDir()
 std::wstring SettingsPath()
 {
     return LauncherDir() + L"SkateAndreas.ini";
+}
+
+// 8.38: the folder this launcher treats as the mod's home, and tells both games about
+// through SKATEANDREAS_DIR. Normally that is the launcher's own folder — but when it is
+// running from a build output folder inside the project (`..\..\logs` exists, which is
+// how this project is laid out), the project folder is the home: that is where the
+// logs and `extracted\` already are.
+std::wstring ModHome()
+{
+    wchar_t full[MAX_PATH] = {};
+    const std::wstring up = LauncherDir() + L"..\\..";
+    if (GetFullPathNameW(up.c_str(), MAX_PATH, full, nullptr) > 0) {
+        std::wstring s = full;
+        while (!s.empty() && s.back() == L'\\') s.pop_back();
+        if (GetFileAttributesW((s + L"\\logs").c_str()) != INVALID_FILE_ATTRIBUTES) return s;
+    }
+    std::wstring own = LauncherDir();
+    while (!own.empty() && own.back() == L'\\') own.pop_back();
+    return own;
 }
 
 // Read the saved folders. A missing or empty value leaves the built-in default.
@@ -435,6 +457,20 @@ std::vector<SetupCheck> RunChecks()
         out.push_back(c);
     }
     return out;
+}
+
+// 8.38: --where — write down the folders the launcher and the plugins will use, then
+// stop. Handy for checking that a downloaded copy points at its own folder and not at
+// the one this project was built in.
+int RunWhere()
+{
+    Log("where: launcher  = %ls", LauncherDir().c_str());
+    Log("where: mod home  = %ls  (told to the games as SKATEANDREAS_DIR)", g_modHome.c_str());
+    Log("where: logs      = %ls", mp::LogFolderW().c_str());
+    Log("where: extracted = %s", mp::ExtractedFolderA().c_str());
+    Log("where: GTA       = %ls", g_gtaDir.c_str());
+    Log("where: reTHAWed  = %ls", g_rethawedDir.c_str());
+    return 0;
 }
 
 // --selftest: write the checks to the log and stop. Starts nothing.
@@ -697,7 +733,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             break;
         }
         case IDC_LOGS: {
-            const std::wstring dir = Widen(MP_LOG_DIR);
+            const std::wstring dir = mp::LogFolderW();
             ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             break;
         }
@@ -802,7 +838,13 @@ int APIENTRY wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     g_rethawedDir = Widen(MP_RETHAWED_DIR);
     LoadSettings();
 
-    const std::wstring logDir = Widen(MP_LOG_DIR);
+    // 8.38: tell the games (and so our plugins) where the mod lives, so a copy that was
+    // downloaded works wherever it was unzipped. Both games are started from here and
+    // inherit it. See src/common/paths.h.
+    g_modHome = ModHome();
+    SetEnvironmentVariableW(L"SKATEANDREAS_DIR", g_modHome.c_str());
+
+    const std::wstring logDir = mp::LogFolderW();
     CreateDirectoryW(logDir.c_str(), nullptr); // fine if it already exists
     const std::wstring logPath = logDir + L"\\launcher.log";
     // Append, with a run header, so a user can send us one file with the history.
@@ -819,7 +861,7 @@ int APIENTRY wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         printf("warning: could not open %ls\n", logPath.c_str());
     }
 
-    const int result = HasArg(L"--selftest") ? RunSelfTest() : RunGui(inst);
+    const int result = HasArg(L"--where") ? RunWhere() : (HasArg(L"--selftest") ? RunSelfTest() : RunGui(inst));
     if (g_log) fclose(g_log);
     return result;
 }

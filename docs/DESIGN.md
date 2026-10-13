@@ -1050,6 +1050,37 @@ but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so 
 
 **Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
 
+### 8.38 Where our files live, so a downloaded copy works (user 2026-10-12)
+
+**The problem.** The folder the project was compiled in was baked into the plugins
+(`MP_LOG_DIR`). That is fine on the machine that built it, but a copy someone downloads would
+look for `D:\Mods\my-passthrough\...`: the logs would land in a folder that does not exist, and
+**the rail pool could not open its rail list, so nothing would be grindable** — the one thing
+that has to work. Found while writing `INSTALL.md`.
+
+**The fix.** The launcher sets **`SKATEANDREAS_DIR`** to the mod's home folder before starting
+either game, so both inherit it. The plugins (`src/common/paths.h`) then use:
+- **logs** → `<home>\logs`
+- **the map tool's output** → `<home>\extracted\...` (the rail pool's two csv files)
+
+With no launcher (a build started by hand, or one of our tools) they fall back to the compiled
+folder, so **nothing changes on the machine that built it**.
+
+The home is the launcher's own folder, **except** when the launcher is running from a build
+output folder inside this project (`..\..\logs` exists, which is how the dev layout looks) — then
+the project folder itself is the home, so our logs, `extracted\` and habits all stay put.
+
+The map tool already treats "the folder containing `tools\`" as home, so an install needs no
+`--out`: keep `SkateAndreas-launcher.exe`, `SkateAndreas-thaw.dll` and `tools\` together and
+everything lines up.
+
+**Tested (2026-10-12):** `--where` (`SkateAndreas-launcher.exe --where`, a small switch that
+writes the resolved folders to `launcher.log` and exits) run two ways: from `build\Release` it
+reports home = the project, logs = `<project>\logs`, extracted = `<project>\extracted`; and from
+a copy in another folder it reports home/logs/extracted all under that copy, and writes its log
+there. The four setup checks still pass. **Not tested end to end on a second machine** (it would
+need the games) — the plugins use the same header and the same rule.
+
 ### 8.37 On-screen hints (user 2026-10-12)
 
 **Asked:** the standard San Andreas black and white message box, saying something like
@@ -1077,6 +1108,19 @@ copy of it, not two.
 **First look (8 frame logs, 19:12, some in special mode):** every frame has the same targets and the same glow passes at the end; the busier frames only draw more 3D world. So the special-mode look is not an extra pass. Likely the same glow passes with other values (shader constants, e.g. tint or glow strength), which the frame log doesn't record. Next research step: also log `SetPixelShaderConstantF` during the glow passes, and log whether special / Focus is on, then compare a normal and a special frame.
 
 ## 11. Before release (to do later)
+
+- **Done (2026-10-12): the folders are no longer baked in.** The launcher names the mod's home
+  (`SKATEANDREAS_DIR`) and both plugins keep their logs and find the map tool's output under it,
+  so a downloaded copy works wherever it is unzipped — see **8.38**. *(This was the #1 release
+  blocker: the rail pool could not open its rail list on anyone else's PC, so nothing was
+  grindable.)*
+
+- **There is nothing to download yet.** The repository is source only (`.gitignore` is a whitelist,
+  AGENTS.md rule 1 keeps game data out), so a GitHub visitor has to build it with Visual Studio and
+  plugin-sdk. Publish a **release** containing `SkateAndreas.asi`, `SkateAndreas-thaw.dll`,
+  `SkateAndreas-launcher.exe`, `tools\gta_to_thaw_map.py` and `INSTALL.md`. The map itself cannot be
+  shipped — it is made from the player's own GTA (INSTALL.md step 3). `INSTALL.md` was written
+  2026-10-12 for those players.
 
 - **Remove the temporary controller shortcuts** (PS5 touchpad + D-pad Down = frame recorder, touchpad + D-pad Up = draw log, touchpad + D-pad Left = HUD catch, touchpad + D-pad Right = lean drawing (keep lean drawing itself on); `src/thaw/touchpad.*`, link `reserved[0]`; added 2026-10-09).
 

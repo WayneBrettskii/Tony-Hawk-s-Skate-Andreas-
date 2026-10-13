@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-12] 8.38 a downloaded copy now works wherever it is unzipped
+
+**Changed:** new `src/common/paths.h` — `HomeFolderW()` (the mod's folder, from `SKATEANDREAS_DIR`), `LogFolderW()` and `ExtractedFolderA()`. The launcher (`src/launcher/main.cpp`) computes the home (`ModHome()`: its own folder, unless it is running from a build output folder inside the project — `..\..\logs` exists — in which case the project folder), sets `SKATEANDREAS_DIR` for both games to inherit, and uses the same log folder for its own log and its "Open logs folder" button. `src/gta/main.cpp` and `src/thaw/main.cpp` take their log folder from it; `src/thaw/railscan.cpp` finds the rail pool's two csv files through it (`PoolPath()`). New launcher switch **`--where`** writes the resolved folders to `launcher.log` and exits.
+
+**Why:** the folder this project was compiled in was baked into the plugins, so a **downloaded** copy would look in `D:\Mods\my-passthrough\...` — logs in a folder that does not exist, and the rail pool unable to open its rail list, so **nothing would be grindable**. That was the last thing in the way of a release (found while writing `INSTALL.md`); see DESIGN 8.38.
+
+**Tested how:** `--where` from `build\Release` → home = the project, logs = `<project>\logs`, extracted = `<project>\extracted` — **exactly as before**, so nothing moves on this machine. `--where` from a copy of the launcher in a temp folder → home, logs and extracted all under that copy, and it wrote its log there; the temp folder was then removed. `--selftest` still passes all four checks.
+
+**Still broken / not tested:** **not run in the games from another machine** — that needs a second PC or a full simulated install, so the plugin side is reasoned from the shared header rather than observed.
+
+**Next:** the release itself — a zip holding `SkateAndreas.asi`, `SkateAndreas-thaw.dll`, `SkateAndreas-launcher.exe`, `tools\gta_to_thaw_map.py` and `INSTALL.md` (DESIGN 11).
+
 ## [2026-10-12] 8.37 on-screen hints in GTA's own black message box
 
 **Changed:** new `src/gta/hint.h` / `.cpp` (added to `CMakeLists.txt`, called from `src/gta/main.cpp` on every world update). With no mode on it shows GTA's **own help box** — **`Press L3+R3 to Skate`** on foot, **`Press L3+R3 to toggle BMX mode`** while riding a BMX. The "is CJ on a BMX" test is now exported from BMX mode (`BmxCjRidesBmx()` in `src/gta/bmxmode.*`) so there is only one copy of it. It never overwrites a message GTA itself is showing (`CHud::HelpMessageDisplayed()`), shows nothing while a car is being driven, and waits ~10 s after the plugin loads so the game is fully up first.

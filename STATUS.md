@@ -27,7 +27,10 @@ like a *folder* path still says `my-passthrough`; do not "fix" those.
 - **The launcher window holds its own `.exe` open** — close it before rebuilding or the link
   fails with LNK1104.
 - Logs: `logs\gta.log`, `logs\thaw.log`, `logs\launcher.log` (previous run kept as `.prev.log`).
-  `SkateAndreas-launcher.exe --selftest` runs the setup checks without starting a game.
+  `SkateAndreas-launcher.exe --selftest` runs the setup checks without starting a game, and
+  `--where` prints the folders it resolved. Since 8.38 the plugins find their folder through
+  `SKATEANDREAS_DIR` (the launcher sets it), so a copy of the mod works from any folder; with no
+  launcher they fall back to the folder this project was built in.
 - The agent cannot see the game. **Instrument and read the logs** (AGENTS.md). The user plays and
   reports; they are the only eye on the screen.
 

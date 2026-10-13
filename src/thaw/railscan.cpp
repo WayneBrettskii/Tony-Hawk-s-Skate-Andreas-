@@ -5,12 +5,14 @@
 #include "railscan.h"
 
 #include "../common/link.h"
+#include "../common/paths.h" // 8.38: where the map tool's output lives on this PC
 
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <utility>
@@ -21,6 +23,14 @@ namespace {
 #ifndef MP_LOG_DIR
 #error "MP_LOG_DIR must be set by CMakeLists.txt"
 #endif
+
+// 8.38: the rail pool's two files. They sit in the "extracted" folder next to the mod
+// (what the map tool writes), or in the one this project was built with when the mod is
+// loaded without the launcher - see src/common/paths.h.
+std::string PoolPath(const char* file)
+{
+    return mp::ExtractedFolderA() + "\\thaw_maps\\_railpool\\" + file;
+}
 
 constexpr DWORD kWaitInLevelS = 15;   // after the level has been up this long
 constexpr int kMaxTargets = 6;
@@ -54,7 +64,7 @@ bool Readable(const MEMORY_BASIC_INFORMATION& m)
 bool LoadTargets()
 {
     char path[MAX_PATH];
-    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\_railpool\\rails_in_map.csv", MP_LOG_DIR);
+    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s", PoolPath("rails_in_map.csv").c_str());
     HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) {
         g_log("rail scan: can't open %s (error %lu); rebuild the map with the current map tool", path, GetLastError());
@@ -338,14 +348,14 @@ bool LoadRealRails(void (*log)(const char*, ...))
 {
     g_realTried = true;
     char path[MAX_PATH];
-    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\_railpool\\all_rails.csv", MP_LOG_DIR);
+    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s", PoolPath("all_rails.csv").c_str());
     FILE* f = nullptr;
     if (fopen_s(&f, path, "r") != 0 || !f) {
         log("rail pool: can't open %s; the pool stays off (build a pool map with --rail-pool)", path);
         return false;
     }
     char path2[MAX_PATH];
-    _snprintf_s(path2, sizeof(path2), _TRUNCATE, "%s\\..\\extracted\\thaw_maps\\_railpool\\rails_in_map.csv", MP_LOG_DIR);
+    _snprintf_s(path2, sizeof(path2), _TRUNCATE, "%s", PoolPath("rails_in_map.csv").c_str());
     FILE* g = nullptr;
     if (fopen_s(&g, path2, "r") == 0 && g) {
         LONG rows = -1; // header only

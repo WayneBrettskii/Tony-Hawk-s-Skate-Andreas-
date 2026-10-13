@@ -37,6 +37,7 @@
 #include "common.h"
 #include <windows.h>
 #include "../common/link.h"
+#include "../common/paths.h" // 8.38: where our files live on this PC
 #include "skatemode.h"
 #include "teleport.h"
 #include "padlink.h"
@@ -217,8 +218,11 @@ void ReportLogFailure(DWORD error)
     wcscpy_s(dot, MAX_PATH - (dot - path), L"-log-failed.txt");
 
     char text[256];
+    const std::wstring dirW = mp::LogFolderW();
+    char dir[512] = {};
+    WideCharToMultiByte(CP_ACP, 0, dirW.c_str(), -1, dir, sizeof(dir), nullptr, nullptr);
     int n = _snprintf_s(text, sizeof(text), _TRUNCATE,
-                        "Could not write log to %s (Windows error %lu)\r\n", MP_LOG_DIR, error);
+                        "Could not write log to %s (Windows error %lu)\r\n", dir, error);
     if (n < 0) n = static_cast<int>(strlen(text));
     HANDLE f = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -228,10 +232,15 @@ void ReportLogFailure(DWORD error)
     CloseHandle(f);
 }
 
-// Log path: <MP_LOG_DIR>\gta.log. Creates the folder if it is missing.
+// Log path: <mod home>\logs\gta.log (see src/common/paths.h), or the folder this project
+// was built with when the mod is loaded without the launcher. Creates the folder if it is
+// missing.
 bool SetUpLogPath()
 {
-    const wchar_t* dir = L"" MP_LOG_DIR;
+    // 8.38: the launcher sets SKATEANDREAS_DIR, so a downloaded copy keeps its logs in its
+    // own folder instead of one that only exists on the machine that built it.
+    const std::wstring dirW = mp::LogFolderW();
+    const wchar_t* dir = dirW.c_str();
     if (!CreateDirectoryW(dir, nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
         ReportLogFailure(GetLastError());
         return false;
