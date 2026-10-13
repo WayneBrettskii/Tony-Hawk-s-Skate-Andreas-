@@ -20,6 +20,8 @@ namespace {
 
 constexpr float kNear = 40.0f;   // m: cars within this of CJ are logged
 constexpr float kRailNear = 22.0f; // m: cars within this give roof rails
+constexpr float kSkitchNear = 8.0f; // m: a moving car within this can be skitched
+constexpr float kGtaFps = 50.0f;   // GTA's move speed is metres per 50 Hz frame
 
 // A sane THAW coordinate (rejects NaN/inf and absurd values from a bad box).
 inline bool OkThaw(float f) { return f > -5.0e6f && f < 5.0e6f; }
@@ -39,6 +41,8 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     float skPos[3] = {}, skVel[3] = {}; // 8.33 skitch: nearest moving car
     bool skOk = false;
     float skBest = kRailNear * kRailNear;
+    float skSpeed = 0.0f;
+    int skModel = 0;
     __try {
         auto* pool = CPools::ms_pVehiclePool;
         if (!pool) return;
@@ -53,15 +57,20 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
             const CVector vs = v->m_vecMoveSpeed;
             const float cspeed = vs.Magnitude();
             // 8.33 skitch: remember the nearest MOVING car (position + velocity, THAW units)
-            if (cspeed > 0.1f && dCj < skBest) {
+            // Only when it is close (the GTA side knows the metres, so the THAW side need not
+            // guess a range in inches).
+            if (cspeed > 0.1f && dCj < kSkitchNear * kSkitchNear && dCj < skBest) {
                 skBest = dCj;
                 skOk = true;
+                skSpeed = cspeed;
+                skModel = static_cast<int>(v->m_nModelIndex);
                 skPos[0] = (p.x - align->offset.x) / align->scale;
                 skPos[1] = (p.z - align->offset.z) / align->scale;
                 skPos[2] = (p.y - align->offset.y) / (align->scale * align->ySign);
-                skVel[0] = vs.x / align->scale;
-                skVel[1] = vs.z / align->scale;
-                skVel[2] = vs.y / (align->scale * align->ySign);
+                // THAW velocity is units (inches) per second: m per frame * 50 / scale
+                skVel[0] = vs.x * kGtaFps / align->scale;
+                skVel[1] = vs.z * kGtaFps / align->scale;
+                skVel[2] = vs.y * kGtaFps / (align->scale * align->ySign);
             }
             // 8.33: rails on STOPPED / slow cars only (a rail that moves under the
             // skater blows reTHAWed's grind maths to NaN); at most kCarRailCars of them
@@ -124,6 +133,13 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
         }
     }
     link->gtaSkitchValid = skOk ? 1 : 0;
+    static DWORD lastSkLog = 0;
+    const DWORD skNow = GetTickCount();
+    if (skNow - lastSkLog > 1000) {
+        lastSkLog = skNow;
+        log("skitch: %s nearest moving car (model %d, %.1f m, speed %.2f) at thaw %.1f %.1f %.1f", skOk ? "publishing" : "no",
+            skModel, skOk ? sqrtf(skBest) : -1.0f, skSpeed, skPos[0], skPos[1], skPos[2]);
+    }
 }
 
 void CarScanSecond(void (*log)(const char*, ...))

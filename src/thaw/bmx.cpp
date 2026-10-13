@@ -250,12 +250,17 @@ void CarTowGameThread(LinkBlock* link, unsigned long skater)
 // moving car (position + velocity, THAW units). His position is never touched, only
 // his velocity, so it is smooth and cannot teleport him.
 LONG g_skitchFrames = 0;
+LONG g_skitchL1 = 0;    // frames L1 was held in skate mode
+LONG g_skitchNear = 0;  // frames a published car was within range
+float g_skitchDist = -1.0f;
+float g_skitchCj[3] = {}, g_skitchCar[3] = {}; // last skater / published car position
 
 void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
 {
     if (!link || !skater || link->gtaSkateMode != 1) return;
     InputShared in;
     if (!ReadInputShared(link, in) || !(in.buttons & kBtnL1)) return;
+    ++g_skitchL1;
     if (link->gtaSkitchValid != 1) return;
     float cp[3], cv[3];
     for (int k = 0; k < 3; ++k) {
@@ -265,7 +270,13 @@ void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
     __try {
         const float* p = reinterpret_cast<const float*>(skater + 0x68);
         const float dx = p[0] - cp[0], dy = p[1] - cp[1], dz = p[2] - cp[2];
-        if (dx * dx + dy * dy + dz * dz > 49.0f) return; // only when he is near the car
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        g_skitchDist = sqrtf(d2);
+        for (int k = 0; k < 3; ++k) { g_skitchCj[k] = p[k]; g_skitchCar[k] = cp[k]; }
+        // THAW units are inches: the GTA side already only publishes a car within ~8 m,
+        // so this is just a sanity guard (about 80 m) against a stale or torn read.
+        if (d2 > 1.0e7f) return;
+        ++g_skitchNear;
         float* v = reinterpret_cast<float*>(skater + 0xC8);
         v[0] = cv[0];
         v[1] = cv[1];
@@ -362,8 +373,14 @@ void BmxSecond(void (*log)(const char*, ...))
     if (tf)
         log("cars: towing in %ld frames this second (skater velocity matched to the car)", tf);
     const LONG sf = InterlockedExchange(&g_skitchFrames, 0);
-    if (sf)
-        log("cars: skitching in %ld frames this second (L1 held near a moving car)", sf);
+    const LONG sl1 = InterlockedExchange(&g_skitchL1, 0);
+    const LONG snear = InterlockedExchange(&g_skitchNear, 0);
+    if (sf || sl1)
+        log("cars: skitch: L1 held %ld, car in range %ld, towed %ld frames this second (last %.1f m apart)", sl1, snear, sf,
+            g_skitchDist * 0.0254f);
+    if (sl1)
+        log("cars: skitch: skater at %.1f %.1f %.1f | published car at %.1f %.1f %.1f", g_skitchCj[0], g_skitchCj[1],
+            g_skitchCj[2], g_skitchCar[0], g_skitchCar[1], g_skitchCar[2]);
 }
 
 } // namespace mp::thaw
