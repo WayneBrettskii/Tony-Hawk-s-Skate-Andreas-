@@ -23,6 +23,19 @@ constexpr float kRailNear = 22.0f; // m: cars within this give roof rails
 constexpr float kSkitchNear = 8.0f; // m: a moving car within this can be skitched
 constexpr float kGtaFps = 50.0f;   // GTA's move speed is metres per 50 Hz frame
 
+// 8.41: a car gets a roof rail only when it is genuinely PARKED. The old test was
+// `move speed <= 0.05`, and that is not the same thing: 0.05 m per frame is 2.5 m/s
+// (9 km/h), so a car pulling away from a standstill spent a second or so inside that
+// window with its rail rewritten every frame - a rail that MOVES under the skater,
+// which blows reTHAWed's grind maths to NaN (the yellow screen the user hit on
+// 2026-10-13 while "grinding a few moving cars"). So the test is now the car's own
+// POSITION: it must be where it was on the last pass. A car that is moving never
+// qualifies, whatever its speed field says.
+constexpr float kStillMoved = 0.02f; // m: more than this since the last pass = not parked
+constexpr int kLastPosMax = 512;     // vehicle pool indices we remember (GTA's pool is ~110)
+CVector g_lastPos[kLastPosMax];
+bool g_lastValid[kLastPosMax] = {};
+
 // A sane THAW coordinate (rejects NaN/inf and absurd values from a bad box).
 inline bool OkThaw(float f) { return f > -5.0e6f && f < 5.0e6f; }
 
@@ -72,9 +85,16 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
                 skVel[1] = vs.z * kGtaFps / align->scale;
                 skVel[2] = vs.y * kGtaFps / (align->scale * align->ySign);
             }
-            // 8.33: rails on STOPPED / slow cars only (a rail that moves under the
-            // skater blows reTHAWed's grind maths to NaN); at most kCarRailCars of them
-            if (cspeed > 0.05f || count >= kCarRailCars) continue;
+            // 8.41: rails on PARKED cars only, decided by the car not having moved since the
+            // last pass - never by its speed (see the note above; the speed test let a slowly
+            // moving rail through, which is what turns reTHAWed's grind maths to NaN).
+            bool still = false;
+            if (i < kLastPosMax) {
+                if (g_lastValid[i] && (p - g_lastPos[i]).Magnitude() <= kStillMoved) still = true;
+                g_lastPos[i] = p;
+                g_lastValid[i] = true;
+            }
+            if (!still || count >= kCarRailCars) continue;
             const CVector right = v->GetRight(), fwd = v->GetForward();
             // roof box: from the model's bounding box, with sane fallbacks
             float hw = 0.9f, hl = 2.0f, roof = 1.35f;
@@ -161,9 +181,13 @@ void CarScanSecond(void (*log)(const char*, ...))
             CBaseModelInfo* mi = CModelInfo::ms_modelInfoPtrs ? CModelInfo::ms_modelInfoPtrs[v->m_nModelIndex] : nullptr;
             CColModel* col = mi ? mi->m_pColModel : nullptr;
             const float boxTop = col ? col->m_boundBox.m_vecMax.z : -1.0f;
-            log("car %d: model %d pos %.1f %.1f %.1f | %.0f m from CJ | speed %.1f | driver %s | box top %.2f -> rail +%.2f",
+            // 8.41: say whether a rail would actually be published - the car must be parked
+            // (its position unchanged since the last pass), or there is no rail at all.
+            const bool parked = (i < kLastPosMax) && g_lastValid[i] && (p - g_lastPos[i]).Magnitude() <= kStillMoved;
+            log("car %d: model %d pos %.1f %.1f %.1f | %.0f m from CJ | speed %.1f | driver %s | box top %.2f -> %s +%.2f",
                 i, static_cast<int>(v->m_nModelIndex), p.x, p.y, p.z, d, v->m_vecMoveSpeed.Magnitude(),
-                v->m_pDriver ? "yes" : "no", boxTop, boxTop > 0.0f ? boxTop * 0.55f : 1.35f);
+                v->m_pDriver ? "yes" : "no", boxTop, parked ? "rail" : "NO RAIL (moving)",
+                boxTop > 0.0f ? boxTop * 0.55f : 1.35f);
             ++n;
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {

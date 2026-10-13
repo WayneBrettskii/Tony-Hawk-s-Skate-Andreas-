@@ -1050,6 +1050,29 @@ but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so 
 
 **Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
 
+### 8.41 Car rails: "parked" means parked (the moving-rail NaN) — user 2026-10-13
+
+**What happened.** The user grinded moving cars and got the old glitch. `logs\thaw.log`: the
+skater's velocity becomes `-nan(ind)` while he is travelling at ~23 m/s, then his position;
+`logs\gta.log`: every distance reads `-nan(ind)` and skate mode bails with `reTHAWed not in a level`,
+and GTA stops drawing. The known moving-rail-to-NaN chain.
+
+**Why it was still possible.** The gate was `move speed <= 0.05`, chosen as "stopped / slow". But
+0.05 m per frame is **2.5 m/s — 9 km/h**. A car pulling away from a standstill therefore spends
+about a second inside that window with its rail being rewritten every single frame, so the skater
+can be riding a rail that is moving. "Slow" is not "stopped", and the difference is exactly the
+thing that breaks reTHAWed's grind maths.
+
+**The fix.** A car gets a rail only when its **position has not changed since the last pass**
+(2 cm, remembered per vehicle-pool index). A moving car never qualifies, whatever its speed field
+says, so a published car rail can never move more than 2 cm per frame — and a rail that never moves
+cannot NaN the skater. The car scan now prints `NO RAIL (moving)`, so this is visible at a glance in
+the log rather than inferred.
+
+**Left over (cosmetic):** if a parked car drives off while the skater is on its rail, the rail stays
+where it was and he can keep grinding thin air. That is the honest trade for never publishing a
+moving rail.
+
 ### 8.40 The release carries its own Python, and a licence (user 2026-10-13)
 
 **Asked:** "players will need Python installed?" — and, if the download can make it easier, bundle it.

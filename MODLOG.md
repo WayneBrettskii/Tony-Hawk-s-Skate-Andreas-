@@ -2,6 +2,18 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-13] 8.41 car rails: "parked" now actually means parked (the moving-rail NaN)
+
+**Changed:** `src/gta/cars.cpp`: a car gets a roof rail only when it is **genuinely parked**, decided by the car's **position not changing** since the last pass (`kStillMoved` = 2 cm, remembered per vehicle-pool index), instead of by its speed. The old test was `move speed <= 0.05`, and that is a different thing: 0.05 m per frame is **2.5 m/s (9 km/h)**, so a car pulling away from a standstill sat inside that window for about a second with its rail rewritten **every frame** — a rail that **moves under the skater**, which is exactly what turns reTHAWed's grind maths to NaN. The once-a-second car scan now prints `NO RAIL (moving)` where it used to print a rail height it would not actually use.
+
+**Why:** the user grinded moving cars on 2026-10-13 and got the glitch. `logs\thaw.log`: the skater's velocity becomes `-nan(ind)` at 294.9 while travelling at ~23 m/s, and then his position; `logs\gta.log` then shows every distance as `-nan(ind)` and `skate mode: OFF (reTHAWed not in a level)` at 302.6. That is the moving-rail chain.
+
+**Tested how:** built clean; **not tested in game yet**. The scan line now states whether a rail would be published, so the next run shows the gate working directly.
+
+**Still broken / not tested:** when a parked car drives off while the skater is on its rail, the rail stays where it was — a "ghost" rail he can keep grinding in mid-air. Cosmetic, and far better than NaN. Also unchanged: a moving car can still shove the skater about, and the player-folder path test (8.38 / 8.40) still has not been run — the games were launched from the normal setup on 2026-10-13, not from the test copy.
+
+**Next:** grind a **parked** car (should work), then try a moving one (there should be no rail at all), and check the scan lines say `NO RAIL (moving)`.
+
 ## [2026-10-13] 8.40 the release carries its own Python, plus an MIT licence and a build script
 
 **Changed:** `tools/make-release.ps1` (**new**) builds the whole package reproducibly: the three built binaries, the map tools, `INSTALL.md`/`README.md`/`LICENSE`, and the **Windows embeddable Python** (3.11.9 amd64, ~11 MB, with its own `LICENSE.txt`) under `tools\python\`, zipped to `release\SkateAndreas.zip` (~11 MB). `src/launcher/main.cpp`: `FindPython` now tries the bundled interpreter first (`<home>\tools\python\python.exe`), then `python` / `python3` / `py -3`, so a machine where the bundled one cannot run (a **32-bit Windows**) still works; `--where` prints the Python it chose. `LICENSE` (**new**): **MIT**, so the code can be reused freely (compatible with the zlib-licensed plugin-sdk). `INSTALL.md`: no Python install, a folder layout, and what to do if the interpreter is missing.
