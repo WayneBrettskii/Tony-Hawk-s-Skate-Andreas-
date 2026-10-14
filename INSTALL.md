@@ -1,153 +1,162 @@
-# SkateAndreas — how to install
+# Tony Hawk's SkateAndreas — install and play
 
-SkateAndreas lets you **skate in GTA San Andreas** with the skating from **reTHAWed** (a Tony
-Hawk's American Wasteland reimplementation). reTHAWed runs hidden behind GTA and does the
-skating; GTA draws the world and keeps its story. Every ledge, rail, roof and bowl you can see
-becomes skateable.
+Thanks for trying it. SkateAndreas lets you **skate around GTA San Andreas**: the whole city
+becomes a skate park, with Tony Hawk's-style skating, grinds, manuals, BMX and a full soundtrack.
 
----
-
-## 1. What you need first
-
-None of these come with SkateAndreas — you install them yourself, in any order:
-
-| You need | Notes |
-|---|---|
-| **GTA San Andreas, 1.0 US** | The "HoodLum" build. SkateAndreas checks the executable and **won't run on other versions** (including the Steam 3.0 one). |
-| **ASI Loader + Mod Loader** | Most GTA modding setups already have these. Without them, `.asi` files are ignored. |
-| **reTHAWed 5.0.0.1** | Its own folder, anywhere. We only *read* from it — nothing of ours is written inside it. |
-
-**You do not need Python.** The download carries a small Python of its own for the map tool
-(step 3), so there is nothing else to install.
-
-**Run GTA in a window or borderless — not exclusive full screen.** In exclusive full screen,
-switching to reTHAWed freezes it. Alt+Enter in GTA cycles the display mode, or install
-ThirteenAG's Windowed Mode plugin.
+It works by running **reTHAWed** (the Tony Hawk's American Wasteland reimplementation) quietly
+behind GTA. GTA draws the world and keeps its story; reTHAWed does the skating. You play in GTA's
+window the whole time.
 
 ---
 
-## 2. Where our three files go
+## 1. What you need
 
-Unzip the release. You get three files; where they go matters:
+These don't come with the download — set them up yourself, in any order:
 
-| File | Put it here |
+| You need | Why / notes |
 |---|---|
-| `SkateAndreas.asi` | `...\GTA San Andreas\modloader\SkateAndreas\` — make that folder |
-| `SkateAndreas-thaw.dll` | **right next to** `SkateAndreas-launcher.exe` |
-| `SkateAndreas-launcher.exe` | anywhere you like (a `SkateAndreas` folder in Documents is fine) |
-| `tools\` (the map tool, and a small Python) | **next to** `SkateAndreas-launcher.exe` |
-| `INSTALL.md`, `README.md`, `LICENSE` | leave them where they are |
+| **GTA San Andreas, 1.0 US** | The "HoodLum" build. SkateAndreas checks the file and **won't start** on other versions (including the Steam 3.0 one). |
+| **ASI Loader and Mod Loader** | Most GTA modding setups already have these. Without them GTA ignores `.asi` files, and the mod can't load. |
+| **reTHAWed 5.0.0.1** | Its own folder, anywhere you like. SkateAndreas only *reads* from reTHAWed — nothing of ours is ever written inside it. |
+| **GTA in a window or borderless** | **Not** exclusive full screen — in full screen, switching to reTHAWed freezes it. Press **Alt+Enter** in GTA to cycle the display mode, or install ThirteenAG's Windowed Mode plugin. |
 
-Don't rename anything, and **keep the folder together** — `SkateAndreas-launcher.exe`
-always loads the `.dll` beside it, `SkateAndreas.asi` must be inside the Mod Loader folder or GTA
-won't load it, and the map tool (step 3) writes its output beside the launcher, which is where the
-mod looks for it.
+**You do not need Python.** The download carries its own small Python for the map tool in step 3.
+
+---
+
+## 2. Install
+
+Unzip the whole download into **its own folder** — `Documents\SkateAndreas` is a good place.
+There is no installer; you just put the files where they belong:
+
+| File | Goes |
+|---|---|
+| `SkateAndreas-launcher.exe` | Stays in the folder. This is the program you run. |
+| `SkateAndreas-thaw.dll` | Stays **right next to** the launcher. |
+| `tools\` (the map tool + its Python) | Stays **right next to** the launcher. |
+| `INSTALL.md`, `README.md`, `LICENSE` | Leave them where they are. |
+| `SkateAndreas.asi` | **Copy it** into `...\GTA San Andreas\modloader\SkateAndreas\` — make that folder yourself if it isn't there. |
+
+Your folder should end up looking like this:
 
 ```
 SkateAndreas\                       <- unzip here
-   SkateAndreas-launcher.exe
+   SkateAndreas-launcher.exe        <- run this
    SkateAndreas-thaw.dll
    INSTALL.md   README.md   LICENSE
-   tools\gta_to_thaw_map.py   (+ a small python\ inside)
-   extracted\ ...                    <- created by step 3, must stay here
+   tools\
+      gta_to_thaw_map.py
+      python\                       <- a small Python just for the map tool
+   extracted\                       <- created in step 3; leave it here afterwards
 ```
+
+**Two rules that save most problems:**
+
+- **Don't rename anything**, and keep the folder together — the launcher always loads the `.dll`
+  beside it, and the map from step 3 has to stay beside it too.
+- **`SkateAndreas.asi` must be inside the Mod Loader folder.** If it's anywhere else, GTA never
+  loads it and nothing works.
 
 ---
 
-## 3. Build the map (once)
+## 3. Make the map (once)
 
-SkateAndreas skates on a reTHAWed map made **from your own GTA's collision**, so it can't be
-shipped with the download — it is GTA's own data, converted. You make it once.
+This is the one fiddly bit, and you only do it once.
 
-**The easy way:** press **Build the map...** in the launcher. It opens its own window, uses the
-small Python that came in the download, runs for a few minutes, then opens the folder for you.
-*(Nothing to install. If it ever says it can't find Python — only likely on a 32-bit Windows,
-where the bundled 64-bit Python cannot run — install Python 3 from python.org with "Add Python to
-PATH" ticked and press the button again.)*
+SkateAndreas skates on a reTHAWed map built **from your own GTA's collision data**, so it can't be
+included in the download (that data is GTA's, not ours). You make it yourself in a few minutes.
 
-**The same thing by hand,** if you prefer a command prompt in the launcher's folder:
+1. Open `SkateAndreas-launcher.exe`.
+2. Click **Build the map...** — it opens its own window and works for a few minutes, then opens a
+   folder for you. *(If it ever says it can't find Python, install Python 3 from python.org with
+   "Add Python to PATH" ticked, then press the button again. You shouldn't need to.)*
+3. It has made an `extracted\` folder next to the launcher. **Copy the map folder inside it**
+   (`extracted\thaw_maps\SkateAndreas San Andreas`) into reTHAWed's `data\mod\UserMods\Maps\`.
+   *(The launcher can't do this step for you — nothing of ours writes inside your reTHAWed folder.)*
+4. **Only one SkateAndreas map at a time.** If an older one is already there, remove it first.
 
-```
-python tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0
-```
+**Leave `extracted\` where it is.** The mod reads your rail list from it every time you play, so
+if you move the launcher, move `extracted\` with it.
 
-Either way, it only reads your GTA, and afterwards:
-
-1. Everything lands in an `extracted\` folder **next to the launcher**. **Leave that folder exactly
-   where it is** — the mod reads the rail list from it every time you play. If you move the
-   launcher, move `extracted\` with it.
-2. Copy the map folder it made (`extracted\thaw_maps\<something>`) into reTHAWed's
-   `data\mod\UserMods\Maps\`. (The launcher cannot do this for you — nothing of ours ever writes
-   inside your reTHAWed folder.)
-3. **Only one SkateAndreas map may be installed at a time.** If you already have one there,
-   remove it first.
+*(Prefer a command prompt? In the launcher's folder:
+`python tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0 --name "San Andreas (SkateAndreas)" --folder "SkateAndreas San Andreas"`
+— same result as the button.)*
 
 ---
 
-## 4. First run
+## 4. Play
 
 1. Double-click **`SkateAndreas-launcher.exe`**.
-2. It shows **four checks**. All green means you're ready. A red line tells you exactly what it
-   couldn't find.
-3. If it guessed your GTA or reTHAWed folder wrong, click **Browse...** next to it and point at
-   the right folder — your choice is remembered for next time.
-4. Click **Play**. reTHAWed starts first (you'll see it for a moment), then GTA starts on top.
+2. The window shows **five checks**. All green means you're good. A red line names exactly which
+   file or folder is missing — usually `SkateAndreas.asi` (step 2) or the map (step 3).
+   An **amber** line is only a warning; Play still works.
+3. If it guessed your GTA or reTHAWed folder wrong, click **Browse...** next to it and point at the
+   right folder. It remembers your choice (in `SkateAndreas.ini`, beside the launcher).
+4. Optional: tick **Start reTHAWed minimised (only GTA on screen)** — reTHAWed still runs, you just
+   never see its window.
+5. Click **Play**. reTHAWed starts first, then GTA opens on top of it. Leave the launcher's other
+   messages alone until it says **Both games are running**.
+
+**Free skate loads itself.** About 8 seconds after reTHAWed opens, it should drop into free skate
+on your map by itself — you don't have to touch reTHAWed at all, and you'll see GTA's black message
+box say **`Press L3+R3 to Skate`**.
+
+*If you end up on reTHAWed's own menus instead:* alt-tab to reTHAWed, pick **Free Skate → your
+SkateAndreas map → your skater**, wait until you're standing on the board, then alt-tab back to
+GTA. You only need the map's own spawn once; after that the mod moves the skater to wherever CJ is.
+
+When you close GTA, the launcher closes reTHAWed for you.
 
 ---
 
-## 5. Load free skate (one manual step)
+## 5. Controls
 
-SkateAndreas **cannot choose reTHAWed's game mode for you yet**, so do this once per session:
+In GTA, once you're on foot:
 
-1. **Alt-tab to the reTHAWed window.**
-2. As usual in reTHAWed: **Free Skate → your SkateAndreas map → your skater.**
-3. Wait until you're standing on the board in the map, then **alt-tab back to GTA**.
+- **L3 + R3** (click both sticks in together) — **start skating**. Press again to stop.
+- On a **BMX** — **L3 + R3** turns **BMX mode** on and off instead (the game tells you the first
+  time you get on a bike).
+- **Cars** — the **roofs of parked cars** are grindable. **Hold L1** next to a moving car to
+  **skitch** — grab on and be pulled along behind it.
+- **Radio** — hold **Back / Share** for the wheel: reTHAWed's soundtrack, any GTA station, the User
+  Track Player, or Off. Move with the stick, D-pad Up/Down changes the volume.
+- **Right stick** always moves the camera, in every mode.
 
-(You need the map's own skatepark spawn only once; after that the mod moves reTHAWed's skater to
-wherever CJ is.)
-
----
-
-## 6. Skate
-
-In GTA, press **L3 + R3** (click in both sticks at once). If it's your first time, GTA's black
-message box will already have told you: **Press L3+R3 to Skate**.
-
-- CJ is now driven by reTHAWed. Skate the streets, grind every ledge and rail, drop into bowls.
-- **L3 + R3** again stops.
-- On a **BMX**, **L3 + R3** toggles BMX mode instead (the mod tells you so the first time you get
-  on a bike).
-- While a mode is on, the controller belongs to reTHAWed — GTA ignores it. **The right stick
-  still moves the camera.**
-- Hold **Back / Share** for the radio wheel: reTHAWed's soundtrack, any GTA station, or off.
+ReTHAWed's own controls apply while a mode is on — its HUD (score, combo meter, balance meters) is
+copied into GTA, so follow what the game shows you for grinds and tricks.
 
 ---
 
-## 7. If something goes wrong
+## 6. If something goes wrong
 
 - **Read the launcher's red lines first** — they name the missing file or folder.
-- **Logs:** `logs\gta.log`, `logs\thaw.log`, `logs\launcher.log` (the previous run is kept as
-  `.prev.log`). The launcher's **Open logs folder** button opens them. Send those files with a
-  bug report.
-- **Changed our files? Restart.** GTA must be restarted for a new `.asi`; reTHAWed is restarted
-  by the launcher (quit it completely first).
-- **Skate mode does nothing, or says reTHAWed is not in a level** — you haven't done step 5 for
-  this session.
-- **CJ floats around instead of skating** — the map isn't the one the mod expects, or more than
-  one map is installed (step 3.5).
-- **GTA freezes when you switch to reTHAWed** — you're in exclusive full screen; use a window.
-- **No rails at all** — the `extracted\` folder from step 3 has been moved or deleted; it must
-  stay next to the launcher (`logs\thaw.log` would say `rail pool: can't open ...`).
-- **No controller in reTHAWed** — the launcher currently tells reTHAWed to ignore Xbox-style
-  controllers (it's set up for a PlayStation controller plus DualSenseX). A real Xbox controller
-  will be ignored for now; this becomes an option before release (`docs/DESIGN.md`, section 11).
+- **Logs** live in the `logs\` folder beside the launcher (`gta.log`, `thaw.log`, `launcher.log`;
+  the previous run is kept as `.prev.log`). The **Open logs folder** button takes you there — send
+  those files with any bug report.
+- **Changed any of the files?** Restart both games (the launcher does reTHAWed for you; make sure
+  GTA is closed).
+- **Skate mode does nothing, or GTA says reTHAWed isn't in a level** — free skate didn't load; do
+  it by hand (step 4).
+- **CJ floats around instead of skating** — the wrong map is loaded, or more than one SkateAndreas
+  map is installed in reTHAWed (step 3, point 4).
+- **No rails at all** — the `extracted\` folder from step 3 was moved or deleted. It must stay next
+  to the launcher. (`thaw.log` would say `rail pool: can't open ...`.)
+- **GTA freezes when you switch to reTHAWed** — you're in exclusive full screen. Use a window
+  (Alt+Enter).
+- **No controller in reTHAWed** — it's set up for a PlayStation controller. A real Xbox controller
+  may be ignored by reTHAWed for now.
+- **A different reTHAWed version** — the launcher warns (amber) but still starts. If skating
+  misbehaves, put 5.0.0.1 back, or send us the logs and we'll look.
+- **Nothing else obvious** — check `README.md` for the current list of known limits.
 
 ---
 
-## 8. What works, what doesn't
+## 7. What works right now
 
-See **`README.md`** for the honest, up-to-date list. The short version: skating across the whole
-map, rails everywhere (ledges, roofs, bridges, railroad tracks), grinding parked and slow cars,
-skitching a moving car, BMX mode, the radio wheel, graffiti tags and the GPS line all work.
-Loading free skate automatically on Play does **not** (that's step 5), and a moving car can't
-physically block CJ.
+Skating across the whole of San Andreas; rails on ledges, roofs, bridges and the railroad tracks;
+grinding parked cars and skitching moving ones; BMX mode; flips and bails; the radio wheel;
+graffiti tags; the GPS route line; a locked 60 fps.
+
+Not done yet: water (you ride along the sea bed), and a moving car can't physically block CJ.
+
+`README.md` has the honest, full, up-to-date list.

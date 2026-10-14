@@ -2,6 +2,30 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-14] INSTALL.md rewritten as the end-user install-and-play guide; release rebuilt
+
+**Changed:** `INSTALL.md` — rewritten as a **player** guide (it had drifted into a dev-ish checklist): what you need, where each file goes (with a folder diagram and the two rules that prevent most failures), the one-time map build (button, then the copy into reTHAWed that only the player can do), Play and the **five** checks, the controls, troubleshooting, and what works. `release\SkateAndreas.zip` rebuilt around it (11.21 MB).
+
+**Why:** user 2026-10-14: *"write install and play instructions for the end user"*.
+
+**Tested how:** after the rebuild, the three packaged binaries were re-hashed against `build\Release` - all identical, so the zip still ships the exact plugin the user tested; the code was **not** rebuilt. The guide's `INSTALL.md` inside the zip was read back and is the new file.
+
+**Still broken / not tested:** the guide has not been followed by a fresh player on another machine. Two things it had wrong are fixed: it said **four** checks (there are five, the map one added in 8.39), and it said the mod **cannot** choose reTHAWed's game mode on Play - which road 3 made untrue.
+
+**Next:** hand the zip to a player.
+
+## [2026-10-14] 8.35 road 3: tested in game - free skate loads itself, sound and controller work
+
+**Result:** one run (user 2026-10-14), **untouched** after Play. `logs\thaw.log`: the controller joined as player 1 at 10.7 s (`of 2 open`, held count 1 -> 0); `SetGameType freeskate` and `SetCurrentGameType` both returned 1; `change_level level = load_MPGTALSE` returned 487350264; then `IN FREE SKATE ON OUR MAP` and **`IT WORKED`** at 12.2 s. The audio watch fired **once, first try** (`SDL_PushEvent returned 1, try 1`) and 0.5 s later said `reTHAWed's sound is on (in our level)`. So both fixes work - joining the open controller, and giving reTHAWed a "focus gained" event after the auto start - and **Play no longer needs an alt-tab to reTHAWed**.
+
+**Changed:** no code change in this entry; it records the test of `1fdf3d0` together with the `autostart.h` / `drawlog.cpp` / `main.cpp` that call it, which the DLL was built from and which are **committed with this entry** (they were the last uncommitted source behind the release).
+
+**Tested how:** the log lines above, from the run the user played. Nothing new was built.
+
+**Still broken / not tested:** seen in **one** run only - worth another before it is called solid. The "3 s after" and later state logs are ordinary. Nothing else regressed in that run (no NaN, no missed code checks).
+
+**Next:** just Play, as a player would, and expect free skate ~8 s after reTHAWed opens.
+
 ## [2026-10-13] 8.35 road 3 fix 2: reTHAWed's sound stays on after the auto start
 
 **Changed:** `src/thaw/autostart.cpp`: new audio watch, from reTHAWed's `Present` twice a second: while reTHAWed is in our level and its "muted because unfocused" state is on (three jumps in reTHAWed.exe that rthw.dll flips: 74 74 75), it sends reTHAWed the SDL "window focus gained" event (`SDL_PushEvent`), so reTHAWed's own code unmutes. At most every 5 s, 10 tries; logged as `autostart audio:`.

@@ -5,6 +5,7 @@
 
 #include "drawlog.h"
 #include "hud.h"
+#include "autostart.h"
 
 #include <cstdio>
 #include <cstring>
@@ -84,6 +85,7 @@ HRESULT __stdcall HReset(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS* pp)
 HRESULT __stdcall HPresent(IDirect3DDevice9* dev, const RECT* a, const RECT* b, HWND w, const RGNDATA* r)
 {
     if (HudEnd(dev)) Note(K_HUD_END);
+    AutoStartPresentTick(dev); // 8.35 road 3: free skate on our map from the front end
     HudNewFrame();
     g_hudPhase = false; // C1: next frame starts with its 3D world
     if (g_state == 2) g_state = 3;          // the frame we watched is complete

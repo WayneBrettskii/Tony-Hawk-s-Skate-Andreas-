@@ -35,4 +35,13 @@ void AutoStartNoteFrontButton(int gtaMask, bool down);
 // 8.35: the buttons the front-end replay is holding right now (0 = not replaying).
 int AutoStartSyntheticButtons();
 
+// 8.35 road 3 (2026-10-13): what the level menu itself does - SetGameType freeskate,
+// SetCurrentGameType, change_level level = load_MPGTALSE - once, 8 s after reTHAWed's
+// front end is up. Checks its code first (main thread, after AutoStartCodeChecksPass).
+bool AutoStartRoad3ChecksPass(void (*log)(const char*, ...));
+
+// From reTHAWed's Present (end of every drawn frame; our device hook, drawlog.cpp).
+// device = the IDirect3DDevice9. Does its own timing; runs only on the window's thread.
+void AutoStartPresentTick(void* device);
+
 } // namespace mp::thaw

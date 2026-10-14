@@ -6,7 +6,9 @@ repeat of roads 1-2): run what reTHAWed's level menu runs (`SetGameType freeskat
 level loads by itself**, but the pad never joined reTHAWed as player 1, so no input. **Fix 1 coded**
 (join the first open controller via rthw's own "add player") **works**. Then no reTHAWed sound:
 MuteOnUnfocus kept it muted. **Fix 2 coded** (send reTHAWed a "focus gained" event while muted in our
-level). Waiting for: build, Play, untouched, pick the reTHAWed station.
+level). **Tested 2026-10-14: works** — free skate loads by itself, reTHAWed's sound comes back first
+try, no alt-tab needed; the sources that make the shipped DLL are committed and the release carries
+the exact build the user ran (SHA-256 checked).
 User 2026-10-13: reTHAWed 4.5 and 5.0.0.2 were tried and are fine (thread 2 below is answered).
 
 **Read in this order:** `AGENTS.md` (the hard rules — they are not optional), `README.md` (what
