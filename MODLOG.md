@@ -2,6 +2,44 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-14] 8.42c vehicle proxies in the map: a copy of a THAW vehicle record, read from the player's own install
+
+**Changed:** `tools/gta_to_thaw_map.py`: new `--proxy-cars N` and `--thaw-dir <reTHAWed folder>`. The tool reads one vehicle record from reTHAWed's own packs at build time (the item chain holding `Class = Vehicle`, which carries its model path, type and flags), and writes N copies as level nodes in a row 15 m east of the start point. The writer takes raw checksums as names (`_k`) and writes integer items. Nothing is copied into the repo; the output goes to `extracted\` (or the `--out` folder).
+
+**Why:** user 2026-10-14: CJ must be able to skitch the San Andreas cars, so reTHAWed needs vehicle objects to stand in for GTA's cars (DESIGN 8.42c). Decoding the type-to-model link was slower than the copy; the record turned out to hold its own model path.
+
+**Tested how:** test map built from a 400 m box around the start point with 3 proxies: the level pak holds 3 vehicle records with the same items as the template (`tools\` read-back check). The rail lists the plugin reads were backed up before and restored after, so the installed full map still matches its rails. **Not run in game.**
+
+**Still broken / not tested:** whether reTHAWed spawns and draws the copied vehicles (the test is in DESIGN 8.42c); whether a proxy can follow a GTA car without NaN; memory for vehicles is not in the `rethawed.ini` numbers yet.
+
+**Next:** the user loads the test map (one map at a time: back up the installed map first), and reports what appears; then `debug.txt` for errors.
+
+**Result of the first load (2026-10-14, user):** reTHAWed **crashed** on load: `debug.txt` shows `Loading Ass::CSkinAsset models\veh\veh_pickup\veh_pickup.mdl`, then `Obj::CRailManagerComponent::InitFromStructure - Model: veh\veh_pickup\veh_pickup.mdl`, then `FATAL ERROR ... EXCEPTION_ACCESS_VIOLATION (Read of 0x00000004)` with EAX = EBX = 0. The vehicle model loads; the rail manager component of the copied record reads a rail that is not in this map.
+
+**Fix (same day):** `_keep_vehicle_item`: the proxies keep only the class, type, model, rotation and flags; the unnamed checksums and integers (the rail manager) are dropped. 6 of the 10 items are kept. The test map is rebuilt in `extracted\thaw_maps\proxytest` (read-back: 3 records of 6 items). **Not run in game yet.**
+
+## [2026-10-14] 8.42b skitch: pushing the left stick up behind a car also grabs on
+
+**Changed:** `src/thaw/bmx.cpp`: the grab now also fires when the left stick is pushed up (GTA's stick is negative up, the same test as `spawner.cpp`: below -80). The D-pad Up still works, and Down still lets go.
+
+**Why:** user 2026-10-14, after the first test ("good start"): the analog stick up behind a car should skitch too.
+
+**Tested how:** built `thaw_plugin` cleanly. **Not run in game.**
+
+**Still broken / not tested:** animation and the balance meter (see DESIGN 8.42, step 2): reTHAWed draws its balance meter and plays its skitch pose from its own scripts, and we have not yet run those for our skater.
+
+## [2026-10-14] 8.42 skitch the way reTHAWed does it (step 1): press Up behind a car to grab on, Down to let go
+
+**Changed:** `src/thaw/bmx.cpp`: the L1 tow is replaced by reTHAWed's grab. **Up** (a new press) directly behind a moving car (1 to 8 m back, within about 31 degrees of its nose, same level) grabs on. **Down** (a new press), the car stopping for 0.5 s, the car out of reach, or more than 12 m away lets go. The tow itself is as before (his velocity matched to the car's, a spring to 3.2 m behind the car's centre), now aimed along the car's nose. `src/gta/cars.cpp`: the car he holds is followed by its pool index out to 16 m, even when it is slow, so it is never swapped for the nearest car; its nose direction is published. `src/common/link.h`: link **v17** (`Local\SkateAndreas_v17`, 1108 bytes): `gtaSkitchId`, `gtaSkitchFwd`, `thawSkitchId`; a new block starts both car ids at -1, because zero would mean "holding car 0".
+
+**Why:** user 2026-10-14: "check the issues we had with skitching in this project and try to make it work exactly like it does in rethawed". The problems and the sources are in DESIGN 8.42: it grabbed from any side with L1, nothing let go on purpose, there was no balance, and a tow could switch cars. reTHAWed's controls come from the official manual and the in-game text (`\b7`); the release from the walkthroughs.
+
+**Tested how:** both plugins build cleanly (`cmake --build build --config Release --target gta_plugin thaw_plugin`); the shared block's size is checked by `static_assert` (1108 bytes). The new binaries are newer than their sources. **Not run in game.**
+
+**Still broken / not tested:** not run in game at all. Not modelled: **balance** (Left and Right, the balance meter; step 2). The tow point (3.2 m), the 31-degree cone, the 1 m/s stop speed and the 12 m release are ours, not reTHAWed's, and need tuning by test. The radio wheel also uses Up (volume): close it before skitching. The release zip still holds the earlier build; rebuild it after the test.
+
+**Next:** the user tests it (DESIGN 8.42, "How to test"), then step 2: balance.
+
 ## [2026-10-14] INSTALL.md rewritten as the end-user install-and-play guide; release rebuilt
 
 **Changed:** `INSTALL.md` — rewritten as a **player** guide (it had drifted into a dev-ish checklist): what you need, where each file goes (with a folder diagram and the two rules that prevent most failures), the one-time map build (button, then the copy into reTHAWed that only the player can do), Play and the **five** checks, the controls, troubleshooting, and what works. `release\SkateAndreas.zip` rebuilt around it (11.21 MB).

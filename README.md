@@ -1,8 +1,18 @@
 # Tony Hawk's SkateAndreas
 
+Some quick Notes:
+
+-First thing show some support for the rethawed team they've created the ultimate Tony Hawk Experience with their mod
+-There is no car collision yet but that should be added in the future
+-The launcher may take a couple of tries at first if both games don't launch close and retry
+-Please share any bugs or glitches you run into I plan on adding some updates this weekend.
+-In the future I plan on adding Natas Spins, skitching, park editor features, shooting on your board and more. 
+- You should be able to grind majority of the map I want to fine tune this in the next update but most rails and ledges should work for now.
+-You can skate the bowl in the east Los Santos skate park like you would any bowl in Tony Hawk as well as the half pipes. 
+
 Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden in the background and does the skating; GTA draws everything and keeps its story. Modelled on SkyCraft. How it works: `docs/DESIGN.md`. Change history: `MODLOG.md`.
 
-**Status: phase 0 (very early): both games run our code and can exchange numbers. Nothing playable yet.**
+**Status: playable, but early.** The launcher starts both games and puts the skater into free skate on the map by itself (tested 2026-10-14). Rails, ledges, grinds, BMX, the radio and the first skitch grab work; balance, skitch animation and the rest of the list below are still in progress.
 
 ## What works
 
@@ -42,7 +52,8 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 ## What doesn't work / not tested
 
-- **Play cannot start you in free skate on our map** (tried 2026-10-12, stopped). reTHAWed has no setting or command-line option for it; running its own level script loads the map but leaves the game's "current level" on the front end, so the plugin cannot line the world up and CJ floats; and replaying the player's own presses cannot work, because reTHAWed's front end only reads the controller once the player touches it. **Load the map by hand as before.** The whole investigation is in `docs/DESIGN.md` 8.35 (the code is in the tree but switched off).
+- **Skitching, reTHAWed's way** (8.42, not tested yet): press **Up** directly behind a moving car to grab on, **Down** to let go. Balance (Left and Right) is not in yet, and the tow point and speeds are ours, not reTHAWed's. Before 8.42 it was a tow on **L1** from any side.
+- **Free skate on Play** now works (8.35 road 3, tested 2026-10-14): about 8 seconds after reTHAWed opens, the map loads in free skate by itself. If it ever doesn't, load it by hand: alt-tab to reTHAWed and pick Free Skate, your map, and your skater. The earlier attempts that did not work are in `docs/DESIGN.md` 8.35.
 
 - **GTA in exclusive full screen freezes reTHAWed** when you switch back to reTHAWed (not caused by our code; happens without it). Run GTA in a window instead (see Requirements). With GTA in a window our full setup works (tested 2026-10-07, GTA on its main menu; not yet tested with GTA in a loaded game).
 - (Fixed 2026-10-07: GTA now keeps running at 60 fps while reTHAWed is in front, via `autoPause=0` in the Windowed Mode plugin's settings.)

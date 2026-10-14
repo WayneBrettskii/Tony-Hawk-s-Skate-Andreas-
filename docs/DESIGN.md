@@ -1128,7 +1128,53 @@ patterns (another reTHAWed build) are left alone.
 the test is off for good and we look for a per-frame point in its game loop instead); the menu may
 also set things we haven't seen (the selected skater, a "session" flag).
 
-### 8.41 Car rails: "parked" means parked (the moving-rail NaN) — user 2026-10-13
+### 8.42 Skitch the way reTHAWed does it (user 2026-10-14: "make it work exactly like it does in rethawed") - step 1 of 2
+
+**The problems we had with skitching, in order** (MODLOG 8.33 and the tests):
+
+1. **Units.** The range check was written in metres against THAW's inches, about 40x off. Fixed (674b8d5).
+2. **A moving car drives through CJ.** His position is re-imposed every frame, so a re-posed ped cannot block a car. Push-out works only against the car's collision box, which is smaller than the car (8.33 C5).
+3. **The car-hit bail is narrow and unreliable** (8.33 C5).
+4. **It grabs from the wrong places.** We grab with L1 held within 7 m, from any side or from the front. reTHAWed only lets you grab from directly behind. **Step 1 fixes this.**
+5. **Nothing lets go on purpose, and there is no balance.** reTHAWed: hold Down to let go, Left and Right keep you balanced. **Step 1 adds the release; balance is step 2.**
+6. **The grab button is ours (L1), not reTHAWed's (Up on the D-pad).** **Step 1 changes it** (see the note at the end).
+7. **The tow point** is a spring to a point 3.2 m behind the car's centre. That number is ours, not reTHAWed's. Kept until we have reTHAWed's own numbers.
+8. **The tow can switch cars.** The GTA side picks the nearest moving car every pass, so a tow can jump to another car. **Step 1 follows the car we grabbed.**
+
+**What reTHAWed does (sources):**
+
+- The official manual (PS2 booklet): "To skitch (get pulled behind a vehicle), press [Up] on the +Control Pad when directly behind a vehicle." The booklet's wording is odd, but the walkthroughs say the same: "Hold up behind a vehicle to hold onto the back of it" (GameFAQs, supercheats).
+- In-game text (`data\mod\qb.pab.wpc`): "To skitch, skate up to the back of a vehicle and press \b7 to grab on. Make sure to keep your balance while skitching." and "Skitch (\b7 behind) the forklift for 10 seconds." So the grab is `\b7`, and the manual puts it on Up.
+- Balance: "balance by pressing left and right" (GameFAQs, Skitch Sanchez). If you fall off, skitch again.
+- Let go: "Hold down to let go of car" (IGN, Story Mode part 5). The Xbox instructions agree: Down brakes or leans right, Left and Right balance.
+- Engine (`rthw.dll`, read by disassembly): the Gameplay option `RT_ToggleSkitching` (its handler at `0x6D0D9940` sets a flag keyed `0x5E557B` to On or Off). The skitch start raises the event `OnAchEvent_StartSkitching` (dispatcher near `0x6D164116`).
+- **Not yet found in the C code:** the tow point, the balance numbers and the exact release rules. Step 2 needs those, or our own numbers.
+
+**What step 1 changes:**
+
+- **Grab:** Up pressed (a new press, not a hold) while the skater is **directly behind** a moving car: 1 m to 8 m back, within 31 degrees of the car's nose (horizontally), and not more than 1.5 m different in height. *Our numbers.*
+- **Let go:** Down pressed (a new press); the car stops (under 1 m/s for 0.5 s); the car is more than 12 m away; or the car we hold is no longer published.
+- **Follow the car we hold.** Link v17: the GTA side keeps publishing the held car (by its pool index) even when it is slower than the candidate speed, and the THAW side says which car it holds (`thawSkitchId`). Also published: the car's nose direction (`gtaSkitchFwd`), so "behind" uses where the car points, not where it is moving.
+- **Tow:** unchanged in principle (velocity matched, spring to 3.2 m behind the car's centre). Only the "behind" direction changed.
+- **Logs** (`logs\thaw.log`): `skitch 8.42: grabbed car N from behind (…)`, `skitch 8.42: let go (reason) after … s`, and, at most once a second, `skitch 8.42: Up pressed N time(s) without a grab; last reason: …`. The GTA side (`logs\gta.log`) says `skitch: holding car N` once a second while he holds one.
+- **Button:** L1 is no longer the skitch button. Up is. One constant (`kSkitchGrabButton`) changes it back.
+
+**Still not like reTHAWed (honest):**
+
+- Balance (Left and Right, the balance meter) is not modelled. Step 2.
+- The tow point (3.2 m), the 31-degree cone, the 1 m/s stop speed and the 12 m release are ours, to be tuned by test.
+- No skitch goals or scoring (reTHAWed counts "skitch for 20 seconds").
+- The radio wheel also uses Up (volume). Close it before skitching, or a volume press near a car may grab.
+
+**How to test (not yet in game):** build `cmake --build build --config Release --target gta_plugin thaw_plugin` (the launcher does not use the link, so it does not need rebuilding); restart GTA and reTHAWed through the launcher. Free skate on the map; drive or skate to a moving car; get directly behind it, 2 to 4 m back, facing the same way; press **Up**. Expect CJ to be pulled along, and `thaw.log` to say `grabbed car N from behind`. Press **Down**: `let go (Down)`. From the side or the front, press Up: no grab, and `Up pressed, no grab` says why. Let a car stop: `let go (car stopped)`.
+
+**Step 1b (2026-10-14, after the first test):** the left stick pushed up behind a car grabs on too (the same test as the D-pad Up).
+
+**Step 1c (2026-10-14): vehicle proxies in the map (the spike, first part).** CJ must be able to skitch the San Andreas cars, so reTHAWed needs vehicles to stand in for GTA's cars. A THAW vehicle is a level node with `Class = Vehicle`, a position, a `type`, a `CreatedAtStart` flag and its model path as a string (`models`-style, e.g. `veh\veh_smallsportscar\veh_smallsportscar.mdl`). The map tool copies one such record from the player's own packs at build time (`--proxy-cars N --thaw-dir <reTHAWed>`), keeps every property, and writes N of them in a row 15 m east of the start. Nothing is copied into the repo. **Built and read back (3 vehicle records, same items as the template). Not run in game.** Test: back up the installed map, load the test map (one map at a time), and check that the three cars appear and nothing crashes (`reTHAWed\debug.txt`). The plan after that: a pool of proxies that follows GTA's cars near CJ, starting with one proxy and one car.
+
+**Step 2 (not started): the animation and the balance meter.** Found in `rthw.dll` and its scripts: reTHAWed's balance meter is drawn by its HUD, with its arrow turned by a script call (`RT_SetBalanceArrowRotation`) and coloured by `Theme_GetBalanceMeterColor` / `Theme_GetBalanceArrowColor`. The balance logic and the skitch pose are in reTHAWed's compiled scripts, not in the C code read so far. Our HUD copy shows the meter only when reTHAWed draws it, and our skater is never in its skitch state, so the meter and the pose do not appear. To match them, reTHAWed's own skitch state has to run for our skater. That means decompiling its scripts (`thps-tools\nodeqbc-master`, a Node.js tool; Node is not installed) and finding the calls that start the skitch state and balance. Options: (a) install a portable Node into the approved temp folder to read the scripts; (b) build our own balance meter and pose, which will not look exactly like reTHAWed's.
+
+### 8.41 Car rails: "parked" means parked (the moving-rail NaN) - user 2026-10-13
 
 **What happened.** The user grinded moving cars and got the old glitch. `logs\thaw.log`: the
 skater's velocity becomes `-nan(ind)` while he is travelling at ~23 m/s, then his position;

@@ -157,7 +157,7 @@ def objects_from_obj(path):
 class ColObject:
     def __init__(self, name, verts, faces):
         self.name = name
-        self.key = qbkey(name)
+        self.key = _k(name)
         self.verts = verts
         self.faces = faces
         xs, ys, zs = zip(*verts)
@@ -744,6 +744,91 @@ def array_header(kind):
     return 0x00000100 | (kind << 16)
 
 
+def _k(name):
+    """A name as a checksum: a string is hashed, an int already is one (8.42c)."""
+    return name if isinstance(name, int) else qbkey(name)
+
+
+_RECORD_KINDS = {0x1B00: "checksum", 0x0D00: "vector", 0x0700: "string", 0x0300: "integer"}
+
+
+def _record_items(data, at):
+    """8.42c: the item chain that holds the Class item at `at` in a THAW pak. Items are 16-byte
+    headers (kind, name, value, next); `next` is relative to the start of the pak's body, which
+    is worked out from the Class item itself. Returns writer items for every item except the
+    struct header, the position and the name (the caller supplies those)."""
+    def u32(p):
+        return struct.unpack_from("<I", data, p)[0]
+    base = (at + 16) - u32(at + 12)
+    head = at
+    for _ in range(40):
+        pred = None
+        for p in range(max(0, head - 64), head, 4):
+            if p + 16 <= len(data) and u32(p + 12) == head - base:
+                pred = p
+        if pred is None:
+            break
+        head = pred
+    out, p = [], head
+    for _ in range(40):
+        kind, name, value, nxt = struct.unpack_from("<4I", data, p)
+        if kind in _RECORD_KINDS:
+            if kind == 0x0D00:
+                floats = struct.unpack_from("<3f", data, value + base + 4)
+                item = ("vector", name, floats)
+            elif kind == 0x0700:
+                raw = data[value + base:]
+                item = ("string", name, raw[:raw.index(0)].decode("latin1"))
+            elif kind == 0x1B00 and name == 0:
+                item = ("flag", "", value)
+            elif kind == 0x1B00:
+                item = ("checksum_key", name, value)
+            else:
+                item = ("integer", name, value)
+            if name not in (qbkey("pos"), qbkey("Name")):
+                out.append(item)
+        if nxt == 0:
+            break
+        p = nxt + base
+    return out
+
+
+def read_vehicle_template(thaw_dir):
+    """8.42c: the items of one vehicle record from reTHAWed's own packs (its model, its type and
+    its flags), read at build time from the player's own install. The caller adds the position
+    and the name. Nothing is copied into the repo."""
+    pattern = struct.pack("<3I", 0x1B00, qbkey("Class"), qbkey("Vehicle"))
+    for root, _, files in os.walk(os.path.join(thaw_dir, "data")):
+        for fn in sorted(files):
+            if not fn.endswith(".pak.wpc"):
+                continue
+            with open(os.path.join(root, fn), "rb") as f:
+                data = f.read()
+            at = data.find(pattern)
+            while at >= 0:
+                items = _record_items(data, at)
+                if any(i[0] == "string" and i[1] == qbkey("model") for i in items):
+                    kept = [i for i in items if _keep_vehicle_item(i)]
+                    print("vehicle:      record copied from %s (%d of %d items kept)" % (fn, len(kept), len(items)))
+                    return kept
+                at = data.find(pattern, at + 1)
+    raise SystemExit("no vehicle record found under %s/data" % thaw_dir)
+
+
+def _keep_vehicle_item(item):
+    """8.42c: which items of the copied record go into the proxies. The record also carries a
+    rail manager (unnamed checksums and integers) that points at rails of its own level; in our
+    map those names do not exist and reTHAWed crashed in CRailManagerComponent::InitFromStructure
+    (debug.txt, 2026-10-14). A parked vehicle needs only its class, type, model, rotation and
+    flags, so the rest is dropped."""
+    kind, name = item[0], item[1]
+    if kind == "integer":
+        return False
+    if kind == "checksum_key" and name not in (qbkey("Class"), qbkey("type")):
+        return False
+    return True
+
+
 class QB:
     """Writes the subset of THAW's compiled script format seen in Los Santos East:
     one root array of structs; struct items: vector, checksum, flag, array of
@@ -769,11 +854,11 @@ class QB:
             if kind == "vector":
                 data = item + 16
                 nxt = 0 if last else data + 16
-                self.u32(0x00000D00, qbkey(name), data, nxt)
+                self.u32(0x00000D00, _k(name), data, nxt)
                 self.u32(0x00000100)
                 self.b += struct.pack("<3f", *value)
             elif kind == "checksum":
-                self.u32(0x00001B00, qbkey(name), value, 0 if last else item + 16)
+                self.u32(0x00001B00, _k(name), value, 0 if last else item + 16)
             elif kind == "checksum_key":  # name given as a checksum (name unknown)
                 self.u32(0x00001B00, name, value, 0 if last else item + 16)
             elif kind == "flag":
@@ -782,7 +867,7 @@ class QB:
                 data = item + 16
                 vals = item + 16 + 12
                 nxt = 0 if last else vals + 4 * len(value)
-                self.u32(0x00001900, qbkey(name), data, nxt)
+                self.u32(0x00001900, _k(name), data, nxt)
                 self.u32(array_header(0x0D), len(value), vals)
                 self.u32(*value)
             elif kind == "link":
@@ -790,22 +875,24 @@ class QB:
                 # (header, count 1, the value itself; no pointer).
                 data = item + 16
                 nxt = 0 if last else data + 12
-                self.u32(0x00001900, qbkey(name), data, nxt)
+                self.u32(0x00001900, _k(name), data, nxt)
                 self.u32(array_header(0x01), 1, value)
             elif kind == "string":
                 data = item + 16
                 raw = value.encode("ascii") + b"\0"
                 raw += b"\0" * (-len(raw) % 4)
                 nxt = 0 if last else data + len(raw)
-                self.u32(0x00000700, qbkey(name), data, nxt)
+                self.u32(0x00000700, _k(name), data, nxt)
                 self.b += raw
+            elif kind == "integer":
+                self.u32(0x00000300, _k(name), value, 0 if last else item + 16)
             else:
                 raise ValueError(kind)
         return start
 
     def node_array(self, name, structs):
         item = self.here()
-        self.u32(0x000C0400, qbkey(name), self.pak, item + 20, 0)
+        self.u32(0x000C0400, _k(name), self.pak, item + 20, 0)
         arr = self.here()
         self.u32(array_header(0x0A), len(structs), arr + 12)  # 0x0A: array of structs
         table = self.here()
@@ -818,7 +905,7 @@ class QB:
         """Top-level array of checksums (kind 0x0D) or integers (kind 0x01), as LSE's
         <prefix>_NodeArray_SortedNames / _SortedIndices."""
         item = self.here()
-        self.u32(0x000C0400, qbkey(name), self.pak, item + 20, 0)
+        self.u32(0x000C0400, _k(name), self.pak, item + 20, 0)
         arr = self.here()
         self.u32(array_header(kind), len(values), arr + 12)
         self.u32(*values)
@@ -849,7 +936,7 @@ LSE_EMPTY_SCRIPT_KEYS = (0x5774827A, 0xE5947879, 0x3541FE81, 0x28673697,
                          0x00DC351A, 0xBA114765, 0x7FB679EB, 0x4F2A84F7)
 
 
-def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True):
+def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True, proxies=(), vehicle=None):
     """rails: list of chains, each a list of THAW points (see find_rails).
     geometry_nodes: one LevelGeometry node per collision object (as so far).
     LSE has them for only 715 of its 7,506 collision objects, so the collision
@@ -895,6 +982,13 @@ def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True):
             if RAIL_FLAG:
                 items.append(("flag", "", qbkey(RAIL_FLAG)))
             nodes.append(items)
+    # 8.42c: vehicle nodes (proxies), each a copy of a THAW vehicle record with its own position
+    # and name. They come after the rails, so their names follow the rail names in the lists.
+    proxy_names = []
+    for i, pos in enumerate(proxies):
+        pname = qbkey("%s_Vehicle%d" % (prefix, i))
+        proxy_names.append(pname)
+        nodes.append([("vector", "Pos", pos), ("checksum", "Name", pname)] + list(vehicle))
     # Attempt 3 (4-2d): attempt 2 crashed on loading this file. LSE's level
     # script also has empty scripts the game may call while loading, and two
     # lookup arrays next to the node list. We add the same (empty) ones.
@@ -904,8 +998,8 @@ def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True):
     for name in ("_Goals", "_Startup", "_Setup"):
         qb.empty_script(qbkey(prefix + name))
     for name in ("LoadAllParticleTextures", "LoadTerrain", "load_level_anims", "LoadCameras", "LoadObjectAnims"):
-        qb.empty_script(qbkey(name))
-    names = [qbkey("Player1")] + ([o.key for o in objs] if geometry_nodes else []) + rail_names  # node order
+        qb.empty_script(_k(name))
+    names = [qbkey("Player1")] + ([o.key for o in objs] if geometry_nodes else []) + rail_names + proxy_names  # node order
     qb.value_array(prefix + "_NodeArray_SortedNames", 0x0D, names)
     qb.value_array(prefix + "_NodeArray_SortedIndices", 0x01, list(range(len(names))))
     return qb.finish(), len(nodes)
@@ -929,7 +1023,7 @@ LSE_SKY_NODE_FLAG = 0xB31DD4B2
 class _SkyPiece:
     def __init__(self, name):
         self.name = name
-        self.key = qbkey(name)
+        self.key = _k(name)
         self.mn = (-1.0, -1.0, -1.0)
         self.mx = (1.0, 1.0, 1.0)
 
@@ -1086,7 +1180,14 @@ def main():
                     help="TerrainType written on every rail node (default %s)" % RAIL_TERRAIN)
     ap.add_argument("--rail-flag", default=RAIL_FLAG, metavar="NAME",
                     help="extra flag written on every rail node (e.g. Spinnable; default none)")
+    ap.add_argument("--proxy-cars", type=int, default=0, metavar="N",
+                    help="8.42c: N reTHAWed vehicles (copies of a vehicle record from --thaw-dir), placed in a row "
+                         "15 m east of the start; they are the stand-ins for GTA's cars")
+    ap.add_argument("--thaw-dir", metavar="FOLDER",
+                    help="reTHAWed's folder, for --proxy-cars (its packs are read; nothing is written there)")
     args = ap.parse_args()
+    if args.proxy_cars > 0 and not args.thaw_dir:
+        ap.error("--proxy-cars needs --thaw-dir (reTHAWed's folder)")
     RAIL_TERRAIN = args.rail_terrain
     RAIL_FLAG = args.rail_flag
     if not args.gta and not args.from_obj:
@@ -1171,7 +1272,13 @@ def main():
     col, st = write_col(objs)
     spawn = to_thaw(DEFAULT_SPAWN, centre)
     spawn = (spawn[0], spawn[1] + 10.0, spawn[2])  # a little above the ground
-    qb, nnodes = write_level_qb(args.prefix, objs, spawn, rails, not args.no_geometry_nodes)
+    vehicle, proxies = None, []
+    if args.proxy_cars > 0:
+        vehicle = read_vehicle_template(args.thaw_dir)
+        proxies = [(spawn[0] + 590.0, spawn[1], spawn[2] + 315.0 * i) for i in range(args.proxy_cars)]
+        print("proxies:      %d vehicle nodes, the first at THAW %.0f %.0f %.0f" % (len(proxies), *proxies[0]))
+    qb, nnodes = write_level_qb(args.prefix, objs, spawn, rails, not args.no_geometry_nodes,
+                                proxies=proxies, vehicle=vehicle)
     # 8.32 R3a: the rail nodes as written (node number in the level's node list,
     # rail, point, THAW position), so the THAW plugin can find reTHAWed's rail
     # list in memory by these exact positions.

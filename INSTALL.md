@@ -116,8 +116,9 @@ In GTA, once you're on foot:
 - **L3 + R3** (click both sticks in together) — **start skating**. Press again to stop.
 - On a **BMX** — **L3 + R3** turns **BMX mode** on and off instead (the game tells you the first
   time you get on a bike).
-- **Cars** — the **roofs of parked cars** are grindable. **Hold L1** next to a moving car to
-  **skitch** — grab on and be pulled along behind it.
+- **Cars** — the **roofs of parked cars** are grindable. To **skitch** a moving car, get directly
+  behind it (1 to 8 m back, lined up with its nose) and press **Up** on the D-pad (or push the left stick up): CJ grabs on and
+  is pulled along. Press **Down** to let go. (Balance with Left and Right is not in yet.)
 - **Radio** — hold **Back / Share** for the wheel: reTHAWed's soundtrack, any GTA station, the User
   Track Player, or Off. Move with the stick, D-pad Up/Down changes the volume.
 - **Right stick** always moves the camera, in every mode.

@@ -1,3 +1,69 @@
+# HANDOFF (2026-10-14): read this first
+
+**Git:** nothing committed since `2a6d08a`. Uncommitted (all intended): `INSTALL.md`, `MODLOG.md`,
+`README.md`, `STATUS.md`, `docs/DESIGN.md`, `src/common/link.h` (layout v17), `src/gta/cars.cpp`
+(skitch part only; the car-rail gate is untouched), `src/thaw/bmx.cpp` (skitch 8.42), and
+`tools/gta_to_thaw_map.py` (proxy vehicles). AGENTS.md: do not commit unless asked.
+
+**Builds:** `build\Release` holds the 8.42 plugins (`SkateAndreas.asi` 12:31, `SkateAndreas-thaw.dll`
+00:41 on 14 Oct). **`release\SkateAndreas.zip` is still the old build (before 8.42).** Rebuild it
+(`tools\make-release.ps1`) only after the skitch test is accepted. The launcher is unchanged.
+
+**The map in reTHAWed:** only one SkateAndreas map can be installed (all use the prefix `MPGTALSE`,
+level ID `0x9F014B98`). Check which one is in `D:\Games\reTHAWed\data\mod\UserMods\Maps\`. The full
+map is `my-passthrough GTA SA pool`. Do not write into the reTHAWed folder; the user copies maps.
+
+**Open threads, in order:**
+1. **Skitch, step 1 (DESIGN 8.42).** Up on the D-pad, or the left stick pushed up (below -80), directly
+   behind a moving car (1 to 8 m back, within about 31 degrees of its nose, same level) grabs on. Down
+   lets go; the car stopped for 0.5 s, more than 12 m away, or lost lets go too. Link v17 holds the car
+   by its pool index. The user said "good start" after the grab test; the stick grab (8.42b) is built but
+   not reported. Not built: balance (Left and Right), the animation and the balance meter.
+2. **Proxy vehicles (DESIGN 8.42c).** `tools\gta_to_thaw_map.py --proxy-cars N --thaw-dir <reTHAWed>`
+   copies one vehicle record from the player's own packs and writes N of them 15 m east of the start.
+   The first load **crashed** in `Obj::CRailManagerComponent::InitFromStructure` (EAX = EBX = 0; see
+   `reTHAWed\debug.txt`). The fix drops the record's unnamed items (the rail manager):
+   `_keep_vehicle_item`, 6 of 10 items kept. **The fix is not yet tested.** Test map:
+   `extracted\thaw_maps\proxytest` (name "Proxy test"). To test: replace its four files
+   (`MPGTALSE.pak.wpc`, `_sky`, `_sfx`, `level.ini`) in `UserMods\Maps\proxytest`, load it through the
+   launcher, look for three small cars 15 m east of the start, and read `debug.txt`.
+3. **Requirement:** CJ must be able to skitch the real San Andreas cars. That needs a pool of proxy
+   vehicles that follows GTA's cars near CJ, not one test car. Risk: a vehicle moving under the skater
+   (the rail pool showed that a moving object under him can NaN the grind maths).
+4. **Animation and balance meter (not built).** reTHAWed's balance arrow, in `rthw.dll` 5.0.0.1:
+   float `0x6D321680` (angle) and flag byte `0x6D321684`. The setter is `RT_SetBalanceArrowRotation`
+   (handler `0x6D107CB0`). The draw routine at `0x6D107380` uses the arrow when the flag is set. Not
+   yet known: what calls the draw routine, and the angle's units. The skitch pose lives in reTHAWed's
+   scripts.
+5. **Scripts (blocked).** NodeQBC (`D:\Mods\thps-tools\nodeqbc-master`) needs Node. A portable Node
+   22.12 is in the approved temp folder. `qb.pab.wpc` is header-only for NodeQBC; level packs decode
+   further but fail on THAW item type `0x73`, which NodeQBC doesn't know.
+
+**Facts that cost time to find:**
+- **qbkey:** a CRC variant with the table from NodeQBC `Internal/Keys.js`. Start at 0xFFFFFFFF, lowercase
+  the name, no final XOR. Checked: `load_MPGTALSE` = 0x9F014B98, `load_z_mainmenu` = 0x99CE4D72. The
+  repo has no qbkey yet; the working copy is in the temp folder (`qbkey.js`).
+- **THAW pak items:** 16-byte headers (kind, name, value, next). `next` is relative to the pak body; the
+  body base is the Class item's address + 16 minus its `next`. Kinds: `0x1B00` checksum (name 0 = flag),
+  `0x0D00` vector (data = a `0x100` word + 3 floats), `0x0700` string, `0x0300` integer.
+- **Vehicle record:** items for position, rotation, name, `Class = Vehicle`, `type`, flags, the model path
+  (`veh\veh_...\veh_....mdl`), and a rail manager. The model path is inside the record, so no type
+  table is needed.
+- **Map tool:** `QB` takes raw checksums as names (`_k`) and writes integer items.
+- **rthw.dll 5.0.0.1:** image base `0x6D0C0000`. Disassembly from `dumpbin /DISASM` is in
+  `C:\Users\bart\AppData\Local\Temp\opencode\rthw_disasm.txt`. The addresses only hold for 5.0.0.1.
+- **Rail lists:** every test build overwrites `extracted\thaw_maps\_railpool\rails_in_map.csv` and
+  `all_rails.csv`, which the plugin reads for the full map. Back them up first. Backups are in
+  `C:\Users\bart\AppData\Local\Temp\opencode\railcsv_backup`, and they were restored after each test.
+- **Game files:** none are tracked in the repo (checked). Copies made for the tests are in temp or in the
+  gitignored `extracted\`.
+
+**Next session:** ask the user for the proxytest result and read `debug.txt`. If the proxies load, the
+next step is one proxy following one GTA car near CJ (the moving-object test). If they still crash,
+look at the other kept items (the rotation and the flags).
+
+---
+
 # WHERE WE LEFT OFF (2026-10-13 01:30)
 
 **Now (2026-10-13, Claude):** working on free skate on Play again — **8.35 road 3**, a new road (not a
@@ -61,7 +127,7 @@ like a *folder* path still says `my-passthrough`; do not "fix" those.
 **Working now (all tested on the real games).** Skate mode across the whole map; the camera fix
 (the right stick works in skate / BMX mode); rails everywhere (a 4,500-rail pool that follows
 the skater, long rails, tall ledges, building and bridge tops, GTA's railroad tracks); parked
-and slow cars are grindable on their roofs and **skitch** works (hold **L1** near a moving car);
+and slow cars are grindable on their roofs; **skitch** was a tow on **L1** and is being changed to reTHAWed's grab (8.42, **not tested yet**: Up behind a car, Down to let go);
 BMX mode with GTA's bike following reTHAWed's rider; the radio wheel; graffiti tags; the GPS
 route line; smooth 60 fps; the **GUI launcher** (Play starts both games, setup checks, game
 folders pickable, remembered in `SkateAndreas.ini`); and the **on-screen hints**

@@ -21,6 +21,7 @@ namespace {
 constexpr float kNear = 40.0f;   // m: cars within this of CJ are logged
 constexpr float kRailNear = 22.0f; // m: cars within this give roof rails
 constexpr float kSkitchNear = 8.0f; // m: a moving car within this can be skitched
+constexpr float kSkitchHold = 16.0f; // m: a car the skater holds is followed out to this (8.42)
 constexpr float kGtaFps = 50.0f;   // GTA's move speed is metres per 50 Hz frame
 
 // 8.41: a car gets a roof rail only when it is genuinely PARKED. The old test was
@@ -56,6 +57,14 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     float skBest = kRailNear * kRailNear;
     float skSpeed = 0.0f;
     int skModel = 0;
+    // 8.42: the car the skater holds (thawSkitchId, -1 = none), and the nearest moving car
+    const LONG heldId = link->thawSkitchId;
+    int skIdx = -1;
+    float skFwd[3] = {};
+    bool lockOk = false;
+    float lockD2 = 0.0f, lockSpeed = 0.0f;
+    int lockModel = 0;
+    float lockPos[3] = {}, lockVel[3] = {}, lockFwd[3] = {};
     __try {
         auto* pool = CPools::ms_pVehiclePool;
         if (!pool) return;
@@ -69,12 +78,32 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
             if (dCj > railNear2) continue;
             const CVector vs = v->m_vecMoveSpeed;
             const float cspeed = vs.Magnitude();
+            // 8.42: the car the skater holds is followed by its pool index, out to kSkitchHold,
+            // even when it is slow (the THAW side lets go when it stops). It is never swapped
+            // for the nearest car while he holds it.
+            if (heldId >= 0 && i == heldId && dCj < kSkitchHold * kSkitchHold) {
+                const CVector nose = v->GetForward();
+                lockOk = true;
+                lockD2 = dCj;
+                lockSpeed = cspeed;
+                lockModel = static_cast<int>(v->m_nModelIndex);
+                lockPos[0] = (p.x - align->offset.x) / align->scale;
+                lockPos[1] = (p.z - align->offset.z) / align->scale;
+                lockPos[2] = (p.y - align->offset.y) / (align->scale * align->ySign);
+                lockVel[0] = vs.x * kGtaFps / align->scale;
+                lockVel[1] = vs.z * kGtaFps / align->scale;
+                lockVel[2] = vs.y * kGtaFps / (align->scale * align->ySign);
+                lockFwd[0] = nose.x;
+                lockFwd[1] = nose.z;
+                lockFwd[2] = nose.y / align->ySign;
+            }
             // 8.33 skitch: remember the nearest MOVING car (position + velocity, THAW units)
             // Only when it is close (the GTA side knows the metres, so the THAW side need not
             // guess a range in inches).
             if (cspeed > 0.1f && dCj < kSkitchNear * kSkitchNear && dCj < skBest) {
                 skBest = dCj;
                 skOk = true;
+                skIdx = i;
                 skSpeed = cspeed;
                 skModel = static_cast<int>(v->m_nModelIndex);
                 skPos[0] = (p.x - align->offset.x) / align->scale;
@@ -84,6 +113,10 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
                 skVel[0] = vs.x * kGtaFps / align->scale;
                 skVel[1] = vs.z * kGtaFps / align->scale;
                 skVel[2] = vs.y * kGtaFps / (align->scale * align->ySign);
+                const CVector nose = v->GetForward();
+                skFwd[0] = nose.x;
+                skFwd[1] = nose.z;
+                skFwd[2] = nose.y / align->ySign;
             }
             // 8.41: rails on PARKED cars only, decided by the car not having moved since the
             // last pass - never by its speed (see the note above; the speed test let a slowly
@@ -145,20 +178,34 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     PublishCarRails(link, count, pts);
-    // 8.33 skitch: the nearest moving car (values first, then the flag)
-    if (skOk) {
+    // 8.33 / 8.42 skitch: the car the skater holds, if he holds one and it is still in
+    // reach; otherwise the nearest moving car, as the candidate for a grab. Values first,
+    // then the id and the flag.
+    const bool pubLock = lockOk;
+    const bool pubCand = !lockOk && skOk;
+    const float* pp = pubLock ? lockPos : skPos;
+    const float* pv = pubLock ? lockVel : skVel;
+    const float* pf = pubLock ? lockFwd : skFwd;
+    if (pubLock || pubCand) {
         for (int k = 0; k < 3; ++k) {
-            link->gtaSkitchPos[k] = skPos[k];
-            link->gtaSkitchVel[k] = skVel[k];
+            link->gtaSkitchPos[k] = pp[k];
+            link->gtaSkitchVel[k] = pv[k];
+            link->gtaSkitchFwd[k] = pf[k];
         }
     }
-    link->gtaSkitchValid = skOk ? 1 : 0;
+    link->gtaSkitchId = pubLock ? heldId : (pubCand ? skIdx : -1);
+    link->gtaSkitchValid = (pubLock || pubCand) ? 1 : 0;
     static DWORD lastSkLog = 0;
     const DWORD skNow = GetTickCount();
     if (skNow - lastSkLog > 1000) {
         lastSkLog = skNow;
-        log("skitch: %s nearest moving car (model %d, %.1f m, speed %.2f) at thaw %.1f %.1f %.1f", skOk ? "publishing" : "no",
-            skModel, skOk ? sqrtf(skBest) : -1.0f, skSpeed, skPos[0], skPos[1], skPos[2]);
+        if (pubLock) {
+            log("skitch: holding car %ld (model %d, %.1f m, speed %.2f) at thaw %.1f %.1f %.1f", heldId, lockModel,
+                sqrtf(lockD2), lockSpeed, pp[0], pp[1], pp[2]);
+        } else {
+            log("skitch: %s car %d (model %d, %.1f m, speed %.2f) at thaw %.1f %.1f %.1f", pubCand ? "publishing" : "no",
+                skIdx, skModel, pubCand ? sqrtf(skBest) : -1.0f, skSpeed, pp[0], pp[1], pp[2]);
+        }
     }
 }
 
