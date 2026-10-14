@@ -978,7 +978,7 @@ option (section 11) will live.
 **Not doing yet:** no auto-update, no profiles, no graphics options. The controller
 mode (section 11) is a later tick box on this window.
 
-### 8.35 Start in our map on Play (free skate, a silent skater) — plan (user 2026-10-12)
+### 8.35 Start in our map on Play (free skate, a silent skater) — plan (user 2026-10-12; road 3 2026-10-13)
 
 **Wanted.** When the player hits Play, reTHAWed should end up in **free skate, on our
 map**, as a **created ("New Skater") skater**. The user's reason for the skater
@@ -1049,6 +1049,84 @@ The experiment's code (`src/thaw/autostart.cpp`, the recorder and the replay) is
 but switched **off** (`kReplayFrontEnd`, `kRecordFrontEnd`), documented here so nobody repeats it.
 
 **Not doing:** writing to reTHAWed's files, or changing reTHAWed itself.
+
+**Road 3 (user 2026-10-13: "can we fix the launcher not putting the player in free skate?"),
+written before any code.** The two roads above were both *around* the menu: running the raw
+`load_MPGTALSE` script (loads the files but skips what the menu does afterwards) and pressing
+the menu's buttons for the player (can't start itself). Neither tried what the menu itself ends
+with. Reading reTHAWed's own scripts (decompiled in the cloud scratch area, not in the repo):
+
+- the level menu ends in **`change_level level = <load script>`** (script `0x39C58EA1`), which runs
+  `change_level_proceed`, which ends in reTHAWed's **`ChangeLevel`** function (`0x5BE70A4C`). That
+  is the step that sets the "current level" field our plugin reads: road 1 never ran it, which is
+  exactly why the field kept saying `load_z_mainmenu`;
+- the game mode comes first: **`SetGameType freeskate`** (`0xD6F4A573`, `0x34861A16`) and
+  **`SetCurrentGameType`** (`0xE46F078D`), as reTHAWed's own game-flow scripts do.
+
+`change_level` needs a parameter (`level = ...`). reTHAWed.exe 5.0.0.1 has the pieces to build
+one, found by reading its code (read only): a parameter list ("struct") is 8 bytes, set up by
+`0x004141A0`; `0x00415E00` adds a name = checksum entry; `0x00415420` empties it again. The script
+runner (`0x004135E0`, already used for BMX) takes it as its second argument. Code checks guard
+every one of these: if any byte differs, nothing is called.
+
+**The second problem from road 2 — no game-thread call at the front end** (our controller hook
+only runs once the player touches the pad) — is avoided by calling from reTHAWed's
+**`Present`** (the end of every drawn frame), which we already hook for the HUD (8.23) and which
+runs whether or not anyone touches the pad. It is only used if it runs on the thread that owns
+reTHAWed's window (reTHAWed's main thread); otherwise the test logs that and does nothing. A guard
+stops it re-entering itself if the load draws its own frames.
+
+**Steps:**
+1. *(test, one run — this step)* Once per reTHAWed start, when its front end has been up for 8 s
+   and no level is loaded: `SetGameType freeskate`, `SetCurrentGameType`, then
+   `change_level level = load_MPGTALSE`, from `Present`. Log each call, the thread check, and then
+   reTHAWed's state (front end / level ID) every second for 60 s. **Success = level `0x9F014B98`
+   with the front end gone**, and skate mode in GTA lines up as after a manual load.
+2. If it works: make it the normal behaviour on Play (with an off switch), remove road 2's
+   replay / recorder, update README / INSTALL.
+3. If the level loads but something is off (e.g. the skater is a story character, a career goal
+   screen): one more research step on what else the menu sets; two real attempts, then STATUS.md.
+
+**Risks:** loading a level from inside `Present` is unusual (if reTHAWed hangs or crashes there,
+
+**Road 3 result (user 2026-10-13, thaw.log): the level part works.** Present runs on reTHAWed's
+window thread; 8 s after the front end came up the three calls returned (1, 1, and a script
+handle) and 1.5 s later reTHAWed was in level `0x9F014B98` with the front end gone ("IT WORKED");
+skate mode switched on in GTA as after a manual load. **But no controller input:** while skate
+mode was on, reTHAWed asked our input hook nothing at all (no `questions answered` lines until
+reTHAWed was brought to the front at 90 s).
+
+**Why (rthw.dll, read in the cloud):** reTHAWed reads a controller only after it has **joined as a
+player**, and a controller joins only on an SDL "button pressed" event (`Added player %d: %s` in
+debug.txt). SDL sends those only to the front window, so with GTA in front no pad ever joins. A
+manual menu load works because the menu presses join the pad. Also: a freshly joined pad is read
+only once the joining press is released (a per-player "buttons held" count).
+
+**Fix 1 (coded):** just before the level calls, do what that button press does: rthw's own
+"add player" (`rthw.dll+0x54C40`) with the first controller reTHAWed has open (its list at
+`+0x269FE8`, count `+0x269FF0`), then set that player's "buttons held" count to 0. Skipped if
+player 1 already has a pad or none is open; code-checked byte for byte (with rthw's real load
+address). The pad will rumble once as it joins, like a normal join.
+
+**Fix 1 result (user 2026-10-13): the controller works** ("joined controller ... as player 1"). **But
+no sound on the reTHAWed radio station.** reTHAWed's own debug.txt shows the level's song starting
+("[PLS] playing song ... Hey! Hey! Hey!"), and our music code paused / resumed it as asked, so the
+music was playing but not heard.
+
+**Why (rthw.dll, read in the cloud):** reTHAWed's option **MuteOnUnfocus** (on by default): on an
+SDL "focus lost" event rthw flips three jumps in reTHAWed.exe (`0x4374AB`, `0x4374C6`, `0x4B78ED`)
+to the muted state, and on "focus gained" flips them back (75 75 74 = sound on, 74 74 75 = muted).
+By hand, the player's visit to reTHAWed's menus gave it focus (sound on) before our focus guard
+(8.6, `focus.cpp`) started swallowing "lost focus"; road 3 never brings reTHAWed to the front, so
+the last word it heard was "focus lost".
+
+**Fix 2 (coded):** from `Present`, twice a second: while reTHAWed is in our level and those bytes
+show the muted state, hand reTHAWed the same "focus gained" event SDL would send
+(`SDL_PushEvent`, `SDL_WINDOWEVENT_FOCUS_GAINED`), so **its own code** unmutes; at most every 5 s,
+10 tries. Logged as `autostart audio:`. Works for any start, not only road 3. Unknown byte
+patterns (another reTHAWed build) are left alone.
+the test is off for good and we look for a per-frame point in its game loop instead); the menu may
+also set things we haven't seen (the selected skater, a "session" flag).
 
 ### 8.41 Car rails: "parked" means parked (the moving-rail NaN) — user 2026-10-13
 

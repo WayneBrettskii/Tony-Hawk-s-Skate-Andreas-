@@ -1,4 +1,13 @@
-# WHERE WE LEFT OFF (2026-10-12 23:30)
+# WHERE WE LEFT OFF (2026-10-13 01:30)
+
+**Now (2026-10-13, Claude):** working on free skate on Play again — **8.35 road 3**, a new road (not a
+repeat of roads 1-2): run what reTHAWed's level menu runs (`SetGameType freeskate`,
+`SetCurrentGameType`, `change_level level = load_MPGTALSE`) from reTHAWed's `Present`. **Tested: the
+level loads by itself**, but the pad never joined reTHAWed as player 1, so no input. **Fix 1 coded**
+(join the first open controller via rthw's own "add player") **works**. Then no reTHAWed sound:
+MuteOnUnfocus kept it muted. **Fix 2 coded** (send reTHAWed a "focus gained" event while muted in our
+level). Waiting for: build, Play, untouched, pick the reTHAWed station.
+User 2026-10-13: reTHAWed 4.5 and 5.0.0.2 were tried and are fine (thread 2 below is answered).
 
 **Read in this order:** `AGENTS.md` (the hard rules — they are not optional), `README.md` (what
 works / what doesn't, kept honest), then this. `docs/DESIGN.md` is "how it works", one numbered
@@ -56,6 +65,9 @@ route line; smooth 60 fps; the **GUI launcher** (Play starts both games, setup c
 folders pickable, remembered in `SkateAndreas.ini`); and the **on-screen hints**
 (`Press L3+R3 to Skate` once a session, `Press L3+R3 to toggle BMX mode`).
 
+The car-rail fix (39b52ee) and the launcher's version warning (9be5211) are **built and
+committed but not yet seen in game** — see the three open threads below.
+
 **Dead ends and known-bad — do not re-tread.**
 - **Grinding a moving car** → NaN. The skitch is the answer; do not try to tow the rail.
 - **Starting in free skate on Play** — dead end, DESIGN 8.35, code in `src/thaw/autostart.cpp`
@@ -68,20 +80,36 @@ folders pickable, remembered in `SkateAndreas.ini`); and the **on-screen hints**
 **Wish list (user, 2026-10-10, DESIGN 8.28):** park-editor ramps across San Andreas, board whack
 (a melee hit with the board), shoot mode for skate / BMX; then water.
 
-**Nothing is in flight** — the user is playing and reporting. Take whatever they ask for next,
-write the plan into `docs/DESIGN.md` first (AGENTS.md), and do one change at a time.
+**No work is half-done in the code** — the last change (9be5211) is committed, the tree is clean,
+and the release package matches the build. The user is playing and reporting. Take whatever they
+ask for next, write the plan into `docs/DESIGN.md` first (AGENTS.md), and do one change at a time.
+The three open threads that need *testing*, not code, are listed below.
 
 **Releasing (2026-10-13).** `tools\make-release.ps1` builds `release\SkateAndreas.zip` (~11 MB):
 the three binaries, `tools\` with its **own embeddable Python** (so players install nothing),
 `INSTALL.md` (the player guide), `README.md` and the **MIT `LICENSE`**. `release\` is gitignored.
-The one hop not yet observed: the games have never been run from a **player-style folder**, so the
-rail reader reading `SKATEANDREAS_DIR` inside reTHAWed on someone else's PC is reasoned (shared
-`src/common/paths.h`) rather than seen — see DESIGN 8.38/8.40.
+The package is rebuilt after every change to a binary (verify: the packaged `.exe`/`.asi`/`.dll`
+must be byte-identical to `build\Release\`).
 
-**reTHAWed 5.0.0.2 is already out, and this mod is pinned to 5.0.0.1** (user 2026-10-13). The
-launcher refuses any other build and the plugin's code checks are 5.0.0.1 byte signatures — they
-disable their feature rather than misbehave, and the log names each address that moved. What an
-update costs: DESIGN 11, first bullet. Do not assume "the version doesn't matter" — it does.
+**reTHAWed 5.0.0.2 is already out, and this mod is pinned to 5.0.0.1** (user 2026-10-13). As of
+commit 9be5211 the launcher **warns instead of refusing**: a different `reTHAWed.exe` shows an
+amber line, `!!  reTHAWed 5.0.0.1  (your copy is a different version - trying it anyway)`, **Play
+still goes through**, and `--selftest` passes with that one `[WARN]`. The bet (user 2026-10-13:
+*"let them try to launch at least maybe it will work"*) is that the plugin's own **code checks**
+are the real authority — each one disables its feature rather than misbehave, and logs every
+address that moved. What actually supporting an update costs: `docs/DESIGN.md` section 11, first
+bullet. Do not assume "the version doesn't matter" — it does.
+
+**Three open threads — all need a *run*, not code:**
+1. **8.41 car rails** (39b52ee, untested in game). Grind a **parked** car — should work. Try a
+   **moving** car — should find no rail at all, and `logs\gta.log` should say `NO RAIL (moving)`.
+2. **reTHAWed 5.0.0.2** — press Play (the amber line lets you through), then read `logs\thaw.log`
+   for `code check 0x... DIFFERENT` lines. That list is the work; there is nothing to change until
+   the log says what moved.
+3. **The player-folder hop** — never run end to end. The games have not been started from a
+   player-style folder, so the rail reader finding `SKATEANDREAS_DIR` inside reTHAWed on someone
+   else's PC is *reasoned* (shared `src/common/paths.h`), not *seen*. See DESIGN 8.38/8.40. Rebuild
+   the temp test copy in one command when wanted; it was cleaned up.
 
 ---
 

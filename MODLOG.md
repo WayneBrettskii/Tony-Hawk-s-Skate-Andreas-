@@ -2,6 +2,27 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-13] 8.35 road 3 fix 2: reTHAWed's sound stays on after the auto start
+
+**Changed:** `src/thaw/autostart.cpp`: new audio watch, from reTHAWed's `Present` twice a second: while reTHAWed is in our level and its "muted because unfocused" state is on (three jumps in reTHAWed.exe that rthw.dll flips: 74 74 75), it sends reTHAWed the SDL "window focus gained" event (`SDL_PushEvent`), so reTHAWed's own code unmutes. At most every 5 s, 10 tries; logged as `autostart audio:`.
+**Why:** user 2026-10-13: fix 1 worked (controller) "but I wasn't getting audio on the reTHAWed radio station". debug.txt: the level's song did start; our music code paused / resumed it fine. rthw.dll (read in the cloud): MuteOnUnfocus (default on) mutes on focus lost and unmutes on focus gained; road 3 never gives reTHAWed's window focus, so it stayed muted.
+**Tested how:** rthw.dll's window-event handling read in the cloud (disassembly); clang syntax check. Not run yet.
+**Result:** not tested yet.
+
+## [2026-10-13] 8.35 road 3 fix 1: join the controller as player 1 (no input after the auto start)
+
+**Changed:** `src/thaw/autostart.cpp`: before the level calls, road 3 now runs rthw.dll's own "add player" (`+0x54C40`) with the first controller reTHAWed has open, then sets that player's "buttons held" count to 0, so reTHAWed reads it. Skipped if player 1 already has a pad or none is open; code-checked against rthw.dll with its real load address.
+**Why:** user 2026-10-13: road 3 got into skate mode "but got no controller input". thaw.log: the level loaded ("IT WORKED"), but reTHAWed never asked our input hook anything while skating. rthw.dll (read in the cloud): a pad is read only after it joins as a player, and it joins only on a button-press event, which SDL gives only to the front window. Menu presses did that before; road 3 skips the menu.
+**Tested how:** rthw.dll's event loop, add-player and pad-reader code read in the cloud (disassembly); clang syntax check. User 2026-10-13: Play, untouched.
+**Result:** works - the controller drives the skater. But no sound from reTHAWed (fix 2).
+
+## [2026-10-13] 8.35 road 3 (test): free skate on our map the way the level menu does it
+
+**Changed:** `src/thaw/autostart.cpp/.h`: new road 3. Once per reTHAWed start, 8 s after its front end is up with no level loaded, it runs what reTHAWed's own level menu runs: `SetGameType freeskate`, `SetCurrentGameType`, then `change_level level = load_MPGTALSE`, building the `level = ...` parameter with reTHAWed's own parameter-list code (`0x004141A0` set up, `0x00415E00` add a checksum, `0x00415420` clear; code-checked first). Called from reTHAWed's `Present` (`src/thaw/drawlog.cpp`), only on the thread that owns reTHAWed's window, with a re-entry guard; then logs the state every second for 60 s. `src/thaw/main.cpp`: runs its code checks at start.
+**Why:** user 2026-10-13: "can we fix the launcher not putting the player in free skate?". Roads 1-2 (DESIGN 8.35) failed: the raw load script skipped `ChangeLevel` (so the level field kept saying the front end), and pressing buttons for the player can't start itself. Road 3 does what the menu itself ends with, and `Present` runs without anyone touching the pad.
+**Tested how:** reTHAWed's scripts and code read in the cloud (decompiled scripts and disassembly, nothing in the repo); clang syntax check (Windows target, stand-in headers). User 2026-10-13: Play, untouched.
+**Result:** the level loads by itself and skate mode works in GTA, but no controller input (fix 1).
+
 ## [2026-10-13] launcher: friendlier version wording, and a different reTHAWed build only WARNS
 
 **Changed:** `src/launcher/main.cpp`: `SetupCheck` gained a **warning** state — shown **amber** with a `!!` mark, it does **not** block Play and does **not** fail `--selftest`. The reTHAWed check now reads `your copy is a different version - trying it anyway` (amber) where it used to be a refusal, and writes one log line with both byte counts and why. When Play genuinely *is* blocked, the status now names each failing check and its note (`Fix these first:` ...) instead of "some setup checks failed".
