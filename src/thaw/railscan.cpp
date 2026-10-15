@@ -270,7 +270,7 @@ int g_moves = 0;
 int g_onSamples = 0, g_samples = 0; // while watching: samples with the skater on the test rail
 
 float* F(unsigned long rec, int off) { return reinterpret_cast<float*>(rec + off); }
-unsigned long P(unsigned long rec, int off) { return *reinterpret_cast<const unsigned long*>(rec + off); }
+unsigned long P(unsigned long rec, int off) { return *reinterpret_cast<const DWORD*>(rec + off); } // 32-bit links
 
 // A 2-node rail (first node: no previous, its next node has no next) at least
 // 5000 units from the skater.
@@ -331,7 +331,19 @@ constexpr float kPoolParkX = -30000.0f;   // spare rails park here, below the ma
 constexpr float kPoolParkY = -6000.0f;
 
 struct RealRail { float a[3], b[3]; };
-struct PoolSlot { unsigned long a = 0, b = 0; int rail = -1; bool reserved = false; };
+// 8.48: a pool slot is one parked rail of the pool map, 2 or more nodes (its records in
+// order, linked by reTHAWed when the map loaded; we never change those links). It holds
+// `recs.size() - 1` consecutive two-point segments of one GTA rail, from segment `seg`.
+struct PoolSlot {
+    std::vector<unsigned long> recs;
+    unsigned long a = 0, b = 0; // first and last record (two-node slots: the car rails use these)
+    int seg = -1;               // first segment held, or -1 = free (parked)
+    bool reserved = false;
+    int Nodes() const { return static_cast<int>(recs.size()); }
+};
+// 8.48: a piece = the segments of one GTA rail that go into one slot together: a GTA rail
+// is cut into pieces of at most (longest slot - 1) segments.
+struct Piece { int seg0 = 0, nseg = 0; };
 
 std::vector<RealRail> g_realRails;
 std::vector<char> g_cont; // 8.46: g_cont[i] = 1 when piece i + 1 continues the same GTA rail (they share an end)
@@ -340,7 +352,14 @@ bool g_realTried = false, g_realOk = false;
 
 std::vector<PoolSlot> g_slots;
 int g_carFirst = 0; // first pool slot reserved for GTA car roof rails (8.33)
-std::vector<int> g_mark, g_held;
+std::vector<Piece> g_pieces;
+std::vector<int> g_pieceOf;  // segment -> its piece
+std::vector<int> g_segSlot;  // segment -> the slot holding it, or -1
+std::vector<int> g_pmark;    // piece -> fill id when wanted
+int g_pieceMaxNodes = 0;     // the slot length the pieces were cut for
+int g_carEnd = 0;            // reserved car slots are g_carFirst .. g_carEnd - 1 (two-node slots)
+LONG g_poolNodeCount = 0;    // nodes in the pool map file (rails_in_map.csv)
+long g_poolNodeCountFound = 0; // nodes in the slots found in the block
 int g_fillId = 0;
 bool g_poolBuilt = false, g_poolOff = false;
 unsigned long g_builtBase = 0;
@@ -351,6 +370,7 @@ int g_onRail = -1; // the placed rail the skater is on (index into g_realRails),
 // 8.46 join test: what grinds do at the joins between the two-point pieces of one long rail
 float g_onT = 0.0f; // how far along g_onRail he was last seen (0..1)
 LONG g_joinsCrossed = 0, g_joinsDropped = 0, g_railEnds = 0, g_leftMid = 0;
+LONG g_innerCrossed = 0, g_innerDropped = 0; // 8.48: the same at the points inside a long slot
 DWORD g_nextJoinReport = 0;
 int g_dropLogs = 0; // DROPPED lines written in this 10 s window (at most 5)
 int g_pendFrom = -1; // left this piece a moment ago: carried on to the next, or dropped? (decided after kJoinGapMs)
@@ -372,10 +392,19 @@ bool LoadRealRails(void (*log)(const char*, ...))
     _snprintf_s(path2, sizeof(path2), _TRUNCATE, "%s", PoolPath("rails_in_map.csv").c_str());
     FILE* g = nullptr;
     if (fopen_s(&g, path2, "r") == 0 && g) {
-        LONG rows = -1; // header only
+        // 8.48: count the pool's rails (slots of any length) and nodes
         char line[256];
-        while (fgets(line, sizeof(line), g)) ++rows;
-        if (rows > 0) g_poolRailCount = rows / 2;
+        LONG rails = 0, nodes = 0;
+        int lastRail = -1;
+        while (fgets(line, sizeof(line), g)) {
+            int node = 0, rail = 0, point = 0;
+            float x = 0, y = 0, z = 0;
+            if (sscanf_s(line, "%d,%d,%d,%f,%f,%f", &node, &rail, &point, &x, &y, &z) != 6) continue;
+            ++nodes;
+            if (rail != lastRail) { ++rails; lastRail = rail; }
+        }
+        g_poolRailCount = rails;
+        g_poolNodeCount = nodes;
         fclose(g);
     }
     char line[256];
@@ -408,8 +437,9 @@ bool LoadRealRails(void (*log)(const char*, ...))
     }
     fclose(f);
     g_realOk = !g_realRails.empty();
-    log("rail pool: %d GTA rails -> %zu two-node pieces (long rails split into pieces that share their ends); "
-        "the pool map file lists %ld pool rails", rails, g_realRails.size(), (long)g_poolRailCount);
+    log("rail pool: %d GTA rails -> %zu segments (8.48: placed as whole long rails where the pool has a free rail of "
+        "the same length); the pool map file lists %ld pool rails, %ld nodes", rails, g_realRails.size(),
+        (long)g_poolRailCount, (long)g_poolNodeCount);
     return g_realOk;
 }
 
@@ -419,32 +449,72 @@ bool BuildSlots(void (*log)(const char*, ...))
     const unsigned long base = static_cast<unsigned long>(g_blockBase);
     const unsigned long count = static_cast<unsigned long>(g_blockCount);
     if (!base || count < 2 || count > 0x1000000) return false;
+    const unsigned long end = base + count * 0x60;
+    // 8.48: every rail in the block, walked from its first node (no previous node) along
+    // the next links. Two-node slots first (the car rails take the last of those), then
+    // the long ones.
+    std::vector<PoolSlot> two, longer;
+    int badChains = 0, singles = 0;
     for (unsigned long i = 0; i < count; ++i) {
         const unsigned long r = base + i * 0x60;
-        if (P(r, 0x54)) continue;                 // has a previous node: not a rail start
-        const unsigned long n = P(r, 0x50);
-        if (!n || n < base || n >= base + count * 0x60) continue;
-        if (P(n, 0x54) != r || P(n, 0x50)) continue;  // must be exactly two nodes
+        if (P(r, 0x54)) continue; // has a previous node: not a rail start
         PoolSlot s;
-        s.a = r;
-        s.b = n;
-        g_slots.push_back(s);
+        unsigned long cur = r;
+        bool bad = false;
+        for (;;) {
+            s.recs.push_back(cur);
+            const unsigned long n = P(cur, 0x50);
+            if (!n) break;
+            if (n < base || n >= end || (n - base) % 0x60 || P(n, 0x54) != cur || s.recs.size() >= 64) {
+                bad = true;
+                break;
+            }
+            cur = n;
+        }
+        if (bad) { ++badChains; continue; }
+        if (s.recs.size() < 2) { ++singles; continue; } // one-point rails: not pool slots
+        s.a = s.recs.front();
+        s.b = s.recs.back();
+        (s.recs.size() == 2 ? two : longer).push_back(std::move(s));
     }
-    log("rail pool: %zu pool rails in the block (0x%08lX..0x%08lX)", g_slots.size(), base, base + count * 0x60);
-    // 8.33: reserve the last few slots for GTA car roof rails (the fill must not touch them)
-    g_carFirst = static_cast<int>(g_slots.size()) - kCarRailCars * 2;
+    g_slots = std::move(two);
+    const int nTwo = static_cast<int>(g_slots.size());
+    for (PoolSlot& s : longer) g_slots.push_back(std::move(s));
+    // 8.33: reserve the last few two-node slots for GTA car roof rails (the fill must not touch them)
+    g_carEnd = nTwo;
+    g_carFirst = nTwo - kCarRailCars * 2;
     if (g_carFirst < 0) g_carFirst = 0;
-    for (size_t s = static_cast<size_t>(g_carFirst); s < g_slots.size(); ++s) g_slots[s].reserved = true;
+    for (int s = g_carFirst; s < g_carEnd; ++s) g_slots[s].reserved = true;
+    int bySize[65] = {};
+    long nodes = 0;
+    for (const PoolSlot& s : g_slots) { ++bySize[s.Nodes()]; nodes += s.Nodes(); }
+    char sizes[512] = "";
+    for (int k = 3; k <= 64; ++k)
+        if (bySize[k]) {
+            char one[32];
+            _snprintf_s(one, sizeof(one), _TRUNCATE, "%s%dx%d", sizes[0] ? " " : "", bySize[k], k);
+            strncat_s(sizes, sizeof(sizes), one, _TRUNCATE);
+        }
+    log("rail pool: %zu pool rails, %ld nodes in the block (0x%08lX..0x%08lX): %d two-node, long: %s%s%s",
+        g_slots.size(), nodes, base, end, nTwo, sizes[0] ? sizes : "none",
+        badChains ? " | broken chains skipped: " : "", badChains ? std::to_string(badChains).c_str() : "");
+    if (singles) log("rail pool: %d one-point rails in the block (not used by the pool)", singles);
+    g_poolNodeCountFound = nodes;
     return !g_slots.empty();
 }
 
-void WriteRail(unsigned long a, unsigned long b, const float* pa, const float* pb)
+// 8.47: one rail node record: position (+0x20), box (+0x00 min, +0x10 max: this node and
+// its next one), next (+0x50) and previous (+0x54) node records (0 = none). The links are
+// 32-bit, like everything in reTHAWed.
+void WriteNode(unsigned long rec, const float* pos, const float* mn, const float* mx, unsigned long next,
+               unsigned long prev)
 {
-    float mn[3], mx[3];
-    for (int k = 0; k < 3; ++k) { mn[k] = pa[k] < pb[k] ? pa[k] : pb[k]; mx[k] = pa[k] < pb[k] ? pb[k] : pa[k]; }
     __try {
-        SetVec(F(a, 0x20), pa); SetVec(F(a, 0x00), mn); SetVec(F(a, 0x10), mx);
-        SetVec(F(b, 0x20), pb); SetVec(F(b, 0x00), pb); SetVec(F(b, 0x10), pb);
+        SetVec(F(rec, 0x20), pos);
+        SetVec(F(rec, 0x00), mn);
+        SetVec(F(rec, 0x10), mx);
+        *reinterpret_cast<DWORD*>(rec + 0x50) = static_cast<DWORD>(next);
+        *reinterpret_cast<DWORD*>(rec + 0x54) = static_cast<DWORD>(prev);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -453,41 +523,77 @@ void WriteRail(unsigned long a, unsigned long b, const float* pa, const float* p
 // Our thread decides what goes where (the search over every GTA rail piece stays off the
 // game thread) but never writes a record itself any more: it queues the write, and the
 // game thread applies it between frames, after checking that the level is still ours,
-// that it is the same level load, and that both addresses are still rail records.
+// that it is the same level load, and that the records are still rail records.
+// 8.47: the queue holds whole NODES (position, box, links), so pieces can be chained.
 constexpr unsigned long kOurLevel = 0x9F014B98ul; // load_MPGTALSE
 constexpr DWORD kGameThreadStaleMs = 2000;        // no drain this long: our thread applies the queue itself
 
 struct PendingWrite {
-    unsigned long a = 0, b = 0;
-    float pa[3] = {}, pb[3] = {};
+    unsigned long rec = 0, next = 0, prev = 0;
+    float pos[3] = {}, mn[3] = {}, mx[3] = {};
     LONG gen = 0;
 };
 SRWLOCK g_qLock = SRWLOCK_INIT;
 std::vector<PendingWrite> g_queue;                // guarded by g_qLock
-std::unordered_map<unsigned long, size_t> g_qAt; // record a -> its place in g_queue (a later write replaces it)
+std::unordered_map<unsigned long, size_t> g_qAt; // record -> its place in g_queue (a later write replaces it)
 volatile LONG g_qCount = 0;                       // size of g_queue, for a lock-free "anything to do?"
 volatile LONG g_applied = 0, g_droppedGone = 0, g_droppedBad = 0, g_appliedByUs = 0;
+volatile LONG g_badBatch = 0; // 8.47: a batch was refused whole (a record no longer looked like a rail record)
 volatile LONG g_lastDrainTick = 0;                // GetTickCount of the game thread's last drain
 bool g_saidFallback = false;
 
-void QueueRail(unsigned long a, unsigned long b, const float* pa, const float* pb)
+// Caller holds g_qLock.
+void QueueNodeLocked(unsigned long rec, const float* pos, const float* mn, const float* mx, unsigned long next,
+                     unsigned long prev)
 {
-    AcquireSRWLockExclusive(&g_qLock);
     PendingWrite w;
-    w.a = a;
-    w.b = b;
-    for (int k = 0; k < 3; ++k) { w.pa[k] = pa[k]; w.pb[k] = pb[k]; }
+    w.rec = rec;
+    w.next = next;
+    w.prev = prev;
+    for (int k = 0; k < 3; ++k) { w.pos[k] = pos[k]; w.mn[k] = mn[k]; w.mx[k] = mx[k]; }
     w.gen = g_gen;
-    if (g_lastDrainTick == 0) InterlockedExchange(&g_lastDrainTick, static_cast<LONG>(GetTickCount())); // grace
-    auto it = g_qAt.find(a);
+    auto it = g_qAt.find(rec);
     if (it != g_qAt.end()) {
         g_queue[it->second] = w;
     } else {
-        g_qAt[a] = g_queue.size();
+        g_qAt[rec] = g_queue.size();
         g_queue.push_back(w);
     }
-    InterlockedExchange(&g_qCount, static_cast<LONG>(g_queue.size()));
-    ReleaseSRWLockExclusive(&g_qLock);
+}
+
+void BoxOf(const float* p, const float* q, float* mn, float* mx)
+{
+    for (int k = 0; k < 3; ++k) { mn[k] = p[k] < q[k] ? p[k] : q[k]; mx[k] = p[k] < q[k] ? q[k] : p[k]; }
+}
+
+// A batch of node writes: queued together, so one game-thread call applies them together.
+struct NodeBatch {
+    NodeBatch() { AcquireSRWLockExclusive(&g_qLock); }
+    ~NodeBatch()
+    {
+        if (g_lastDrainTick == 0) InterlockedExchange(&g_lastDrainTick, static_cast<LONG>(GetTickCount())); // grace
+        InterlockedExchange(&g_qCount, static_cast<LONG>(g_queue.size()));
+        ReleaseSRWLockExclusive(&g_qLock);
+    }
+    void Node(unsigned long rec, const float* pos, const float* mn, const float* mx, unsigned long next,
+              unsigned long prev)
+    {
+        QueueNodeLocked(rec, pos, mn, mx, next, prev);
+    }
+    // A plain two-point rail in one slot: a -> b (also puts back the links a chain changed).
+    void Rail(unsigned long a, unsigned long b, const float* pa, const float* pb)
+    {
+        float mn[3], mx[3];
+        BoxOf(pa, pb, mn, mx);
+        QueueNodeLocked(a, pa, mn, mx, b, 0);
+        QueueNodeLocked(b, pb, pb, pb, 0, a);
+    }
+};
+
+void QueueRail(unsigned long a, unsigned long b, const float* pa, const float* pb)
+{
+    NodeBatch batch;
+    batch.Rail(a, b, pa, pb);
 }
 
 // Apply every queued write that is still safe. Caller holds g_qLock.
@@ -503,20 +609,29 @@ void ApplyQueueLocked(bool fromGameThread)
     const unsigned long base = static_cast<unsigned long>(g_blockBase);
     const unsigned long end = base + static_cast<unsigned long>(g_blockCount) * 0x60;
     const LONG gen = g_gen;
+    auto inBlock = [&](unsigned long r) { return r >= base && r < end && (r - base) % 0x60 == 0; };
+    // 8.47: chain links tie records together, so the writes of this level load go in all
+    // together or not at all: one record that no longer looks right refuses every one of them
+    // (a half-applied chain could link a rail to a node somewhere else).
+    bool allOk = true;
+    for (const PendingWrite& w : g_queue) {
+        if (!ours || !base || w.gen != gen) continue;
+        const bool linksOk = (w.next == 0 || inBlock(w.next)) && (w.prev == 0 || inBlock(w.prev));
+        if (!inBlock(w.rec) || !linksOk || !LooksLikeRecord(w.rec)) { allOk = false; break; }
+    }
     for (const PendingWrite& w : g_queue) {
         if (!ours || !base || w.gen != gen) {
-            InterlockedIncrement(&g_droppedGone);
+            InterlockedIncrement(&g_droppedGone); // for a level load that is gone (or we are in the menus)
             continue;
         }
-        const bool inBlock = w.a >= base && w.a < end && w.b >= base && w.b < end &&
-                             (w.a - base) % 0x60 == 0 && (w.b - base) % 0x60 == 0;
-        if (!inBlock || !LooksLikeRecord(w.a) || !LooksLikeRecord(w.b)) {
+        if (!allOk) {
             InterlockedIncrement(&g_droppedBad);
             continue;
         }
-        WriteRail(w.a, w.b, w.pa, w.pb);
+        WriteNode(w.rec, w.pos, w.mn, w.mx, w.next, w.prev);
         InterlockedIncrement(fromGameThread ? &g_applied : &g_appliedByUs);
     }
+    if (!allOk) InterlockedExchange(&g_badBatch, 1);
     g_queue.clear();
     g_qAt.clear();
     InterlockedExchange(&g_qCount, 0);
@@ -544,10 +659,65 @@ void ParkRail(unsigned long a, unsigned long b, int slot)
     QueueRail(a, b, p, p);
 }
 
+// ---- 8.48: long rails come from the pool map ------------------------------------------
+// 8.47 linked pool records into chains at run time; reTHAWed ignored it (12.8% of joins
+// still dropped): it settles how a rail continues when the map loads. So the pool map now
+// brings rails of 3..16 nodes too, linked by reTHAWed itself, and we only ever write their
+// positions and boxes - never their links.
+
+// Cut every GTA rail into pieces of at most maxNodes - 1 segments (sharing their ends).
+void BuildPieces(int maxNodes)
+{
+    const int maxSeg = maxNodes > 2 ? maxNodes - 1 : 1;
+    g_pieces.clear();
+    g_pieceOf.assign(g_realRails.size(), -1);
+    const int n = static_cast<int>(g_realRails.size());
+    for (int i = 0; i < n;) {
+        int run = 1; // segments of this GTA rail from i on
+        while (i + run < n && g_cont[i + run - 1]) ++run;
+        for (int k = 0; k < run; k += maxSeg) {
+            Piece pc;
+            pc.seg0 = i + k;
+            pc.nseg = run - k < maxSeg ? run - k : maxSeg;
+            for (int q = 0; q < pc.nseg; ++q) g_pieceOf[pc.seg0 + q] = static_cast<int>(g_pieces.size());
+            g_pieces.push_back(pc);
+        }
+        i += run;
+    }
+    g_pieceMaxNodes = maxNodes;
+}
+
+// The point list of segments seg0 .. seg0 + nseg - 1: nseg + 1 points.
+const float* SegPoint(int seg0, int i)
+{
+    return i == 0 ? g_realRails[seg0].a : g_realRails[seg0 + i - 1].b;
+}
+
+// Write a slot's nodes: the given points, boxes from each node to the next, its own links.
+void WriteSlot(NodeBatch& batch, const PoolSlot& sl, int seg0, const float* park)
+{
+    const int n = sl.Nodes();
+    for (int i = 0; i < n; ++i) {
+        const float* p = park ? park : SegPoint(seg0, i);
+        const float* q = park ? park : (i + 1 < n ? SegPoint(seg0, i + 1) : p);
+        float mn[3], mx[3];
+        BoxOf(p, q, mn, mx);
+        batch.Node(sl.recs[i], p, mn, mx, i + 1 < n ? sl.recs[i + 1] : 0, i > 0 ? sl.recs[i - 1] : 0);
+    }
+}
+
+int g_lastWhole = 0, g_lastSplit = 0, g_lastNoRoom = 0;
+
 void PoolFill(const float* pos, void (*log)(const char*, ...))
 {
     const size_t slots = g_slots.size();
     const float R = kPoolRadiusM * kUnitsPerM, R2 = R * R;
+    int maxNodes = 2;
+    for (const PoolSlot& sl : g_slots) if (sl.Nodes() > maxNodes) maxNodes = sl.Nodes();
+    if (g_pieceMaxNodes != maxNodes || g_pieceOf.size() != g_realRails.size()) BuildPieces(maxNodes);
+    if (g_segSlot.size() != g_realRails.size()) g_segSlot.assign(g_realRails.size(), -1);
+    if (g_pmark.size() != g_pieces.size()) g_pmark.assign(g_pieces.size(), 0);
+    // the segments within the radius, nearest first, give the wanted pieces in that order
     static std::vector<std::pair<float, int>> cand;
     cand.clear();
     for (int i = 0; i < static_cast<int>(g_realRails.size()); ++i) {
@@ -558,40 +728,70 @@ void PoolFill(const float* pos, void (*log)(const char*, ...))
         if (d2 <= R2) cand.push_back(std::make_pair(d2, i));
     }
     std::sort(cand.begin(), cand.end());
-    const size_t keep = cand.size() < slots ? cand.size() : slots;
     ++g_fillId;
-    if (g_mark.size() != g_realRails.size()) { g_mark.assign(g_realRails.size(), 0); g_held.assign(g_realRails.size(), 0); }
-    for (size_t i = 0; i < keep; ++i) g_mark[cand[i].second] = g_fillId;
-    // free the slots whose rail is no longer wanted (they are over the radius away, so never
-    // under the skater: the wanted set is the nearest rails, which always contains his own)
+    static std::vector<int> wanted;
+    wanted.clear();
+    for (const auto& c : cand) {
+        const int p = g_pieceOf[c.second];
+        if (g_pmark[p] != g_fillId) { g_pmark[p] = g_fillId; wanted.push_back(p); }
+    }
+    NodeBatch batch; // every write of this fill, applied together on the game thread
+    // free the slots whose piece is no longer wanted (over the radius away: never under the skater)
     for (size_t s = 0; s < slots; ++s) {
         PoolSlot& sl = g_slots[s];
-        if (sl.rail >= 0 && g_mark[sl.rail] != g_fillId) {
-            ParkRail(sl.a, sl.b, static_cast<int>(s));
-            sl.rail = -1;
+        if (sl.reserved || sl.seg < 0 || g_pmark[g_pieceOf[sl.seg]] == g_fillId) continue;
+        const float pk[3] = {kPoolParkX, kPoolParkY, 50.0f * s};
+        WriteSlot(batch, sl, 0, pk);
+        for (int q = 0; q < sl.Nodes() - 1; ++q) g_segSlot[sl.seg + q] = -1;
+        sl.seg = -1;
+    }
+    // free slots by length
+    static std::vector<std::vector<int>> freeBy;
+    freeBy.assign(static_cast<size_t>(maxNodes) + 1, std::vector<int>());
+    for (size_t s = slots; s-- > 0;)
+        if (!g_slots[s].reserved && g_slots[s].seg < 0) freeBy[g_slots[s].Nodes()].push_back(static_cast<int>(s));
+    auto take = [&](int seg0, int nodes) {
+        std::vector<int>& f = freeBy[nodes];
+        if (f.empty()) return false;
+        const int s = f.back();
+        f.pop_back();
+        PoolSlot& sl = g_slots[s];
+        WriteSlot(batch, sl, seg0, nullptr);
+        sl.seg = seg0;
+        for (int q = 0; q < nodes - 1; ++q) g_segSlot[seg0 + q] = s;
+        return true;
+    };
+    int moved = 0, whole = 0, split = 0, noRoom = 0;
+    for (int p : wanted) {
+        const Piece& pc = g_pieces[p];
+        int held = 0;
+        for (int q = 0; q < pc.nseg; ++q)
+            if (g_segSlot[pc.seg0 + q] >= 0) ++held;
+        if (held == pc.nseg) continue; // already placed (whole, or segment by segment)
+        if (held == 0 && take(pc.seg0, pc.nseg + 1)) { // a free slot of exactly its length
+            ++moved;
+            if (pc.nseg > 1) ++whole;
+            continue;
         }
+        // no slot of its length free: its segments go into two-node slots (joins, as before 8.48)
+        bool fitted = false;
+        for (int q = 0; q < pc.nseg; ++q) {
+            if (g_segSlot[pc.seg0 + q] >= 0) continue;
+            if (take(pc.seg0 + q, 2)) { ++moved; fitted = true; }
+            else ++noRoom;
+        }
+        if (fitted && pc.nseg > 1) ++split;
     }
-    for (size_t s = 0; s < slots; ++s)
-        if (g_slots[s].rail >= 0) g_held[g_slots[s].rail] = g_fillId; // still held
-    // place the wanted rails that no slot holds yet
-    size_t freeAt = 0;
-    int moved = 0;
-    for (size_t i = 0; i < keep; ++i) {
-        const int idx = cand[i].second;
-        if (g_held[idx] == g_fillId) continue;
-        while (freeAt < slots && (g_slots[freeAt].rail >= 0 || g_slots[freeAt].reserved)) ++freeAt;
-        if (freeAt >= slots) break;
-        PoolSlot& sl = g_slots[freeAt++];
-        QueueRail(sl.a, sl.b, g_realRails[idx].a, g_realRails[idx].b); // 8.46: applied on the game thread
-        sl.rail = idx;
-        g_held[idx] = g_fillId;
-        ++moved;
-    }
-    int placed = 0;
-    for (size_t s = 0; s < slots; ++s)
-        if (g_slots[s].rail >= 0) ++placed;
-    log("rail pool: %d rails placed of %zu slots (%zu within %.0f m; %d changed)", placed, slots, cand.size(),
-        kPoolRadiusM, moved);
+    int placed = 0, placedLong = 0;
+    for (const PoolSlot& sl : g_slots)
+        if (!sl.reserved && sl.seg >= 0) { ++placed; if (sl.Nodes() > 2) ++placedLong; }
+    g_lastWhole = whole;
+    g_lastSplit = split;
+    g_lastNoRoom = noRoom;
+    log("rail pool: %d slots in use of %zu (%d long ones); %zu segments within %.0f m in %zu pieces; %d placed now "
+        "(%d long pieces whole, %d long pieces split for lack of a free slot of their length)%s",
+        placed, slots, placedLong, cand.size(), kPoolRadiusM, wanted.size(), moved, whole, split,
+        noRoom ? " | NO ROOM for some segments (pool full)" : "");
 }
 
 } // namespace
@@ -713,6 +913,7 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
     if (!inOurLevel) {
         if (g_poolBuilt || !g_slots.empty()) {
             g_slots.clear();
+            g_segSlot.clear();
             g_poolBuilt = false;
             g_poolOff = false;
             g_haveLastFill = false;
@@ -721,6 +922,12 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         return;
     }
     if (g_poolOff) return;
+    if (InterlockedExchange(&g_badBatch, 0)) {
+        log("rail pool: a queued rail write pointed at memory that no longer looks like rail records, so none of "
+            "that batch was written; pool off until the map is loaded again");
+        g_poolOff = true;
+        return;
+    }
     if (!g_realTried) {
         if (!LoadRealRails(log)) { g_poolOff = true; return; }
     }
@@ -729,10 +936,13 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
     if (!base) return; // the scan has not found the block yet
     if (!g_poolBuilt || g_builtBase != base) {
         if (!BuildSlots(log)) return;
-        if (g_poolRailCount > 0 && static_cast<LONG>(g_slots.size()) != g_poolRailCount) {
-            log("rail pool: the level has %zu two-node rails but the pool map file lists %ld; pool off (load the "
-                "matching pool map)", g_slots.size(), static_cast<long>(g_poolRailCount));
+        if (g_poolRailCount > 0 && (static_cast<LONG>(g_slots.size()) != g_poolRailCount ||
+                                    g_poolNodeCountFound != g_poolNodeCount)) {
+            log("rail pool: the level has %zu pool rails (%ld nodes) but the pool map file lists %ld (%ld nodes); "
+                "pool off (load the matching pool map)", g_slots.size(), g_poolNodeCountFound,
+                static_cast<long>(g_poolRailCount), static_cast<long>(g_poolNodeCount));
             g_slots.clear();
+            g_segSlot.clear();
             g_poolBuilt = true;
             g_poolOff = true;
             return;
@@ -740,6 +950,7 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         g_builtBase = base;
         g_poolBuilt = true;
         g_haveLastFill = false;
+        g_segSlot.assign(g_realRails.size(), -1); // a fresh block: nothing placed yet
     }
     if (g_slots.empty()) return;
     float d2 = 0.0f;
@@ -758,8 +969,8 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         int on = -1;
         float best = 1e9f, onT = 0.0f;
         for (size_t s = 0; s < g_slots.size(); ++s) {
-            const int ri = g_slots[s].rail;
-            if (ri < 0) continue;
+          if (g_slots[s].reserved || g_slots[s].seg < 0) continue;
+          for (int ri = g_slots[s].seg; ri < g_slots[s].seg + g_slots[s].Nodes() - 1; ++ri) { // 8.48: each segment it holds
             const RealRail& r = g_realRails[ri];
             float d[3], sv[3];
             for (int k = 0; k < 3; ++k) { d[k] = r.b[k] - r.a[k]; sv[k] = pos[k] - r.a[k]; }
@@ -773,16 +984,22 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
                 const float dist = side + fabsf(off[1]);
                 if (dist < best) { best = dist; on = ri; onT = t; }
             }
+          }
         }
         // 8.46 join test: does a grind carry from one piece of a long rail to the next?
         const DWORD nowT = GetTickCount();
         auto adjacent = [](int a, int b) {
             return a >= 0 && b >= 0 && ((b == a + 1 && g_cont[a]) || (a == b + 1 && g_cont[b]));
         };
-        auto placed = [](int i) { return i >= 0 && i < static_cast<int>(g_held.size()) && g_held[i] == g_fillId; };
+        auto placed = [](int i) { return i >= 0 && i < static_cast<int>(g_segSlot.size()) && g_segSlot[i] >= 0; };
+        // 8.48: two segments in the same slot are one real rail: a point inside it, not a join
+        auto sameSlot = [](int a, int b) {
+            return a >= 0 && b >= 0 && a < static_cast<int>(g_segSlot.size()) && b < static_cast<int>(g_segSlot.size()) &&
+                   g_segSlot[a] >= 0 && g_segSlot[a] == g_segSlot[b];
+        };
         if (g_pendFrom >= 0 && on == g_pendFrom) g_pendFrom = -1; // back on the same piece: nothing happened
         if (g_pendFrom >= 0 && on >= 0 && adjacent(g_pendFrom, on)) {
-            ++g_joinsCrossed; // a sample or two off the rail right at the joint, then on the next piece
+            ++(sameSlot(g_pendFrom, on) ? g_innerCrossed : g_joinsCrossed); // a sample or two off right at the point
             g_pendFrom = -1;
             g_onRail = on;
         } else if (g_pendFrom >= 0 && (on >= 0 || nowT - g_pendAt > kJoinGapMs)) {
@@ -791,11 +1008,13 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
             if (dir > 0 && g_cont[g_pendFrom]) next = g_pendFrom + 1;
             if (dir < 0 && g_pendFrom > 0 && g_cont[g_pendFrom - 1]) next = g_pendFrom - 1;
             if (next >= 0 && placed(next)) {
-                ++g_joinsDropped;
+                const bool inner = sameSlot(g_pendFrom, next);
+                ++(inner ? g_innerDropped : g_joinsDropped);
                 if (g_dropLogs < 5) {
                     ++g_dropLogs;
-                    log("rail pool: grind DROPPED at a join (piece %d -> %d, %.0f%% along, speed %.0f, at %.0f %.0f %.0f)",
-                        g_pendFrom, next, g_pendT * 100.0f, g_pendSpeed, g_pendPos[0], g_pendPos[1], g_pendPos[2]);
+                    log("rail pool: grind DROPPED %s (piece %d -> %d, %.0f%% along, speed %.0f, at %.0f %.0f %.0f)",
+                        inner ? "INSIDE a long rail" : "at a join", g_pendFrom, next, g_pendT * 100.0f, g_pendSpeed,
+                        g_pendPos[0], g_pendPos[1], g_pendPos[2]);
                 }
             } else if (dir != 0) {
                 ++g_railEnds; // the end of the GTA rail (or its next piece is not placed)
@@ -806,7 +1025,7 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         }
         if (on != g_onRail) {
             if (g_onRail >= 0 && on >= 0 && adjacent(g_onRail, on)) {
-                ++g_joinsCrossed;
+                ++(sameSlot(g_onRail, on) ? g_innerCrossed : g_joinsCrossed);
             } else {
                 if (on >= 0) {
                     log("rail pool: ON a placed rail (%.0f speed, at %.0f %.0f %.0f)", speed, pos[0], pos[1], pos[2]);
@@ -824,15 +1043,17 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         if (on >= 0) g_onT = onT;
         if (nowT >= g_nextJoinReport) {
             if (g_nextJoinReport &&
-                (g_joinsCrossed || g_joinsDropped || g_railEnds || g_leftMid || g_applied || g_appliedByUs ||
-                 g_droppedGone || g_droppedBad))
-                log("rail pool (10 s): joins: %ld carried across, %ld DROPPED, %ld rail ends, %ld left mid-rail | "
+                (g_joinsCrossed || g_joinsDropped || g_innerCrossed || g_innerDropped || g_railEnds || g_leftMid ||
+                 g_applied || g_appliedByUs || g_droppedGone || g_droppedBad))
+                log("rail pool (10 s): inside long rails: %ld points ridden through, %ld DROPPED | joins between "
+                    "slots: %ld carried across, %ld DROPPED | %ld rail ends, %ld left mid-rail | "
                     "rail writes: %ld on reTHAWed's game thread, %ld by our thread (fallback), %ld dropped (level "
                     "gone), %ld refused (not a rail record)",
-                    g_joinsCrossed, g_joinsDropped, g_railEnds, g_leftMid, static_cast<long>(g_applied),
+                    g_innerCrossed, g_innerDropped, g_joinsCrossed, g_joinsDropped, g_railEnds, g_leftMid,
+                    static_cast<long>(g_applied),
                     static_cast<long>(g_appliedByUs), static_cast<long>(g_droppedGone),
                     static_cast<long>(g_droppedBad));
-            g_joinsCrossed = g_joinsDropped = g_railEnds = g_leftMid = 0;
+            g_joinsCrossed = g_joinsDropped = g_railEnds = g_leftMid = g_innerCrossed = g_innerDropped = 0;
             InterlockedExchange(&g_applied, 0);
             InterlockedExchange(&g_appliedByUs, 0);
             InterlockedExchange(&g_droppedGone, 0);
@@ -865,7 +1086,7 @@ void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)
         if (!ok) continue;
         for (int r = 0; r < 2; ++r) {
             const int slot = g_carFirst + c * 2 + r;
-            if (slot >= static_cast<int>(g_slots.size())) break;
+            if (slot >= g_carEnd || slot >= static_cast<int>(g_slots.size())) break;
             const float* a = pts + (c * kCarRailPts + r * 2) * 3;
             QueueRail(g_slots[slot].a, g_slots[slot].b, a, a + 3); // 8.46: applied on the game thread
             ++used;
@@ -873,7 +1094,7 @@ void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)
     }
     // park the reserved slots that have no car this pass - but never move one the
     // skater is near (that teleport is what turns his physics to NaN)
-    for (int slot = g_carFirst + used; slot < static_cast<int>(g_slots.size()); ++slot) {
+    for (int slot = g_carFirst + used; slot < g_carEnd && slot < static_cast<int>(g_slots.size()); ++slot) {
         if (pos) {
             __try {
                 const float* cur = reinterpret_cast<const float*>(g_slots[slot].a + 0x20);

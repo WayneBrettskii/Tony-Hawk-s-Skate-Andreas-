@@ -1,4 +1,31 @@
-# NOW (2026-10-15, later): NATAS WORKS (DESIGN 8.45)
+# NOW (2026-10-15, night): long rails built into the pool map (DESIGN 8.48) - TESTED: WORKS
+
+User test 17:58: 136 points inside long rails ridden through; the few flagged drops were ollies, bails on landing or
+the detector's false alarms (ground rolling by a kerb); about 1 real drop. Uncommitted: 8.46-8.48. Next (waits for the
+user): commit; optionally a cleaner join log; then natas everywhere.
+
+# EARLIER (same night): the 8.48 build notes
+
+The pool map now carries long spare rails (3-16 points) that reTHAWed links itself at load; the plugin puts long
+GTA rails into them whole. Cloud-tested (map tool read-back; plugin 14/14); not run in game. Needs: rebuild the
+whole map, put it in reTHAWed's Maps, check `rethawed.ini` [Memory] (RailString ~10,500+), build, grind, send thaw.log.
+
+# EARLIER (2026-10-15, night): real long rails by run-time links (DESIGN 8.47) - did not help, replaced by 8.48
+
+The pieces of one GTA rail in the pool are now linked into one real reTHAWed rail (chained records), so grinds
+should no longer drop at the joins (8.46 test: 9 of 88 dropped). Cloud-tested (25/25); not built or run in game.
+Test: whole-map pool map, grind long kerbs / ledges / walls, send `logs\thaw.log`. Off switch: `kChainRails`.
+**Result (user, 14:03):** safe (no crash, nothing refused) but joins still drop: 24 of 187 (12.8%, was 10.2%).
+reTHAWed seems not to follow the new links.
+**Check done (DESIGN 8.48):** build long rails into the pool map instead (slots of 3-16 nodes, ~14,700 nodes);
+would leave 2.3% of today's joins. Build waits for the user's go.
+
+# EARLIER (2026-10-15, evening): rail pool safety (DESIGN 8.46) - tested: queue works, joins drop 1 in 9
+
+Rail writes now go through a queue applied on reTHAWed's game thread (checked first); a join test logs whether
+grinds carry across the joins of long rails. User test: 0 writes dropped, no crash; 79 joins carried, 9 dropped.
+
+# EARLIER (2026-10-15, later): NATAS WORKS (DESIGN 8.45)
 
 User: natas spun on the two Grove Street hydrants in a test map (`--natas-test --natas-low --natas-at 2495 -1670
 --box 1700 -1900 2700 -1150`). A one-point rail is a Natas post. The audit fixes (8.44) were built, tested and

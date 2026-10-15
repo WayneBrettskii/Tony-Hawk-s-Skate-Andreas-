@@ -523,13 +523,51 @@ POOL_SPACING = 50.0    # units (~1.3 m) between parked rails, so each is distinc
 POOL_RAIL_LEN = 40.0   # units (~1 m): every parked rail is one short 2-node piece
 
 
-def make_pool_rails(n):
-    """n two-node rails parked far below the map, on a grid (for 8.32 R3c)."""
+# 8.48: long slots. reTHAWed works out how a rail continues when the map loads (8.47:
+# links changed later are ignored), so long GTA rails need pool rails that are already
+# long. Slots of 3..16 nodes, counted from the whole map: twice the most of each size
+# found within 150 m of any one spot (3,000 spots sampled, DESIGN 8.48), at least 10.
+# The plugin puts each piece of a GTA rail (split into pieces of at most 16 nodes) into a
+# free slot of exactly its node count, or into two-node slots when none is free.
+POOL_LONG_DEFAULT = {3: 282, 4: 82, 5: 98, 6: 58, 7: 34, 8: 180, 9: 30, 10: 38, 11: 22, 12: 18,
+                     13: 30, 14: 18, 15: 12, 16: 104}
+POOL_LONG_WIDTH = 10000.0  # units: a row of parked long rails is this wide
+
+
+def parse_pool_long(text):
+    """'auto' = POOL_LONG_DEFAULT, 'none' = no long slots, or '3:282,4:82,...' (nodes:count)."""
+    if text == "auto":
+        return dict(POOL_LONG_DEFAULT)
+    if text == "none":
+        return {}
+    mix = {}
+    for part in text.split(","):
+        size, count = part.split(":")
+        size, count = int(size), int(count)
+        if not 3 <= size <= 64 or count < 0:
+            raise ValueError("long slot sizes are 3..64 nodes, counts 0 or more: %r" % part)
+        mix[size] = mix.get(size, 0) + count
+    return mix
+
+
+def make_pool_rails(n, long_mix=None):
+    """n two-node rails parked far below the map, on a grid (for 8.32 R3c), then (8.48) the
+    long slots: long_mix[size] rails of `size` nodes each, in rows further along."""
     out = []
     for r in range(n):
         x = -30000.0 + (r % 200) * POOL_SPACING
         z = -30000.0 + (r // 200) * POOL_SPACING
         out.append([(x, POOL_Y, z), (x + POOL_RAIL_LEN, POOL_Y, z)])
+    z = -30000.0 + (n // 200 + 3) * POOL_SPACING  # a gap after the two-node grid
+    x = -30000.0
+    for size in sorted(long_mix or {}):
+        for _ in range(long_mix[size]):
+            length = (size - 1) * POOL_RAIL_LEN
+            if x + length > -30000.0 + POOL_LONG_WIDTH:
+                x = -30000.0
+                z += POOL_SPACING
+            out.append([(x + i * POOL_RAIL_LEN, POOL_Y, z) for i in range(size)])
+            x += length + POOL_SPACING
     return out
 
 
@@ -1205,6 +1243,9 @@ def main():
     ap.add_argument("--rail-pool", type=int, default=0, metavar="N",
                     help="8.32 R3c: build a rail-pool map — N spare two-node rails parked below the map instead of "
                          "this map's rails, plus all_rails.csv (every real rail) for the plugin; 0 = off")
+    ap.add_argument("--rail-pool-long", default="auto", metavar="MIX",
+                    help="8.48: long spare rails added to the pool for long GTA rails: 'auto' (the table "
+                         "POOL_LONG_DEFAULT, sizes 3-16 nodes), 'none', or nodes:count pairs like 3:200,8:100")
     ap.add_argument("--rail-drop-max", type=float, default=RAIL_DROP[1], metavar="M",
                     help="rails only where the drop is at most M m (default %.1f); 0 = no limit, so building and "
                          "structure tops get rails too" % RAIL_DROP[1])
@@ -1332,10 +1373,18 @@ def main():
         os.makedirs(pool_copy, exist_ok=True)
         write_rail_csv(os.path.join(out, "all_rails.csv"), rails, 0)
         write_rail_csv(os.path.join(pool_copy, "all_rails.csv"), rails, 0)
-        print("pool:         %d two-node rails = %d nodes parked below the map (the level's rails); all_rails.csv "
-              "has all %d rail nodes for the plugin" % (args.rail_pool, 2 * args.rail_pool,
-                                                        sum(len(r) for r in rails)))
-        rails = make_pool_rails(args.rail_pool)
+        try:
+            long_mix = parse_pool_long(args.rail_pool_long)
+        except ValueError as e:
+            ap.error("--rail-pool-long: %s" % e)
+        long_rails = sum(long_mix.values())
+        long_nodes = sum(k * v for k, v in long_mix.items())
+        print("pool:         %d two-node rails + %d long rails (%s) = %d rails, %d nodes parked below the map (the "
+              "level's rails); all_rails.csv has all %d rail nodes for the plugin" % (
+                  args.rail_pool, long_rails,
+                  ", ".join("%dx%d nodes" % (long_mix[k], k) for k in sorted(long_mix)) or "none",
+                  args.rail_pool + long_rails, 2 * args.rail_pool + long_nodes, sum(len(r) for r in rails)))
+        rails = make_pool_rails(args.rail_pool, long_mix)
     # 8.32: reTHAWed's memory pools these rails need (rethawed.ini [Memory]; its defaults:
     # RailPoint 20000, RailString 5000, HashItem 30000, CStruct 100000, CComponent 360000,
     # CVector 30000). Each rail node is one struct of about 8 items with 2 vectors (position,

@@ -1128,6 +1128,49 @@ patterns (another reTHAWed build) are left alone.
 the test is off for good and we look for a per-frame point in its game loop instead); the menu may
 also set things we haven't seen (the selected skater, a "session" flag).
 
+### 8.48 Long rails built into the pool map (check done 2026-10-15; built after the user's "Okay let's build the map")
+
+**Why:** 8.47's runtime links made no difference (12.8% of joins dropped vs 10.2%): reTHAWed seems to decide how a rail continues from what it builds when the map loads (most likely its `RailString` list per rail), not from the records' next / previous links changed later. Moving a rail's **positions** does work (R3b, the whole pool). So: let reTHAWed build the long rails itself at load, and only ever move their positions.
+
+**The check (cloud, from `all_rails.csv`, 193,974 GTA rails / 447,008 nodes):**
+- The map tool already writes multi-node rails (RailNode + `Links` to the next node; the old "longest rails first" maps), so long pool slots need no new file format.
+- 181,084 rails (93%) have 2 nodes; 12,890 have 3 or more (up to 926). The 59,060 joins inside rails are what drops grinds today.
+- Splitting rails at most K nodes long into K-node pieces leaves this share of joins: K = 8: 7.9%, K = 12: 3.8%, **K = 16: 2.3% (1,362 joins in the whole map)**. At today's ~10% drop rate per join that is close to none.
+- Slots must match a rail's node count exactly (spare nodes can't be hidden: reTHAWed would still walk them). Worst case near one spot (3,000 places sampled, 150 m radius, K = 16): 3,333 two-node rails plus, per size 3..16: 141, 41, 49, 29, 17, 90, 15, 19, 11, 9, 15, 9, 6, 52.
+- **Proposed pool:** 3,700 two-node slots + about 1,000 long slots (twice the worst case per size, at least 10 each) = **~4,700 rails, ~14,700 nodes** (today 4,500 rails, 9,000 nodes). If a size runs out, the rail falls back to smaller slots (with joins, as today).
+- Robust either way: whether reTHAWed follows the records' links or its own list, both are made by reTHAWed at load and never changed; the plugin only writes positions and boxes, as the working pool does.
+
+**Risks:** ~60% more rail nodes in the level (load time; the `[Memory]` values the tool prints must cover them); a long slot moved under the skater (same rule as today: only free slots more than the radius away move); the first node of a slot is found by walking from records with no previous link.
+
+**Built (2026-10-15):**
+- `tools/gta_to_thaw_map.py`: `--rail-pool N` still makes N two-node rails, and now also the long rails of `--rail-pool-long` (default `auto` = the table `POOL_LONG_DEFAULT`: 282x3, 82x4, 98x5, 58x6, 34x7, 180x8, 30x9, 38x10, 22x11, 18x12, 30x13, 18x14, 12x15, 104x16 nodes; `none` = the old pool). They are parked in rows after the two-node grid. With the launcher's `--rail-pool 4500`: 5,506 rails, 16,284 nodes. `rails_in_map.csv` lists every node with its rail.
+- `src/thaw/railscan.cpp`: slots are found by walking every rail in the block from its first node (any length up to 64; two-node first, the last 16 two-node ones stay the car rails'). The GTA rails are cut into pieces of at most (longest slot - 1) segments. Each fill frees the slots whose piece is out of reach, then places the wanted pieces nearest first: whole into a free slot of exactly their node count, otherwise segment by segment into two-node slots. Only positions and boxes are written; each record keeps the links reTHAWed gave it. The pool turns off if the block's rail or node count differs from `rails_in_map.csv`. The 8.47 chaining is gone.
+- The join log now tells points ridden through **inside** a long rail apart from joins between slots ("DROPPED INSIDE a long rail" would mean the long rails don't work).
+- Known limit: a long rail that was split for lack of a free slot stays split until it goes out of reach; slots held far away are only freed beyond 150 m, so in a very dense spot a nearer rail can miss out (logged as NO ROOM).
+
+**Cloud test:** map tool on made-up collision with `--rail-pool 50 --rail-pool-long 3:4,5:2,16:3`: 59 rails, 170 nodes, read back from the PAK as 111 linked segments, all positions distinct. Plugin on Linux (real `railscan.cpp`, a shuffled fake block of 24 rails / 51 records): 14 / 14 checks (slots found by walking links, car slots kept, a 4-point and a 3-point rail placed whole, links never changed, a 7-point rail split when no long slot is free, 2 inner points counted as inner, joins between slots as joins, freeing parks without touching links, riding back places the long rail whole again, a wrong pool map turns the pool off).
+
+**Result (user 2026-10-15 17:58, thaw.log, ~9 min, rebuilt whole map):** the map loads (5,506 pool rails / 16,284 nodes found, matching the file; long slots 3-16 nodes all present), no crash in reTHAWed, nothing refused. **Long rails work:** 136 points inside long rails ridden through. The log flagged 11 'DROPPED INSIDE a long rail', but checked one by one against the skater's speed and height: 4 were ollies off the rail (upward speed +350..+400), 3 were the skater rolling on the ground past a kerb-height rail (no height change, steady speed: the detector's false alarm), 3 were bails right after landing on the rail (on it 0.2 s, speed falling fast), 1 may be real (359.7 s, nearly straight point, 3 degrees). Joins between separate slots: 6 carried, 2 'dropped' (one steering off, one nearly stopped). So drops at joins went from about 1 in 9 to about 1 in 140 or fewer. Side notes: the first short run (17:56) had reTHAWed not polling the controller, so the 2 s fallback wrote the rails from our thread, as designed; GTA's exit code 0xC0000005 on closing is the same as in every earlier session (not new). Next (not started): make the join log ignore ollies and ground rolling so it counts only real drops.
+
+**Test (user):** rebuild the whole map (launcher's Build the map, or INSTALL's command), copy it into reTHAWed's `Maps` folder, check the `[Memory]` lines it prints against `rethawed.ini` (`Out set RailString` must now be at least ~10,500), build the plugin, grind long kerbs / ledges / walls, send `logs\thaw.log`. Pass: the map loads, `inside long rails: N points ridden through, 0 DROPPED`, joins between slots rare.
+
+
+**Why:** the 8.46 join test (MODLOG): about 1 join in 9 drops the grind (79 carried, 9 dropped), with nothing special about the dropped joins. reTHAWed only half-reliably hops between two touching but unlinked rails. Its own rails are chains: each rail node record has a next (+0x50) and previous (+0x54) record (8.32 R3a-2).
+
+**Change (`src/thaw/railscan.cpp`):**
+1. The write queue writes whole nodes (position, box, next, previous) instead of two-point rails. A plain pool rail is written as before: node a -> node b.
+2. **Chaining**, after each pool fill: placed pieces that continue each other on the same GTA rail (8.46's `g_cont`) are linked into one rail. For pieces k0..kn in slots s: nodes `a(s_k0) -> a(s_k0+1) -> ... -> a(s_kn) -> b(s_kn)`; each node's box covers it and its next node; the unused `b` records of the inner slots are parked (no links). A slot that leaves a chain gets its plain a -> b links back. A chain node is only re-written when its links changed or its slot was moved (unchanged chains cost nothing), and the whole fill is applied in one game-thread call, so reTHAWed never sees a half-linked chain.
+3. Only pool slots are chained (not car rails, not natas points later).
+4. A switch `kChainRails` (on). The log says how many chains / chained pieces each fill makes.
+5. Writes are still checked before they land (8.46), now also that the next / previous records are in the block (or none). Because links tie records together, a level load's queued writes now go in **all or none**: if one record no longer looks like a rail record, none are written and the pool switches off until the map is loaded again (logged).
+6. Whenever the block is found again or the level goes, the plugin forgets which slots are chained (a fresh block holds only plain two-node rails).
+
+**What could go wrong:** reTHAWed may keep its own per-rail list ("RailString" items in its memory pools) that a re-linked chain does not match. Then grinds could misbehave at a chain or crash; the switch turns it off. Also: when a chain grows at its far end (the next piece comes within 150 m), its last slot's `b` record is parked; if the skater were grinding that very piece at that moment it could jump. That needs a piece over ~110 m long, so it should be rare; the join log and NaN checks would show it.
+
+**Cloud test:** the real `railscan.cpp` on Linux, fake 8-record block: 25 / 25 checks (chain a0 -> a1 -> a2 -> b2 with right back links, inner `b` records parked unlinked, the single rail plain, a refill with no change writes nothing, walking away breaks the chain back into plain rails, walking back relinks it wherever the pieces landed, a bad record refuses the whole batch and turns the pool off, plus all the 8.46 checks).
+
+**Test (user):** the same grinding as for 8.46. Pass: `DROPPED` joins gone (or nearly), no crash or NaN, rails still grindable everywhere, including after riding far (refills).
+
 ### 8.46 Rail pool safety: writes on reTHAWed's game thread + the join test (user 2026-10-15: "Let's start step 1")
 
 **Why:** the pool (8.32 R3c) and the car rails (8.33) rewrite rail records from our plugin's own thread (`MainThread`, `RailPoolTick` / `CarRailTick`), while reTHAWed's game thread may be checking grinds against them: a record can be half-written for an instant, and a write can land after the level has gone (freed memory). And long GTA rails are placed as two-point pieces that only touch; whether a grind carries across those joins was never checked (MODLOG 8.32 fix 3: "not run yet"). Natas points (8.45) and wires will use the same pool, so it must be solid first.
