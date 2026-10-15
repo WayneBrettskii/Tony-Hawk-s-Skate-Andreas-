@@ -1,4 +1,18 @@
-# NOW (2026-10-15, night): long rails built into the pool map (DESIGN 8.48) - TESTED: WORKS
+# NOW (2026-10-15, night): natas everywhere WORKS with 100 posts (8.50); default is 100
+
+300 natas spares stalled reTHAWed's map load; 20 and 100 load fine (most needed anywhere: 83). The launcher's
+Build the map now makes 100. Uncommitted: 8.46-8.50. Next (waits for the user): commit; Gant tower names; then
+skitching / solid cars, wires, shooting (research doc).
+
+# EARLIER (same night): 300 natas spares HUNG reTHAWed's load; narrowed down with 20 and 100
+
+# EARLIER (same night): natas everywhere (8.50) + honest drop counter (8.49) - rebuild map + plugin, test
+
+Natas posts on props all over the map (and the pyramid's tip) through 300 one-point spares in the pool; the drop
+counter now tells ollies, bails and touches from real drops. Cloud-tested (harness 20/20); not run in game.
+Rebuild the map (send its `natas:` / `landmark:` lines), RailString ~10,800, build, natas around, send thaw.log.
+
+# EARLIER (2026-10-15, night): long rails built into the pool map (DESIGN 8.48) - TESTED: WORKS
 
 User test 17:58: 136 points inside long rails ridden through; the few flagged drops were ollies, bails on landing or
 the detector's false alarms (ground rolling by a kerb); about 1 real drop. Uncommitted: 8.46-8.48. Next (waits for the

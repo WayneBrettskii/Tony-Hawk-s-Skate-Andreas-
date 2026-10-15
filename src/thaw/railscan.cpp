@@ -360,6 +360,16 @@ int g_pieceMaxNodes = 0;     // the slot length the pieces were cut for
 int g_carEnd = 0;            // reserved car slots are g_carFirst .. g_carEnd - 1 (two-node slots)
 LONG g_poolNodeCount = 0;    // nodes in the pool map file (rails_in_map.csv)
 long g_poolNodeCountFound = 0; // nodes in the slots found in the block
+// 8.50: natas posts. The pool map carries spare one-point rails (one record, no links);
+// the plugin puts the natas points near the skater (props and landmark tops, natas_all.csv)
+// into them. reTHAWed natas-spins on a one-point rail (8.45).
+constexpr float kNatasRadiusM = 100.0f;
+struct NatasPt { float p[3]; };
+std::vector<NatasPt> g_natasPts;
+bool g_natasTried = false;
+std::vector<unsigned long> g_natasSlots; // the one-point records
+std::vector<int> g_natasSlotPt;          // slot -> point, or -1 (parked)
+std::vector<int> g_natasPtSlot;          // point -> slot, or -1
 int g_fillId = 0;
 bool g_poolBuilt = false, g_poolOff = false;
 unsigned long g_builtBase = 0;
@@ -373,10 +383,21 @@ LONG g_joinsCrossed = 0, g_joinsDropped = 0, g_railEnds = 0, g_leftMid = 0;
 LONG g_innerCrossed = 0, g_innerDropped = 0; // 8.48: the same at the points inside a long slot
 DWORD g_nextJoinReport = 0;
 int g_dropLogs = 0; // DROPPED lines written in this 10 s window (at most 5)
-int g_pendFrom = -1; // left this piece a moment ago: carried on to the next, or dropped? (decided after kJoinGapMs)
+int g_pendFrom = -1; // left this piece a moment ago: carried on to the next, or dropped? (decided within kJudgeMs)
 float g_pendT = 0.0f, g_pendPos[3] = {}, g_pendSpeed = 0.0f;
 DWORD g_pendAt = 0;
-constexpr DWORD kJoinGapMs = 150; // a grind may miss a sample or two right at a joint
+// 8.49: a grind that ends near a point is only a DROP when nothing else explains it. For
+// kJudgeMs after leaving we watch the skater: rising fast = he ollied off; slowing down hard
+// = he bailed; on the rail under kShortTouchMs = a touch (landing and bailing, or rolling past
+// a kerb-height rail on the ground). Seen in the 8.48 test: 10 of 11 'drops' were these.
+constexpr DWORD kJudgeMs = 300;
+constexpr DWORD kShortTouchMs = 300;
+constexpr float kOllieUp = 150.0f;    // units/s upwards
+constexpr float kBailSlow = 0.75f;    // speed fell below this share of the speed when leaving
+DWORD g_onSince = 0;                  // when the current grind started
+float g_pendMaxUp = 0.0f, g_pendMinSpeed = 0.0f;
+DWORD g_pendOnFor = 0;
+LONG g_nearOllies = 0, g_nearBails = 0, g_nearTouches = 0;
 
 bool LoadRealRails(void (*log)(const char*, ...))
 {
@@ -437,6 +458,30 @@ bool LoadRealRails(void (*log)(const char*, ...))
     }
     fclose(f);
     g_realOk = !g_realRails.empty();
+    // 8.50: the natas points (optional: an older pool map has none)
+    g_natasTried = true;
+    g_natasPts.clear();
+    char path3[MAX_PATH];
+    _snprintf_s(path3, sizeof(path3), _TRUNCATE, "%s", PoolPath("natas_all.csv").c_str());
+    FILE* n = nullptr;
+    if (fopen_s(&n, path3, "r") == 0 && n) {
+        char nl[512];
+        while (fgets(nl, sizeof(nl), n)) {
+            // model,kind,gta_x,gta_y,gta_z,x,y,z : the last three are THAW units
+            const char* c = nl;
+            int commas = 0;
+            while (*c && commas < 5) if (*c++ == ',') ++commas;
+            NatasPt q;
+            if (commas == 5 && sscanf_s(c, "%f,%f,%f", &q.p[0], &q.p[1], &q.p[2]) == 3 &&
+                q.p[0] > -1.0e6f && q.p[0] < 1.0e6f && q.p[1] > -1.0e6f && q.p[1] < 1.0e6f && q.p[2] > -1.0e6f &&
+                q.p[2] < 1.0e6f)
+                g_natasPts.push_back(q);
+        }
+        fclose(n);
+        log("natas: %zu natas points read (props and landmark tops)", g_natasPts.size());
+    } else {
+        log("natas: no natas_all.csv (a pool map from before 8.50): no natas points");
+    }
     log("rail pool: %d GTA rails -> %zu segments (8.48: placed as whole long rails where the pool has a free rail of "
         "the same length); the pool map file lists %ld pool rails, %ld nodes", rails, g_realRails.size(),
         (long)g_poolRailCount, (long)g_poolNodeCount);
@@ -446,6 +491,7 @@ bool LoadRealRails(void (*log)(const char*, ...))
 bool BuildSlots(void (*log)(const char*, ...))
 {
     g_slots.clear();
+    g_natasSlots.clear();
     const unsigned long base = static_cast<unsigned long>(g_blockBase);
     const unsigned long count = static_cast<unsigned long>(g_blockCount);
     if (!base || count < 2 || count > 0x1000000) return false;
@@ -472,7 +518,7 @@ bool BuildSlots(void (*log)(const char*, ...))
             cur = n;
         }
         if (bad) { ++badChains; continue; }
-        if (s.recs.size() < 2) { ++singles; continue; } // one-point rails: not pool slots
+        if (s.recs.size() < 2) { ++singles; g_natasSlots.push_back(s.recs[0]); continue; } // 8.50: natas spares
         s.a = s.recs.front();
         s.b = s.recs.back();
         (s.recs.size() == 2 ? two : longer).push_back(std::move(s));
@@ -498,8 +544,10 @@ bool BuildSlots(void (*log)(const char*, ...))
     log("rail pool: %zu pool rails, %ld nodes in the block (0x%08lX..0x%08lX): %d two-node, long: %s%s%s",
         g_slots.size(), nodes, base, end, nTwo, sizes[0] ? sizes : "none",
         badChains ? " | broken chains skipped: " : "", badChains ? std::to_string(badChains).c_str() : "");
-    if (singles) log("rail pool: %d one-point rails in the block (not used by the pool)", singles);
-    g_poolNodeCountFound = nodes;
+    if (singles) log("natas: %d one-point rails in the block (natas spares)", singles);
+    g_poolNodeCountFound = nodes + singles;
+    g_natasSlotPt.assign(g_natasSlots.size(), -1);
+    g_natasPtSlot.assign(g_natasPts.size(), -1);
     return !g_slots.empty();
 }
 
@@ -708,6 +756,60 @@ void WriteSlot(NodeBatch& batch, const PoolSlot& sl, int seg0, const float* park
 
 int g_lastWhole = 0, g_lastSplit = 0, g_lastNoRoom = 0;
 
+// 8.50: the natas points within kNatasRadiusM, nearest first, into the one-point spares.
+void NatasFill(NodeBatch& batch, const float* pos, void (*log)(const char*, ...))
+{
+    if (g_natasSlots.empty() || g_natasPts.empty()) return;
+    if (g_natasPtSlot.size() != g_natasPts.size()) g_natasPtSlot.assign(g_natasPts.size(), -1);
+    if (g_natasSlotPt.size() != g_natasSlots.size()) g_natasSlotPt.assign(g_natasSlots.size(), -1);
+    const float R = kNatasRadiusM * kUnitsPerM, R2 = R * R;
+    static std::vector<std::pair<float, int>> cand;
+    cand.clear();
+    for (int i = 0; i < static_cast<int>(g_natasPts.size()); ++i) {
+        const float dx = pos[0] - g_natasPts[i].p[0], dz = pos[2] - g_natasPts[i].p[2];
+        const float d2 = dx * dx + dz * dz;
+        if (d2 <= R2) cand.push_back(std::make_pair(d2, i));
+    }
+    std::sort(cand.begin(), cand.end());
+    const size_t keep = cand.size() < g_natasSlots.size() ? cand.size() : g_natasSlots.size();
+    static std::vector<char> want;
+    want.assign(g_natasPts.size(), 0);
+    for (size_t i = 0; i < keep; ++i) want[cand[i].second] = 1;
+    // free the posts whose point is no longer wanted (out of reach, so never under the skater)
+    std::vector<int> freeSlots;
+    for (size_t s = 0; s < g_natasSlots.size(); ++s) {
+        const int pt = g_natasSlotPt[s];
+        if (pt >= 0 && want[pt]) continue;
+        if (pt >= 0) {
+            const float dx = pos[0] - g_natasPts[pt].p[0], dy = pos[1] - g_natasPts[pt].p[1],
+                        dz = pos[2] - g_natasPts[pt].p[2];
+            const float keepDist = 5.0f * kUnitsPerM; // ('near' is a Windows macro)
+            if (dx * dx + dy * dy + dz * dz < keepDist * keepDist) continue; // he may be spinning on it: keep it
+            const float pk[3] = {kPoolParkX - 2000.0f, kPoolParkY, 50.0f * s};
+            batch.Node(g_natasSlots[s], pk, pk, pk, 0, 0);
+            g_natasPtSlot[pt] = -1;
+            g_natasSlotPt[s] = -1;
+        }
+        freeSlots.push_back(static_cast<int>(s));
+    }
+    int moved = 0, held = 0;
+    for (size_t i = 0; i < keep; ++i) {
+        const int pt = cand[i].second;
+        if (g_natasPtSlot[pt] >= 0) { ++held; continue; }
+        if (freeSlots.empty()) break;
+        const int s = freeSlots.back();
+        freeSlots.pop_back();
+        const float* p = g_natasPts[pt].p;
+        batch.Node(g_natasSlots[s], p, p, p, 0, 0); // one point: box = the point, no links
+        g_natasSlotPt[s] = pt;
+        g_natasPtSlot[pt] = s;
+        ++moved;
+        ++held;
+    }
+    log("natas: %d posts placed of %zu spares (%zu natas points within %.0f m; %d moved now)", held,
+        g_natasSlots.size(), cand.size(), kNatasRadiusM, moved);
+}
+
 void PoolFill(const float* pos, void (*log)(const char*, ...))
 {
     const size_t slots = g_slots.size();
@@ -782,6 +884,7 @@ void PoolFill(const float* pos, void (*log)(const char*, ...))
         }
         if (fitted && pc.nseg > 1) ++split;
     }
+    NatasFill(batch, pos, log); // 8.50
     int placed = 0, placedLong = 0;
     for (const PoolSlot& sl : g_slots)
         if (!sl.reserved && sl.seg >= 0) { ++placed; if (sl.Nodes() > 2) ++placedLong; }
@@ -914,6 +1017,7 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         if (g_poolBuilt || !g_slots.empty()) {
             g_slots.clear();
             g_segSlot.clear();
+            g_natasSlots.clear();
             g_poolBuilt = false;
             g_poolOff = false;
             g_haveLastFill = false;
@@ -936,10 +1040,10 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
     if (!base) return; // the scan has not found the block yet
     if (!g_poolBuilt || g_builtBase != base) {
         if (!BuildSlots(log)) return;
-        if (g_poolRailCount > 0 && (static_cast<LONG>(g_slots.size()) != g_poolRailCount ||
+        if (g_poolRailCount > 0 && (static_cast<LONG>(g_slots.size() + g_natasSlots.size()) != g_poolRailCount ||
                                     g_poolNodeCountFound != g_poolNodeCount)) {
             log("rail pool: the level has %zu pool rails (%ld nodes) but the pool map file lists %ld (%ld nodes); "
-                "pool off (load the matching pool map)", g_slots.size(), g_poolNodeCountFound,
+                "pool off (load the matching pool map)", g_slots.size() + g_natasSlots.size(), g_poolNodeCountFound,
                 static_cast<long>(g_poolRailCount), static_cast<long>(g_poolNodeCount));
             g_slots.clear();
             g_segSlot.clear();
@@ -997,24 +1101,34 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
             return a >= 0 && b >= 0 && a < static_cast<int>(g_segSlot.size()) && b < static_cast<int>(g_segSlot.size()) &&
                    g_segSlot[a] >= 0 && g_segSlot[a] == g_segSlot[b];
         };
+        if (g_pendFrom >= 0) { // 8.49: what he does just after leaving
+            if (vel[1] > g_pendMaxUp) g_pendMaxUp = vel[1];
+            if (speed < g_pendMinSpeed) g_pendMinSpeed = speed;
+        }
         if (g_pendFrom >= 0 && on == g_pendFrom) g_pendFrom = -1; // back on the same piece: nothing happened
-        if (g_pendFrom >= 0 && on >= 0 && adjacent(g_pendFrom, on)) {
+        if (g_pendFrom >= 0 && on >= 0 && adjacent(g_pendFrom, on) && nowT - g_pendAt <= kJudgeMs) {
             ++(sameSlot(g_pendFrom, on) ? g_innerCrossed : g_joinsCrossed); // a sample or two off right at the point
             g_pendFrom = -1;
             g_onRail = on;
-        } else if (g_pendFrom >= 0 && (on >= 0 || nowT - g_pendAt > kJoinGapMs)) {
+        } else if (g_pendFrom >= 0 && (on >= 0 || nowT - g_pendAt > kJudgeMs)) {
             const int dir = g_pendT > 0.75f ? 1 : (g_pendT < 0.25f ? -1 : 0);
             int next = -1;
             if (dir > 0 && g_cont[g_pendFrom]) next = g_pendFrom + 1;
             if (dir < 0 && g_pendFrom > 0 && g_cont[g_pendFrom - 1]) next = g_pendFrom - 1;
-            if (next >= 0 && placed(next)) {
+            const bool ollie = g_pendMaxUp > kOllieUp;
+            const bool bail = g_pendMinSpeed < kBailSlow * g_pendSpeed;
+            const bool touch = g_pendOnFor < kShortTouchMs;
+            if (next >= 0 && placed(next) && (ollie || bail || touch)) {
+                ++(ollie ? g_nearOllies : bail ? g_nearBails : g_nearTouches); // not the rail's fault
+            } else if (next >= 0 && placed(next)) {
                 const bool inner = sameSlot(g_pendFrom, next);
                 ++(inner ? g_innerDropped : g_joinsDropped);
                 if (g_dropLogs < 5) {
                     ++g_dropLogs;
-                    log("rail pool: grind DROPPED %s (piece %d -> %d, %.0f%% along, speed %.0f, at %.0f %.0f %.0f)",
+                    log("rail pool: grind DROPPED %s (piece %d -> %d, %.0f%% along, speed %.0f -> lowest %.0f, most "
+                        "upward %.0f, on the rail %.1f s, at %.0f %.0f %.0f)",
                         inner ? "INSIDE a long rail" : "at a join", g_pendFrom, next, g_pendT * 100.0f, g_pendSpeed,
-                        g_pendPos[0], g_pendPos[1], g_pendPos[2]);
+                        g_pendMinSpeed, g_pendMaxUp, g_pendOnFor / 1000.0f, g_pendPos[0], g_pendPos[1], g_pendPos[2]);
                 }
             } else if (dir != 0) {
                 ++g_railEnds; // the end of the GTA rail (or its next piece is not placed)
@@ -1029,12 +1143,16 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
             } else {
                 if (on >= 0) {
                     log("rail pool: ON a placed rail (%.0f speed, at %.0f %.0f %.0f)", speed, pos[0], pos[1], pos[2]);
+                    if (g_onRail < 0 && g_pendFrom < 0) g_onSince = nowT;
                 } else {
                     log("rail pool: left the placed rail");
                     g_pendFrom = g_onRail;
                     g_pendT = g_onT;
                     g_pendAt = nowT;
                     g_pendSpeed = speed;
+                    g_pendMaxUp = vel[1];
+                    g_pendMinSpeed = speed;
+                    g_pendOnFor = nowT - g_onSince;
                     for (int k = 0; k < 3; ++k) g_pendPos[k] = pos[k];
                 }
             }
@@ -1044,16 +1162,20 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
         if (nowT >= g_nextJoinReport) {
             if (g_nextJoinReport &&
                 (g_joinsCrossed || g_joinsDropped || g_innerCrossed || g_innerDropped || g_railEnds || g_leftMid ||
+                 g_nearOllies || g_nearBails || g_nearTouches ||
                  g_applied || g_appliedByUs || g_droppedGone || g_droppedBad))
                 log("rail pool (10 s): inside long rails: %ld points ridden through, %ld DROPPED | joins between "
-                    "slots: %ld carried across, %ld DROPPED | %ld rail ends, %ld left mid-rail | "
+                    "slots: %ld carried across, %ld DROPPED | near a point but not a drop: %ld ollies, %ld bails, %ld "
+                    "short touches | %ld rail ends, %ld left mid-rail | "
                     "rail writes: %ld on reTHAWed's game thread, %ld by our thread (fallback), %ld dropped (level "
                     "gone), %ld refused (not a rail record)",
-                    g_innerCrossed, g_innerDropped, g_joinsCrossed, g_joinsDropped, g_railEnds, g_leftMid,
+                    g_innerCrossed, g_innerDropped, g_joinsCrossed, g_joinsDropped, g_nearOllies, g_nearBails,
+                    g_nearTouches, g_railEnds, g_leftMid,
                     static_cast<long>(g_applied),
                     static_cast<long>(g_appliedByUs), static_cast<long>(g_droppedGone),
                     static_cast<long>(g_droppedBad));
             g_joinsCrossed = g_joinsDropped = g_railEnds = g_leftMid = g_innerCrossed = g_innerDropped = 0;
+            g_nearOllies = g_nearBails = g_nearTouches = 0;
             InterlockedExchange(&g_applied, 0);
             InterlockedExchange(&g_appliedByUs, 0);
             InterlockedExchange(&g_droppedGone, 0);

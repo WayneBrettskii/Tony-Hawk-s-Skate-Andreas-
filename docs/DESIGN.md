@@ -1128,6 +1128,30 @@ patterns (another reTHAWed build) are left alone.
 the test is off for good and we look for a per-frame point in its game loop instead); the menu may
 also set things we haven't seen (the selected skater, a "session" flag).
 
+### 8.50 Natas everywhere: natas posts in the rail pool (user 2026-10-15: "go ahead on both")
+
+**Why:** 8.45 showed a one-point rail is a natas post. The whole map has thousands of natas-able props, too many to load at once, so they go through the pool like the rails.
+
+**Map tool (`--rail-pool`):** while reading GTA's placements it already notes every natas-able prop (`NATAS_MODELS`: hydrants, parking meters, bollards, lamp posts, traffic lights, telegraph poles, road signs) with the top centre of its collision (8.45). New: **landmarks** - any model whose name has `pyrmd` / `pyramid` in it gets a point on its apex when its collision comes to a point (the highest corner, and every corner within 0.5 m of that height within 1.5 m sideways): the Las Venturas pyramid. Models with `gant` in the name are only listed in the build output (top height, pointed or flat), so the Gant bridge's tower tops can be picked by name next. Points closer than 0.5 m are merged. All go to `natas_all.csv` (GTA and THAW positions) beside the map and in `_railpool`. The pool gets `--rail-pool-natas` (default 300) spare one-point rails, parked in their own grid.
+
+**Plugin:** one-point rails in the block are the natas spares (they count toward the pool map check). At each fill the natas points within 100 m, nearest first, go into the spares (position = box = the point, no links); a post is only moved away when its point is no longer wanted and the skater is more than 5 m from it.
+
+**Cloud test:** map tool on made-up collision (5 spares: rails_in_map lists 5 one-point rails; the PAK reads back with them); point merging and the apex test checked with made-up props and shapes. Plugin harness: 3 spares found, the 3 nearest of 5 points placed with no links, the far one not, all parked again when far away.
+
+**Result 1 (user 2026-10-15 19:27): the map with 300 natas spares never finished loading.** CJ fell through the map in GTA because reTHAWed's skater never spawned (stuck at its pre-spawn spot for 68 s; in the 17:56 run he spawned after 13 s). reTHAWed's `debug.txt` stops right after `zone_init: mpgtalse` / `Ped avoid hack disabled`. Our scan still found the 16,584 rail records at 30 s, but with **no links at all** (every record looked like a one-point rail), so reTHAWed stopped somewhere between making the rail records and linking them. The map tool found 8,328 natas points; `rethawed.ini` [Memory] is high enough (RailString 10,800, RailPoint 266,032). The only change from the map that loaded is the 300 one-point rails (the 8.45 test map with 2 loaded fine), so many one-point rails seem to stall reTHAWed's rail setup. Fix for now: `--rail-pool-natas` defaults to 0 (the launcher's map builds as at 8.48 again); next: find how many one-point rails load (20, then more).
+
+**Result 2 (user 2026-10-15 19:38 and 19:48):** with `--rail-pool-natas 20` and then `100` the map loads normally (load over at 21.6 s, as before), and the posts follow the skater (with 100: up to 43 natas points within 100 m, all placed). The most natas points within 100 m of any spot in the whole map is 83 (8,328 points: telegraph poles 1,533, lamp posts ~4,300, traffic lights ~1,580, bollards ~890, hydrants 46, road signs 26; the pyramid apex found at GTA 2323.7 1283.2 96.7). So the default is now **100** spares. reTHAWed seems to have a limit on one-point rails somewhere between 100 and 300; not narrowed further. The 8.49 drop counter in this run: 11 short touches, 0 drops.
+
+**Test (user):** rebuild the whole map (the build prints `natas:` and `landmark:` lines: send them), install it, check `rethawed.ini` RailString (~10,800 now), build the plugin, natas-spin hydrants / meters / bollards anywhere (Natas button + grind on top), try lamp posts, and if you can get up there (jetpack, helicopter) the pyramid's tip. Send `logs\thaw.log`.
+
+### 8.49 The join log counts only real drops (user 2026-10-15: "go ahead on both")
+
+**Why:** in the 8.48 test 10 of 11 "drops" were ollies, bails on landing, or the skater rolling past a kerb-height rail (MODLOG 8.48 result).
+
+**Change (`railscan.cpp`):** after the skater leaves a rail near a point, the plugin watches him for 0.3 s: upward speed over 150 = an **ollie**; speed falling below 75% = a **bail**; on the rail under 0.3 s in all = a **short touch**. Only what is left is a DROP (its log line now also gives the lowest speed, the most upward speed and how long he was on the rail). Getting back on the next piece within 0.3 s still counts as carried across. The 10 s line adds "near a point but not a drop: N ollies, N bails, N short touches".
+
+**Cloud test:** harness: a long grind leaving at a join with no jump = DROPPED; the same with a jump = ollie; a 0.25 s touch = short touch.
+
 ### 8.48 Long rails built into the pool map (check done 2026-10-15; built after the user's "Okay let's build the map")
 
 **Why:** 8.47's runtime links made no difference (12.8% of joins dropped vs 10.2%): reTHAWed seems to decide how a rail continues from what it builds when the map loads (most likely its `RailString` list per rail), not from the records' next / previous links changed later. Moving a rail's **positions** does work (R3b, the whole pool). So: let reTHAWed build the long rails itself at load, and only ever move their positions.

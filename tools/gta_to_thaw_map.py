@@ -80,6 +80,8 @@ BARRIER_TXDS = ("roadblkx", "barrierblk")
 REMOVED_BARRIERS = []      # (model, position), for removed_barriers.txt
 PLACEMENTS = []            # (model, map file, box min, box max, triangles): placements.csv, to name what a wall is
 NATAS_SPOTS = []           # (model, GTA top point x y z, from collision?, height m): natas candidates (8.45)
+LANDMARK_SPOTS = []        # (model, GTA apex x y z): natas points on pointed tops, e.g. the pyramid (8.50)
+LANDMARK_SEEN = []         # (model, top z, apex or not): what the landmark search looked at, printed
 
 # ---------------------------------------------------------------- natas points (DESIGN 8.45)
 #
@@ -102,6 +104,16 @@ NATAS_TEST_RADIUS = 80.0   # m around the skatepark start (--natas-test)
 NATAS_TEST_MAX = 12        # at most this many test points, the nearest first
 NATAS_ABOVE = 0.02         # m above the top of the prop
 NATAS_LOW_MAX = 2.5        # m: --natas-low keeps only props no taller than this (ones you can ollie onto)
+# 8.50: landmarks. Any model whose name contains one of these gets a natas point on its apex,
+# if its collision comes to a point: the highest corner, and every corner within
+# LANDMARK_TOP_BAND m of it lies within LANDMARK_TOP_SPREAD m sideways (the Las Venturas
+# pyramid, vgEpyrmd*). Models matching LANDMARK_REPORT are only listed in the build output
+# (their names are not known yet: the Gant bridge's towers), to pick them by name later.
+LANDMARK_MATCH = ("pyrmd", "pyramid")
+LANDMARK_REPORT = ("gant",)
+LANDMARK_TOP_BAND = 0.5
+LANDMARK_TOP_SPREAD = 1.5
+NATAS_DEDUPE = 0.5         # m: natas points closer than this are one point (LODs, double placements)
 
 
 def barrier_models(gta):
@@ -155,6 +167,14 @@ def objects_from_gta(gta, box):
             top, bottom = max(v[2] for v in verts), min(v[2] for v in verts)
             NATAS_SPOTS.append((inst["name"], ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0,
                                                top + NATAS_ABOVE), True, top - bottom))
+        lname = (inst["name"] or "").lower()
+        if verts and any(m in lname for m in LANDMARK_MATCH + LANDMARK_REPORT):  # 8.50
+            top = max(verts, key=lambda v: v[2])
+            band = [v for v in verts if v[2] >= top[2] - LANDMARK_TOP_BAND]
+            apex = all(math.hypot(v[0] - top[0], v[1] - top[1]) <= LANDMARK_TOP_SPREAD for v in band)
+            LANDMARK_SEEN.append((inst["name"], top, apex))
+            if apex and any(m in lname for m in LANDMARK_MATCH):
+                LANDMARK_SPOTS.append((inst["name"], (top[0], top[1], top[2] + NATAS_ABOVE)))
         out.append(("%s_%d" % (inst["name"], k), verts, [(a, b, c) for a, b, c, _s in tris]))
         if verts:
             PLACEMENTS.append((inst["name"], inst.get("source", ""), [min(v[i] for v in verts) for i in range(3)],
@@ -550,9 +570,10 @@ def parse_pool_long(text):
     return mix
 
 
-def make_pool_rails(n, long_mix=None):
+def make_pool_rails(n, long_mix=None, natas=0):
     """n two-node rails parked far below the map, on a grid (for 8.32 R3c), then (8.48) the
-    long slots: long_mix[size] rails of `size` nodes each, in rows further along."""
+    long slots: long_mix[size] rails of `size` nodes each, in rows further along, then (8.50)
+    `natas` one-point rails: spare natas posts."""
     out = []
     for r in range(n):
         x = -30000.0 + (r % 200) * POOL_SPACING
@@ -568,6 +589,30 @@ def make_pool_rails(n, long_mix=None):
                 z += POOL_SPACING
             out.append([(x + i * POOL_RAIL_LEN, POOL_Y, z) for i in range(size)])
             x += length + POOL_SPACING
+    z += 3 * POOL_SPACING  # 8.50: the natas spares, their own grid after the long rails
+    for i in range(natas):
+        out.append([(-30000.0 + (i % 200) * POOL_SPACING, POOL_Y, z + (i // 200) * POOL_SPACING)])
+    return out
+
+
+def natas_points_thaw(centre):
+    """8.50: every natas point found (props + landmark apexes) in THAW units, close ones merged."""
+    pts = [(name, p, "prop") for name, p, _solid, _h in NATAS_SPOTS] + \
+          [(name, p, "landmark") for name, p in LANDMARK_SPOTS]
+    out, cell = [], {}
+    for name, p, kind in pts:
+        key = (int(p[0] // NATAS_DEDUPE), int(p[1] // NATAS_DEDUPE), int(p[2] // NATAS_DEDUPE))
+        near = False
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for q in cell.get((key[0] + dx, key[1] + dy, key[2] + dz), ()):
+                        if math.dist(p, q) < NATAS_DEDUPE:
+                            near = True
+        if near:
+            continue
+        cell.setdefault(key, []).append(p)
+        out.append((name, kind, p, to_thaw(p, centre)))
     return out
 
 
@@ -1243,6 +1288,10 @@ def main():
     ap.add_argument("--rail-pool", type=int, default=0, metavar="N",
                     help="8.32 R3c: build a rail-pool map — N spare two-node rails parked below the map instead of "
                          "this map's rails, plus all_rails.csv (every real rail) for the plugin; 0 = off")
+    ap.add_argument("--rail-pool-natas", type=int, default=100, metavar="N",
+                    help="8.50: spare one-point rails (natas posts) in a pool map; the plugin puts the natas points "
+                         "near the skater into them (default 100: the most within 100 m of any spot is 83; 20 and "
+                         "100 load, 300 stalled reTHAWed's map load, 2026-10-15; 0 = none)")
     ap.add_argument("--rail-pool-long", default="auto", metavar="MIX",
                     help="8.48: long spare rails added to the pool for long GTA rails: 'auto' (the table "
                          "POOL_LONG_DEFAULT, sizes 3-16 nodes), 'none', or nodes:count pairs like 3:200,8:100")
@@ -1384,7 +1433,24 @@ def main():
                   args.rail_pool, long_rails,
                   ", ".join("%dx%d nodes" % (long_mix[k], k) for k in sorted(long_mix)) or "none",
                   args.rail_pool + long_rails, 2 * args.rail_pool + long_nodes, sum(len(r) for r in rails)))
-        rails = make_pool_rails(args.rail_pool, long_mix)
+        # 8.50: natas points all over the map, for the plugin to place into the one-point spares
+        natas_all = natas_points_thaw(centre) if args.rail_pool_natas > 0 else []
+        for folder in (out, pool_copy):
+            with open(os.path.join(folder, "natas_all.csv"), "w", newline="\n") as f:
+                f.write("model,kind,gta_x,gta_y,gta_z,x,y,z\n")
+                for name, kind, p, t in natas_all:
+                    t = struct.unpack("<3f", struct.pack("<3f", *t))
+                    f.write("%s,%s,%.2f,%.2f,%.2f,%.9g,%.9g,%.9g\n" % (name, kind, p[0], p[1], p[2], *t))
+        kinds = {}
+        for name, kind, _p, _t in natas_all:
+            kinds[name.lower()] = kinds.get(name.lower(), 0) + 1
+        print("natas:        %d points (%s); %d one-point spares in the pool; natas_all.csv" % (
+            len(natas_all), ", ".join("%s %d" % kv for kv in sorted(kinds.items())) or "none", args.rail_pool_natas))
+        for name, top, apex in LANDMARK_SEEN:
+            print("landmark:     %-20s top GTA %8.1f %8.1f %6.1f  %s" % (
+                name, top[0], top[1], top[2], "pointed: natas point on it" if apex and
+                any(m in name.lower() for m in LANDMARK_MATCH) else ("pointed" if apex else "flat top")))
+        rails = make_pool_rails(args.rail_pool, long_mix, args.rail_pool_natas)
     # 8.32: reTHAWed's memory pools these rails need (rethawed.ini [Memory]; its defaults:
     # RailPoint 20000, RailString 5000, HashItem 30000, CStruct 100000, CComponent 360000,
     # CVector 30000). Each rail node is one struct of about 8 items with 2 vectors (position,

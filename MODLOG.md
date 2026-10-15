@@ -2,6 +2,20 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-15] 8.49 drop counter + 8.50 natas everywhere
+
+**Changed:** `src/thaw/railscan.cpp`: (8.49) a grind that ends near a point is sorted into ollie / bail / short touch / real DROP from the skater's speed and vertical speed in the 0.3 s after; (8.50) the pool's one-point rails are natas spares, filled with the natas points within 100 m from `natas_all.csv`. `tools/gta_to_thaw_map.py`: (8.50) pool maps write `natas_all.csv` (every natas-able prop's top, plus pointed landmark apexes such as the pyramid, `pyrmd` / `pyramid` in the model name; `gant` models are listed for later) and add `--rail-pool-natas` spare one-point rails (default 300).
+
+**Why:** user 2026-10-15 ("go ahead on both"). DESIGN 8.49, 8.50.
+
+**Tested how:** in the cloud. Plugin compiled for 32-bit Windows (no new warnings); Linux harness with a fake block of 24 rails + 3 one-point spares: 20 / 20 checks (8.48's plus natas placement / parking and the three drop-counter cases). Map tool on made-up collision: spares written and read back; point merging and the apex test on made-up shapes. **Not run on GTA's files or in game.**
+
+**Next:** the user rebuilds the whole map and the plugin, natas-spins around the map, sends the build output's `natas:` / `landmark:` lines and `logs\thaw.log`.
+
+**Result 1 (user 2026-10-15 19:27): the map with 300 natas spares never finished loading.** CJ fell through the map in GTA because reTHAWed's skater never spawned (stuck at its pre-spawn spot for 68 s; in the 17:56 run he spawned after 13 s). reTHAWed's `debug.txt` stops right after `zone_init: mpgtalse` / `Ped avoid hack disabled`. Our scan still found the 16,584 rail records at 30 s, but with **no links at all** (every record looked like a one-point rail), so reTHAWed stopped somewhere between making the rail records and linking them. The map tool found 8,328 natas points; `rethawed.ini` [Memory] is high enough (RailString 10,800, RailPoint 266,032). The only change from the map that loaded is the 300 one-point rails (the 8.45 test map with 2 loaded fine), so many one-point rails seem to stall reTHAWed's rail setup. Fix for now: `--rail-pool-natas` defaults to 0 (the launcher's map builds as at 8.48 again); next: find how many one-point rails load (20, then more).
+
+**Result 2 (user 2026-10-15 19:38 and 19:48):** with `--rail-pool-natas 20` and then `100` the map loads normally (load over at 21.6 s, as before), and the posts follow the skater (with 100: up to 43 natas points within 100 m, all placed). The most natas points within 100 m of any spot in the whole map is 83 (8,328 points: telegraph poles 1,533, lamp posts ~4,300, traffic lights ~1,580, bollards ~890, hydrants 46, road signs 26; the pyramid apex found at GTA 2323.7 1283.2 96.7). So the default is now **100** spares. reTHAWed seems to have a limit on one-point rails somewhere between 100 and 300; not narrowed further. The 8.49 drop counter in this run: 11 short touches, 0 drops.
+
 ## [2026-10-15] 8.48 long rails built into the pool map
 
 **Changed:** `tools/gta_to_thaw_map.py`: a pool map (`--rail-pool N`) now also holds long spare rails of 3-16 nodes (`--rail-pool-long`, default `auto`: 1,006 rails, 7,284 nodes, sized from the whole map; `none` = as before). `src/thaw/railscan.cpp`: finds pool rails of any length by walking their links; cuts each GTA rail into pieces of at most 16 nodes; puts a piece whole into a free pool rail of exactly its length (else segment by segment into two-node ones, as before); writes only positions and boxes, never links. The 8.47 run-time chaining is removed. The 10 s log line now splits "inside long rails" from "joins between slots". The pool switches off if the map's rail or node count doesn't match `rails_in_map.csv`.
