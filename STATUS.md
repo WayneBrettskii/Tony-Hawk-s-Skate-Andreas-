@@ -1,4 +1,12 @@
-# NOW (2026-10-15): security audit fixes coded (DESIGN 8.44) - build and test next
+# NOW (2026-10-15, later): NATAS WORKS (DESIGN 8.45)
+
+User: natas spun on the two Grove Street hydrants in a test map (`--natas-test --natas-low --natas-at 2495 -1670
+--box 1700 -1900 2700 -1150`). A one-point rail is a Natas post. The audit fixes (8.44) were built, tested and
+committed by the user. **Next (waits for the user's go):** rail pool safety (writes on reTHAWed's game thread, the
+join test), then natas everywhere (one-point spares in the pool, the whole-map finder, the pyramid tip).
+Remember: the natas test map replaced the installed map in reTHAWed's Maps folder - put the normal one back.
+
+# EARLIER (2026-10-15): security audit fixes coded (DESIGN 8.44) - built, tested, committed by the user
 
 A friend's audit of `d4ca7f6` (PDF) found 6 issues; checking the code found 4 more. All are coded
 (not built, not run on Windows): NaN checks on everything read through the link (N1), the

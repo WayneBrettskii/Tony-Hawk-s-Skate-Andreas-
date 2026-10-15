@@ -79,6 +79,29 @@ def qbkey(text):
 BARRIER_TXDS = ("roadblkx", "barrierblk")
 REMOVED_BARRIERS = []      # (model, position), for removed_barriers.txt
 PLACEMENTS = []            # (model, map file, box min, box max, triangles): placements.csv, to name what a wall is
+NATAS_SPOTS = []           # (model, GTA top point x y z, from collision?, height m): natas candidates (8.45)
+
+# ---------------------------------------------------------------- natas points (DESIGN 8.45)
+#
+# reTHAWed does a Natas spin on a ONE-point rail (its menu: "spinning grinds on single-point
+# rails such as parking meters, posts"; its park editor's natas post is one). A rail chain of
+# a single point is written as one RailNode with no Links. These GTA props get a point on top
+# of their collision box; the number is the height (m) used when the model has no collision.
+NATAS_MODELS = {
+    "fire_hydrant": 0.9, "cj_firehydrant": 0.9,
+    "parkingmeter": 1.3, "parkingmeterg": 1.3,
+    "bollard": 1.0, "bollardlight": 1.0, "ws_ref_bollard": 1.0,
+    "lamppost1": 7.0, "lamppost2": 9.0, "lamppost3": 7.0, "streetlamp1": 6.0, "streetlamp2": 6.0,
+    "mlamppost": 6.0,
+    "trafficlight1": 6.0, "mtraffic1": 6.0, "mtraffic2": 6.0, "mtraffic3": 5.0, "mtraffic4": 5.0,
+    "cj_traffic_light3": 5.0, "cj_traffic_light4": 5.0, "cj_traffic_light5": 5.0,
+    "telgrphpole02": 9.0, "telgrphpoleall": 9.0,
+    "gen_roadsign1": 3.0, "gen_roadsign2": 3.0,
+}
+NATAS_TEST_RADIUS = 80.0   # m around the skatepark start (--natas-test)
+NATAS_TEST_MAX = 12        # at most this many test points, the nearest first
+NATAS_ABOVE = 0.02         # m above the top of the prop
+NATAS_LOW_MAX = 2.5        # m: --natas-low keeps only props no taller than this (ones you can ollie onto)
 
 
 def barrier_models(gta):
@@ -120,9 +143,18 @@ def objects_from_gta(gta, box):
             REMOVED_BARRIERS.append((inst["name"], inst["pos"]))
             continue
         model = cols.get(inst["name"])
+        natas_h = NATAS_MODELS.get((inst["name"] or "").lower())
         if not model:
+            if natas_h is not None:  # 8.45: a prop without collision still gets its natas point
+                x, y, z = inst["pos"]
+                NATAS_SPOTS.append((inst["name"], (x, y, z + natas_h + NATAS_ABOVE), False, natas_h))
             continue
         verts, tris = gad.world_triangles(inst, model)
+        if natas_h is not None and verts:  # 8.45: the top centre of the prop's collision
+            xs = [v[0] for v in verts]; ys = [v[1] for v in verts]
+            top, bottom = max(v[2] for v in verts), min(v[2] for v in verts)
+            NATAS_SPOTS.append((inst["name"], ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0,
+                                               top + NATAS_ABOVE), True, top - bottom))
         out.append(("%s_%d" % (inst["name"], k), verts, [(a, b, c) for a, b, c, _s in tris]))
         if verts:
             PLACEMENTS.append((inst["name"], inst.get("source", ""), [min(v[i] for v in verts) for i in range(3)],
@@ -1183,6 +1215,18 @@ def main():
     ap.add_argument("--proxy-cars", type=int, default=0, metavar="N",
                     help="8.42c: N reTHAWed vehicles (copies of a vehicle record from --thaw-dir), placed in a row "
                          "15 m east of the start; they are the stand-ins for GTA's cars")
+    ap.add_argument("--natas-test", action="store_true",
+                    help="8.45 test: one-point (Natas) rails on the hydrants, meters, posts and lamps within %d m of "
+                         "the skatepark start (at most %d); listed in natas_points.csv. Leaves the shared rail lists "
+                         "in extracted\\thaw_maps\\_railpool alone" % (NATAS_TEST_RADIUS, NATAS_TEST_MAX))
+    ap.add_argument("--natas-at", nargs=2, type=float, metavar=("X", "Y"),
+                    help="--natas-test: centre of the test (GTA x y) instead of the skatepark start; the map's --box "
+                         "must reach it (e.g. Grove Street: --natas-at 2495 -1670 --box 1700 -1900 2700 -1150)")
+    ap.add_argument("--natas-post", nargs=3, type=float, action="append", default=[], metavar=("X", "Y", "Z"),
+                    help="--natas-test: also a one-point rail at this GTA position (repeatable), e.g. the top of "
+                         "a hydrant found with F9 in the game")
+    ap.add_argument("--natas-low", action="store_true",
+                    help="--natas-test: only props up to %.1f m tall (hydrants, meters, bollards)" % NATAS_LOW_MAX)
     ap.add_argument("--thaw-dir", metavar="FOLDER",
                     help="reTHAWed's folder, for --proxy-cars (its packs are read; nothing is written there)")
     args = ap.parse_args()
@@ -1245,6 +1289,44 @@ def main():
         len(rails), sum(len(r) for r in rails),
         sum(math.dist(r[k], r[k + 1]) for r in rails for k in range(len(r) - 1)) / K, found,
         args.rail_budget if args.rail_budget > 0 else "unlimited"))
+    # 8.45: Natas test points (one-point rails) on real props near the skatepark start
+    natas = []
+    if args.natas_test:
+        if args.rail_pool > 0:
+            ap.error("--natas-test makes an ordinary map; leave out --rail-pool")
+        at = tuple(args.natas_at) if args.natas_at else DEFAULT_SPAWN[:2]
+        if not (box[0] <= at[0] <= box[2] and box[1] <= at[1] <= box[3]):
+            ap.error("--natas-at %.0f %.0f is outside the map's box %s; widen --box" % (at[0], at[1], box))
+        near = []
+        kinds = {}
+        for name, p, solid, height in NATAS_SPOTS:
+            kinds[name.lower()] = kinds.get(name.lower(), 0) + 1
+            if args.natas_low and height > NATAS_LOW_MAX:
+                continue
+            d = math.hypot(p[0] - at[0], p[1] - at[1])
+            if d <= NATAS_TEST_RADIUS:
+                near.append((d, name, p, solid))
+        print("natas props:  in the whole map area: %s" % (", ".join("%s %d" % kv for kv in sorted(kinds.items())) or "none"))
+        near.sort()
+        near = near[:NATAS_TEST_MAX]
+        for p in args.natas_post:  # hand-placed posts always go in
+            near.append((math.hypot(p[0] - at[0], p[1] - at[1]), "post (--natas-post)", tuple(p), "hand"))
+        natas = [[to_thaw(p, centre)] for _d, _n, p, _s in near]
+        with open(os.path.join(out, "natas_points.csv"), "w", newline="\n") as f:
+            f.write("# Natas test points (one-point rails). GTA position of the point = top of the prop.\n")
+            f.write("# test centre: GTA %.1f %.1f\n" % at)
+            f.write("model,gta_x,gta_y,gta_z,metres_from_centre,height_from\n")
+            for d, name, p, solid in near:
+                f.write("%s,%.2f,%.2f,%.2f,%.1f,%s\n" % (name, p[0], p[1], p[2], d,
+                                                       "hand-placed" if solid == "hand" else
+                                                       "collision" if solid else "table (no collision)"))
+        print("natas test:   %d one-point rails on props within %.0f m of GTA %.0f %.0f%s (of %d props in the area); "
+              "natas_points.csv" % (len(natas), NATAS_TEST_RADIUS, at[0], at[1],
+                                     ", %.1f m tall or less" % NATAS_LOW_MAX if args.natas_low else "", len(NATAS_SPOTS)))
+        for d, name, p, solid in near:
+            print("              %-16s GTA %8.2f %9.2f %6.2f  (%4.1f m away%s)" % (
+                name, p[0], p[1], p[2], d, "" if solid else ", height from table"))  # "hand" is truthy
+        rails = rails + natas
     pool_copy = os.path.join(project, "extracted", "thaw_maps", "_railpool")
     if args.rail_pool > 0:
         os.makedirs(pool_copy, exist_ok=True)
@@ -1285,8 +1367,10 @@ def main():
     first = 1 + (len(objs) if not args.no_geometry_nodes else 0)
     write_rail_csv(os.path.join(out, "rails_in_map.csv"), rails, first)
     # the plugin reads the loaded map's rails from this fixed path, whatever the map is called
-    os.makedirs(pool_copy, exist_ok=True)
-    write_rail_csv(os.path.join(pool_copy, "rails_in_map.csv"), rails, first)
+    # (8.45: not for the natas test map, so the installed whole map's rail lists stay as they are)
+    if not args.natas_test:
+        os.makedirs(pool_copy, exist_ok=True)
+        write_rail_csv(os.path.join(pool_copy, "rails_in_map.csv"), rails, first)
     base = "worlds\\worldzones\\%s\\%s" % (args.prefix.lower(), args.prefix.lower())
     named_qb = "worlds\\worldzones\\%s\\%s.qb.wpc" % (args.prefix, args.prefix)
     # Order and parents as in Los Santos East: tex, scene (parent tex),

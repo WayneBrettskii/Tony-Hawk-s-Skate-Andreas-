@@ -5,6 +5,7 @@
 #include "input.h"
 #include "music.h"
 #include "bmx.h"
+#include "railscan.h" // 8.46: RailPoolGameThreadTick
 #include "autostart.h"
 
 #include <cstring>
@@ -75,6 +76,8 @@ unsigned char __cdecl HookGetButton(void* controller, int button)
     MusicGameThreadTick(g_link);
     // 8.29 BMX: rider on / off the bike as CJ
     BmxGameThreadTick(g_link);
+    // 8.46: the rail pool's queued writes, applied between reTHAWed's frames
+    RailPoolGameThreadTick();
     // 8.35 test: try to load our map from reTHAWed's front end
     AutoStartGameThreadTick(g_link);
     // 8.35: the front-end replay drives reTHAWed's menus for the player

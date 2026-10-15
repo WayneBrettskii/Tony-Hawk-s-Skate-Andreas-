@@ -6,6 +6,7 @@
 
 #include "../common/link.h"
 #include "../common/paths.h" // 8.38: where the map tool's output lives on this PC
+#include "skater.h"          // 8.46: ReadGameState (is our level still loaded?)
 
 #include <cstdio>
 #include <cstdlib>
@@ -15,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
 #include <utility>
 
 namespace mp::thaw {
@@ -332,6 +334,7 @@ struct RealRail { float a[3], b[3]; };
 struct PoolSlot { unsigned long a = 0, b = 0; int rail = -1; bool reserved = false; };
 
 std::vector<RealRail> g_realRails;
+std::vector<char> g_cont; // 8.46: g_cont[i] = 1 when piece i + 1 continues the same GTA rail (they share an end)
 int g_realSkipped = 0;
 bool g_realTried = false, g_realOk = false;
 
@@ -345,6 +348,15 @@ LONG g_poolRailCount = 0;
 float g_lastFill[3] = {};
 bool g_haveLastFill = false;
 int g_onRail = -1; // the placed rail the skater is on (index into g_realRails), or -1
+// 8.46 join test: what grinds do at the joins between the two-point pieces of one long rail
+float g_onT = 0.0f; // how far along g_onRail he was last seen (0..1)
+LONG g_joinsCrossed = 0, g_joinsDropped = 0, g_railEnds = 0, g_leftMid = 0;
+DWORD g_nextJoinReport = 0;
+int g_dropLogs = 0; // DROPPED lines written in this 10 s window (at most 5)
+int g_pendFrom = -1; // left this piece a moment ago: carried on to the next, or dropped? (decided after kJoinGapMs)
+float g_pendT = 0.0f, g_pendPos[3] = {}, g_pendSpeed = 0.0f;
+DWORD g_pendAt = 0;
+constexpr DWORD kJoinGapMs = 150; // a grind may miss a sample or two right at a joint
 
 bool LoadRealRails(void (*log)(const char*, ...))
 {
@@ -376,6 +388,7 @@ bool LoadRealRails(void (*log)(const char*, ...))
     int curRail = -1, rails = 0;
     float prev[3] = {};
     bool havePrev = false;
+    int lastPieceRail = -1; // 8.46: the GTA rail the previous piece came from
     while (fgets(line, sizeof(line), f)) {
         int node = 0, rail = 0, point = 0;
         float x = 0, y = 0, z = 0;
@@ -385,7 +398,10 @@ bool LoadRealRails(void (*log)(const char*, ...))
             RealRail r;
             for (int k = 0; k < 3; ++k) r.a[k] = prev[k];
             r.b[0] = x; r.b[1] = y; r.b[2] = z;
+            if (!g_cont.empty() && lastPieceRail == rail) g_cont.back() = 1; // the previous piece continues here
             g_realRails.push_back(r);
+            g_cont.push_back(0);
+            lastPieceRail = rail;
         }
         prev[0] = x; prev[1] = y; prev[2] = z;
         havePrev = true;
@@ -433,10 +449,99 @@ void WriteRail(unsigned long a, unsigned long b, const float* pa, const float* p
     }
 }
 
+// ---- 8.46: rail writes go through a queue that reTHAWed's game thread applies --------
+// Our thread decides what goes where (the search over every GTA rail piece stays off the
+// game thread) but never writes a record itself any more: it queues the write, and the
+// game thread applies it between frames, after checking that the level is still ours,
+// that it is the same level load, and that both addresses are still rail records.
+constexpr unsigned long kOurLevel = 0x9F014B98ul; // load_MPGTALSE
+constexpr DWORD kGameThreadStaleMs = 2000;        // no drain this long: our thread applies the queue itself
+
+struct PendingWrite {
+    unsigned long a = 0, b = 0;
+    float pa[3] = {}, pb[3] = {};
+    LONG gen = 0;
+};
+SRWLOCK g_qLock = SRWLOCK_INIT;
+std::vector<PendingWrite> g_queue;                // guarded by g_qLock
+std::unordered_map<unsigned long, size_t> g_qAt; // record a -> its place in g_queue (a later write replaces it)
+volatile LONG g_qCount = 0;                       // size of g_queue, for a lock-free "anything to do?"
+volatile LONG g_applied = 0, g_droppedGone = 0, g_droppedBad = 0, g_appliedByUs = 0;
+volatile LONG g_lastDrainTick = 0;                // GetTickCount of the game thread's last drain
+bool g_saidFallback = false;
+
+void QueueRail(unsigned long a, unsigned long b, const float* pa, const float* pb)
+{
+    AcquireSRWLockExclusive(&g_qLock);
+    PendingWrite w;
+    w.a = a;
+    w.b = b;
+    for (int k = 0; k < 3; ++k) { w.pa[k] = pa[k]; w.pb[k] = pb[k]; }
+    w.gen = g_gen;
+    if (g_lastDrainTick == 0) InterlockedExchange(&g_lastDrainTick, static_cast<LONG>(GetTickCount())); // grace
+    auto it = g_qAt.find(a);
+    if (it != g_qAt.end()) {
+        g_queue[it->second] = w;
+    } else {
+        g_qAt[a] = g_queue.size();
+        g_queue.push_back(w);
+    }
+    InterlockedExchange(&g_qCount, static_cast<LONG>(g_queue.size()));
+    ReleaseSRWLockExclusive(&g_qLock);
+}
+
+// Apply every queued write that is still safe. Caller holds g_qLock.
+void ApplyQueueLocked(bool fromGameThread)
+{
+    bool ours = false;
+    if (fromGameThread) {
+        const GameState st = ReadGameState();
+        ours = st.readOk && st.inFrontend == 0 && st.levelId == kOurLevel;
+    } else {
+        ours = true; // fallback: our thread already checked the level this pass
+    }
+    const unsigned long base = static_cast<unsigned long>(g_blockBase);
+    const unsigned long end = base + static_cast<unsigned long>(g_blockCount) * 0x60;
+    const LONG gen = g_gen;
+    for (const PendingWrite& w : g_queue) {
+        if (!ours || !base || w.gen != gen) {
+            InterlockedIncrement(&g_droppedGone);
+            continue;
+        }
+        const bool inBlock = w.a >= base && w.a < end && w.b >= base && w.b < end &&
+                             (w.a - base) % 0x60 == 0 && (w.b - base) % 0x60 == 0;
+        if (!inBlock || !LooksLikeRecord(w.a) || !LooksLikeRecord(w.b)) {
+            InterlockedIncrement(&g_droppedBad);
+            continue;
+        }
+        WriteRail(w.a, w.b, w.pa, w.pb);
+        InterlockedIncrement(fromGameThread ? &g_applied : &g_appliedByUs);
+    }
+    g_queue.clear();
+    g_qAt.clear();
+    InterlockedExchange(&g_qCount, 0);
+}
+
+// Our thread, each pass: if the game thread has gone quiet with writes waiting, apply them.
+void FallbackDrain(void (*log)(const char*, ...))
+{
+    if (g_qCount == 0) return;
+    const DWORD now = GetTickCount();
+    if (now - static_cast<DWORD>(g_lastDrainTick) < kGameThreadStaleMs) return;
+    if (!TryAcquireSRWLockExclusive(&g_qLock)) return;
+    if (!g_saidFallback && log) {
+        g_saidFallback = true;
+        log("rail writes: reTHAWed's game thread has not taken the queued rail writes for %lu ms; writing them from "
+            "our thread (the old way) until it does", static_cast<unsigned long>(kGameThreadStaleMs));
+    }
+    ApplyQueueLocked(false);
+    ReleaseSRWLockExclusive(&g_qLock);
+}
+
 void ParkRail(unsigned long a, unsigned long b, int slot)
 {
     const float p[3] = {kPoolParkX, kPoolParkY, 50.0f * slot};
-    WriteRail(a, b, p, p);
+    QueueRail(a, b, p, p);
 }
 
 void PoolFill(const float* pos, void (*log)(const char*, ...))
@@ -477,7 +582,7 @@ void PoolFill(const float* pos, void (*log)(const char*, ...))
         while (freeAt < slots && (g_slots[freeAt].rail >= 0 || g_slots[freeAt].reserved)) ++freeAt;
         if (freeAt >= slots) break;
         PoolSlot& sl = g_slots[freeAt++];
-        WriteRail(sl.a, sl.b, g_realRails[idx].a, g_realRails[idx].b);
+        QueueRail(sl.a, sl.b, g_realRails[idx].a, g_realRails[idx].b); // 8.46: applied on the game thread
         sl.rail = idx;
         g_held[idx] = g_fillId;
         ++moved;
@@ -651,7 +756,7 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
     if (vel && !g_slots.empty()) {
         const float speed = sqrtf(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
         int on = -1;
-        float best = 1e9f;
+        float best = 1e9f, onT = 0.0f;
         for (size_t s = 0; s < g_slots.size(); ++s) {
             const int ri = g_slots[s].rail;
             if (ri < 0) continue;
@@ -666,17 +771,77 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
             const float side = sqrtf(off[0] * off[0] + off[2] * off[2]);
             if (side < 10.0f && off[1] > -4.0f && off[1] < 12.0f && speed > 50.0f) {
                 const float dist = side + fabsf(off[1]);
-                if (dist < best) { best = dist; on = ri; }
+                if (dist < best) { best = dist; on = ri; onT = t; }
             }
         }
+        // 8.46 join test: does a grind carry from one piece of a long rail to the next?
+        const DWORD nowT = GetTickCount();
+        auto adjacent = [](int a, int b) {
+            return a >= 0 && b >= 0 && ((b == a + 1 && g_cont[a]) || (a == b + 1 && g_cont[b]));
+        };
+        auto placed = [](int i) { return i >= 0 && i < static_cast<int>(g_held.size()) && g_held[i] == g_fillId; };
+        if (g_pendFrom >= 0 && on == g_pendFrom) g_pendFrom = -1; // back on the same piece: nothing happened
+        if (g_pendFrom >= 0 && on >= 0 && adjacent(g_pendFrom, on)) {
+            ++g_joinsCrossed; // a sample or two off the rail right at the joint, then on the next piece
+            g_pendFrom = -1;
+            g_onRail = on;
+        } else if (g_pendFrom >= 0 && (on >= 0 || nowT - g_pendAt > kJoinGapMs)) {
+            const int dir = g_pendT > 0.75f ? 1 : (g_pendT < 0.25f ? -1 : 0);
+            int next = -1;
+            if (dir > 0 && g_cont[g_pendFrom]) next = g_pendFrom + 1;
+            if (dir < 0 && g_pendFrom > 0 && g_cont[g_pendFrom - 1]) next = g_pendFrom - 1;
+            if (next >= 0 && placed(next)) {
+                ++g_joinsDropped;
+                if (g_dropLogs < 5) {
+                    ++g_dropLogs;
+                    log("rail pool: grind DROPPED at a join (piece %d -> %d, %.0f%% along, speed %.0f, at %.0f %.0f %.0f)",
+                        g_pendFrom, next, g_pendT * 100.0f, g_pendSpeed, g_pendPos[0], g_pendPos[1], g_pendPos[2]);
+                }
+            } else if (dir != 0) {
+                ++g_railEnds; // the end of the GTA rail (or its next piece is not placed)
+            } else {
+                ++g_leftMid;  // jumped or bailed off the middle of a piece
+            }
+            g_pendFrom = -1;
+        }
         if (on != g_onRail) {
-            if (on >= 0)
-                log("rail pool: ON a placed rail (%.0f speed, at %.0f %.0f %.0f)", speed, pos[0], pos[1], pos[2]);
-            else
-                log("rail pool: left the placed rail");
+            if (g_onRail >= 0 && on >= 0 && adjacent(g_onRail, on)) {
+                ++g_joinsCrossed;
+            } else {
+                if (on >= 0) {
+                    log("rail pool: ON a placed rail (%.0f speed, at %.0f %.0f %.0f)", speed, pos[0], pos[1], pos[2]);
+                } else {
+                    log("rail pool: left the placed rail");
+                    g_pendFrom = g_onRail;
+                    g_pendT = g_onT;
+                    g_pendAt = nowT;
+                    g_pendSpeed = speed;
+                    for (int k = 0; k < 3; ++k) g_pendPos[k] = pos[k];
+                }
+            }
             g_onRail = on;
         }
+        if (on >= 0) g_onT = onT;
+        if (nowT >= g_nextJoinReport) {
+            if (g_nextJoinReport &&
+                (g_joinsCrossed || g_joinsDropped || g_railEnds || g_leftMid || g_applied || g_appliedByUs ||
+                 g_droppedGone || g_droppedBad))
+                log("rail pool (10 s): joins: %ld carried across, %ld DROPPED, %ld rail ends, %ld left mid-rail | "
+                    "rail writes: %ld on reTHAWed's game thread, %ld by our thread (fallback), %ld dropped (level "
+                    "gone), %ld refused (not a rail record)",
+                    g_joinsCrossed, g_joinsDropped, g_railEnds, g_leftMid, static_cast<long>(g_applied),
+                    static_cast<long>(g_appliedByUs), static_cast<long>(g_droppedGone),
+                    static_cast<long>(g_droppedBad));
+            g_joinsCrossed = g_joinsDropped = g_railEnds = g_leftMid = 0;
+            InterlockedExchange(&g_applied, 0);
+            InterlockedExchange(&g_appliedByUs, 0);
+            InterlockedExchange(&g_droppedGone, 0);
+            InterlockedExchange(&g_droppedBad, 0);
+            g_dropLogs = 0;
+            g_nextJoinReport = nowT + 10000;
+        }
     }
+    FallbackDrain(log); // 8.46: only if reTHAWed's game thread has stopped taking the queued writes
 }
 
 
@@ -702,7 +867,7 @@ void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)
             const int slot = g_carFirst + c * 2 + r;
             if (slot >= static_cast<int>(g_slots.size())) break;
             const float* a = pts + (c * kCarRailPts + r * 2) * 3;
-            WriteRail(g_slots[slot].a, g_slots[slot].b, a, a + 3);
+            QueueRail(g_slots[slot].a, g_slots[slot].b, a, a + 3); // 8.46: applied on the game thread
             ++used;
         }
     }
@@ -721,6 +886,17 @@ void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)
     }
 }
 
+
+// 8.46: reTHAWed's game thread (our controller hook calls this many times a frame): apply
+// the queued rail writes between frames, never waiting for the lock.
+void RailPoolGameThreadTick()
+{
+    InterlockedExchange(&g_lastDrainTick, static_cast<LONG>(GetTickCount())); // the game thread is alive
+    if (g_qCount == 0) return;
+    if (!TryAcquireSRWLockExclusive(&g_qLock)) return; // our thread is queueing: next call
+    ApplyQueueLocked(true);
+    ReleaseSRWLockExclusive(&g_qLock);
+}
 
 void RailScanSecond(bool inOurLevel, void (*log)(const char*, ...))
 {

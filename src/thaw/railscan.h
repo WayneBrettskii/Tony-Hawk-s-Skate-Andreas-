@@ -41,4 +41,10 @@ void RailPoolTick(bool inOurLevel, const float* pos, const float* vel, void (*lo
 // teleporting under him is what blows the grind up).
 void CarRailTick(LinkBlock* link, bool inOurLevel, const float* pos, void (*log)(const char*, ...));
 
+// 8.46: the pool and car rails no longer write reTHAWed's rail records from our thread;
+// they queue the writes, and this applies them on reTHAWed's game thread (call it from
+// the controller hook, like the radio and BMX ticks). Cheap when nothing is queued;
+// never waits. Checks the level and the records before each write.
+void RailPoolGameThreadTick();
+
 } // namespace mp::thaw

@@ -2,6 +2,30 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-15] 8.46 rail pool: writes on reTHAWed's game thread, and the join test
+
+**Changed:** `src/thaw/railscan.cpp`, `railscan.h`, `src/thaw/input.cpp`. The pool fill and the car rails no longer write reTHAWed's rail records from our own thread: they queue each write (newest per rail wins, so the queue never outgrows the pool), and `RailPoolGameThreadTick`, called from the controller hook on reTHAWed's game thread, applies them between frames without ever waiting. Before each write it checks that reTHAWed is still in our level, that it is the same level load, and that both addresses are rail records inside the found block; otherwise the write is dropped and counted. If the game thread takes nothing for 2 s, our thread applies the queue itself (logged once). New join test (log only): each two-point piece knows whether the next one continues the same GTA rail, and the log tells "carried across a join", "grind DROPPED at a join" (with where and how fast), real rail ends and jumps off mid-rail; every 10 s a `rail pool (10 s):` line sums joins and rail writes. The F5 / F4 debug rails still write directly.
+
+**Why:** user 2026-10-15 ("Let's start step 1", research doc). Writes from a second thread could leave a rail half-written while reTHAWed checks grinds, or land after the level was freed; and long rails' joins were never tested (8.32 fix 3). Natas points and wires will use the same pool.
+
+**Tested how:** in the cloud. Compiled for 32-bit Windows (clang + MinGW-w64 headers): no new warnings. The real `railscan.cpp` was also run on Linux against a fake block of 8 rail records in low memory and a made-up rail list (one 3-piece rail, one single piece): 14 / 14 checks pass - nothing written before the game-thread tick; then all 4 rails placed; a grind along the 3-piece rail = 2 joins carried + 1 rail end; falling off at the first join = DROPPED; jumping off mid-piece = left mid-rail; a write from an old level load, to a non-rail record, or while in the menus is dropped and the record untouched; a second write to the same rail replaces the first; the fallback writes after 2 s without the game thread. **Not built with MSVC, not run in game.**
+
+**Next:** the user grinds long kerbs / ledges / walls on the whole-map pool map and sends `logs\thaw.log` (the `rail pool (10 s):` and `DROPPED` lines). If joins drop: real multi-point rails in the pool (re-linking records).
+
+## [2026-10-15] 8.45 Natas test map: one-point rails on real props near the skatepark
+
+**Changed:** `tools/gta_to_thaw_map.py`: new `--natas-test`. While reading GTA's placements it notes every prop of a natas-able model (`NATAS_MODELS`: hydrants, parking meters, bollards, lamp posts, traffic lights, telegraph poles, road signs) with the top centre of its collision box (or a table height when it has none). With `--natas-test` the nearest 12 within 80 m of the skatepark start become **one-point rails** (one RailNode, no Links), listed in `natas_points.csv` with their GTA positions and printed. The shared `_railpool` rail lists are left alone for this map.
+
+**Why:** user 2026-10-15 ("go ahead", research step 1). reTHAWed does Natas on single-point rails (its own menu text and park editor; DESIGN 8.45); the 2026-10-12 tests only ever used two-point rails.
+
+**Tested how:** in the cloud, a made-up map (a flat square + fake hydrant / meter / far lamp post): the two near props became two rail nodes with no links ("0 rail segments" when read back with `tools/thaw_level_dump.py`), at the right THAW positions; the far one was left out; no `_railpool` files written. Los Santos East read back the same way holds 13 one-point rails, so reTHAWed loads them. **Not run on GTA's files or in game.**
+
+**Next:** the user builds the test map, tries a Natas on a listed prop, and reports.
+
+**Follow-up (same day):** the first build (East LS) listed only traffic lights, lamp posts and telegraph poles (6-7 m tall, no hydrants) near the skatepark: nothing to ollie onto (user). Added `--natas-at X Y` (test centre anywhere in the map's `--box`; refused when outside it), `--natas-low` (only props up to 2.5 m tall) and `--natas-post X Y Z` (a hand-placed point, e.g. a hydrant top found with F9); the build now prints how many of each natas model the whole area has. Checked in the cloud with made-up props (a hydrant and a hand-placed post kept, a lamp post and a far meter left out, an outside centre refused).
+
+**Result (user, 2026-10-15): PASSED - "I was able to natas spin on the grove street hydrants".** The Grove Street build (`--natas-low --natas-at 2495 -1670`) found the two hydrants by their collision (`fire_hydrant` at GTA 2505.67 -1657.93 13.49 and 2495.27 -1653.66 13.48) and put a one-point rail on each; CJ Natas-spun on them in GTA. So a one-point RailNode is all reTHAWed needs, and the finder places them right. F9 / `--natas-post` was not needed.
+
 ## [2026-10-15] 8.44 security and privacy audit fixes (F1-F6 + N1-N4)
 
 **Changed:**
