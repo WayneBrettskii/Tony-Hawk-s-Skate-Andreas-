@@ -11,6 +11,7 @@
 #include <wincodec.h>
 
 #include "radio.h"
+#include "../common/paths.h" // 8.44: reTHAWed's folder as the launcher set it
 
 #include <cmath>
 #include <cstdio>
@@ -411,7 +412,9 @@ void LoadIcons(LogFn log)
         if (found >= 0) log("radio: %d of %d GTA station logos found in models\\fronten1.txd", found, kLastGta - kFirstGta + 1);
         else log("radio: could not load models\\fronten1.txd (%d); GTA slots show the names", found);
     }
-    g_thawIcon = LoadIcoRaster(L"" MP_RETHAWED_DIR L"\\ReTHAWed_NotifIcon.ico", log);
+    // 8.44: the player's reTHAWed folder (from the launcher), not only the one this was built with
+    const std::wstring ico = mp::RethawedFolderW(L"" MP_RETHAWED_DIR) + L"\\ReTHAWed_NotifIcon.ico";
+    g_thawIcon = LoadIcoRaster(ico.c_str(), log);
 }
 
 RwRaster* IconOf(int station)

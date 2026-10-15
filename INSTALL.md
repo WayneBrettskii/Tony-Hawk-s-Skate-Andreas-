@@ -68,8 +68,10 @@ included in the download (that data is GTA's, not ours). You make it yourself in
 
 1. Open `SkateAndreas-launcher.exe`.
 2. Click **Build the map...** — it opens its own window and works for a few minutes, then opens a
-   folder for you. *(If it ever says it can't find Python, install Python 3 from python.org with
-   "Add Python to PATH" ticked, then press the button again. You shouldn't need to.)*
+   folder for you. *(It uses only the Python in `tools\python`. If it says that Python is missing or
+   won't run, unzip the mod again. To use a Python you installed yourself instead, open
+   `SkateAndreas.ini` next to the launcher and add `PythonExe=C:\full\path\to\python.exe` under
+   `[Paths]`.)*
 3. It has made an `extracted\` folder next to the launcher. **Copy the map folder inside it**
    (`extracted\thaw_maps\SkateAndreas San Andreas`) into reTHAWed's `data\mod\UserMods\Maps\`.
    *(The launcher can't do this step for you — nothing of ours writes inside your reTHAWed folder.)*
@@ -79,7 +81,7 @@ included in the download (that data is GTA's, not ours). You make it yourself in
 if you move the launcher, move `extracted\` with it.
 
 *(Prefer a command prompt? In the launcher's folder:
-`python tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0 --name "San Andreas (SkateAndreas)" --folder "SkateAndreas San Andreas"`
+`tools\python\python.exe tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0 --name "San Andreas (SkateAndreas)" --folder "SkateAndreas San Andreas"`
 — same result as the button.)*
 
 ---
@@ -89,7 +91,9 @@ if you move the launcher, move `extracted\` with it.
 1. Double-click **`SkateAndreas-launcher.exe`**.
 2. The window shows **five checks**. All green means you're good. A red line names exactly which
    file or folder is missing — usually `SkateAndreas.asi` (step 2) or the map (step 3).
-   An **amber** line is only a warning; Play still works.
+   An **amber** line is only a warning; Play still works. If the `SkateAndreas.asi` line is amber
+   and says GTA's copy is a different version, copy the `SkateAndreas.asi` from this download into
+   GTA's `modloader\SkateAndreas\` again: the two games won't connect until they match.
 3. If it guessed your GTA or reTHAWed folder wrong, click **Browse...** next to it and point at the
    right folder. It remembers your choice (in `SkateAndreas.ini`, beside the launcher).
 4. Optional: tick **Start reTHAWed minimised (only GTA on screen)** — reTHAWed still runs, you just

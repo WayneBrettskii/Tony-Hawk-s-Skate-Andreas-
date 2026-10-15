@@ -1,3 +1,27 @@
+# NOW (2026-10-15): security audit fixes coded (DESIGN 8.44) - build and test next
+
+A friend's audit of `d4ca7f6` (PDF) found 6 issues; checking the code found 4 more. All are coded
+(not built, not run on Windows): NaN checks on everything read through the link (N1), the
+launcher's `SkateAndreas.asi` comparison (N2), checked road-file and gta3.img reading (F2, with
+`parser_tests.exe`), the launcher uses only the bundled Python by full path (F4) and quotes paths
+safely (N4), no personal paths (F1: STATUS.md; F1b: release builds carry no PC folder; the radio
+logo now follows the launcher's reTHAWed folder), and `tools\make-release.ps1` / `build-plugin-sdk.ps1`
+rebuilt for clean, checked, fingerprinted releases with Python 3.14.8 (F3, F5, F6, N3).
+**Decisions (user OK'd the recommended ones):** bundled Python only (+ `PythonExe=` by hand), no
+history rewrite, no paid signing, nothing committed without the user. **Next:** build + test (see
+MODLOG 8.44), then the clean release needs a commit (ask first). Feature research (skitch, rails,
+shooting, natas) is in the doc "SkateAndreas research" - not started, waits for the user's go.
+
+# FIX (2026-10-14, afternoon): free skate froze while loading - fix 2b
+
+User: "the launcher isn't turning on skate mode in san andreas". Cause: fix 2 (the radio unmute) sent
+reTHAWed its "focus gained" event while the map was still loading, and the load froze (logs 01:44 and
+01:47). Fix 2b in `src/thaw/autostart.cpp` waits until the map has been up for 8 s with steady frames.
+**Tested 2026-10-14 16:51 (dev build): works** - map loaded, `the load is over` at 20 s, sound on,
+skate mode on with L3+R3. The no-skitch zip (`release\make-noskitch.ps1`) carries it.
+
+---
+
 # HANDOFF (2026-10-14): read this first
 
 **Git:** nothing committed since `2a6d08a`. Uncommitted (all intended): `INSTALL.md`, `MODLOG.md`,
@@ -51,10 +75,10 @@ map is `my-passthrough GTA SA pool`. Do not write into the reTHAWed folder; the 
   table is needed.
 - **Map tool:** `QB` takes raw checksums as names (`_k`) and writes integer items.
 - **rthw.dll 5.0.0.1:** image base `0x6D0C0000`. Disassembly from `dumpbin /DISASM` is in
-  `C:\Users\bart\AppData\Local\Temp\opencode\rthw_disasm.txt`. The addresses only hold for 5.0.0.1.
+  `%LOCALAPPDATA%\Temp\opencode\rthw_disasm.txt`. The addresses only hold for 5.0.0.1.
 - **Rail lists:** every test build overwrites `extracted\thaw_maps\_railpool\rails_in_map.csv` and
   `all_rails.csv`, which the plugin reads for the full map. Back them up first. Backups are in
-  `C:\Users\bart\AppData\Local\Temp\opencode\railcsv_backup`, and they were restored after each test.
+  `%LOCALAPPDATA%\Temp\opencode\railcsv_backup`, and they were restored after each test.
 - **Game files:** none are tracked in the repo (checked). Copies made for the tests are in temp or in the
   gitignored `extracted\`.
 

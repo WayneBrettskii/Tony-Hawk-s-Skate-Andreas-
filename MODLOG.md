@@ -2,6 +2,36 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-15] 8.44 security and privacy audit fixes (F1-F6 + N1-N4)
+
+**Changed:**
+- `src/common/link.h`, `src/gta/main.cpp`, `src/thaw/main.cpp`, `src/thaw/bmx.cpp` (N1): every number read through the link is checked for NaN / infinity. A bad skater position or speed makes the sample unreadable (skate / BMX mode skip it like a torn read); bad pose, body or bike numbers clear only their own flag; a bad car rail, skitch car or place request is ignored. Both logs say how many were dropped (`link: dropped ...` / `link: ignored ...`). Layout unchanged (still v17).
+- `src/launcher/main.cpp` (N2): the `SkateAndreas.asi` check finds every copy GTA could load (Mod Loader folders 3 deep, `scripts`, GTA's own folder) and compares it byte for byte with the one next to the launcher: amber if different or if there are several; the log lists each copy. The launcher still never writes into the GTA folder.
+- `src/launcher/main.cpp` (F4, N4): `FindPython` runs only `tools\python\python.exe`, or a `PythonExe=` full path from `SkateAndreas.ini`, each by full path as the program name (no `python` / `python3` / `py` search), from the mod folder; a probe that hangs is stopped after 10 s. Command-line paths are quoted with `QuoteArg` (a trailing `\`, e.g. `D:\`, no longer swallows the quote).
+- `src/gta/gps.cpp` + new `src/gta/roadfile.h` (F2): road-file sizes are compared in 64-bit before reading; every read is bounds-checked; a damaged `NODES*.DAT` is skipped whole and logged. New `src/tests/parser_tests.cpp` (CMake target `parser_tests`): 15 made-up cases incl. the audit's `n = 0x40000000` file.
+- `src/gta/tags.cpp` (F2b): `gta3.img`'s entry count is checked before the list is reserved; reads use 64-bit offsets.
+- `STATUS.md` (F1): the two user-profile paths are now `%LOCALAPPDATA%\Temp\opencode\...` (history not rewritten, by the user's choice).
+- `src/common/paths.h`, `CMakeLists.txt`, `src/thaw/railscan.cpp`, `src/gta/radio.cpp`, launcher (F1b): `MP_LOG_DIR` may be empty (release builds); then, without the launcher, logs go to `%LOCALAPPDATA%\SkateAndreas\logs` and the rail pool says there is no extracted folder. The launcher now passes reTHAWed's folder to the games (`SKATEANDREAS_RETHAWED_DIR`); the radio wheel's reTHAWed logo is read from there (before, only from the build PC's folder, so players never got it).
+- `tools\make-release.ps1` (F3, F5, F6, N3): refuses uncommitted code unless `-Candidate`; fresh `build-release\` with `GTA_DEPLOY_DIR` and `MP_LOG_DIR` empty and generic game-folder defaults; runs `parser_tests` and `convert_test`; refuses binaries containing a user-profile path; Python **3.14.8** embeddable downloaded into the build folder and its SHA-256 (from python.org's release page) checked before unpacking; `--help` run with it; `BUILD-INFO.txt` + `SHA256SUMS.txt` in the package; `release\SkateAndreas-<commit>.zip` + `.sha256`.
+- `tools\build-plugin-sdk.ps1` (F3): the SDK commit comes from `git rev-parse HEAD` and must match, and tracked files must be unchanged (no added programs or scripts), before `premake5.exe` runs; otherwise it stops.
+- `.gitignore`: `/build-release/` and `/release/` blocked explicitly. `INSTALL.md`, `README.md`: Python and `.asi` notes; how releases are made and checked.
+
+**Why:** user 2026-10-15: "start with the patches we need to make based on the audit" (a friend's audit PDF of `d4ca7f6`; plan in DESIGN 8.44 and the doc "SkateAndreas security fixes plan").
+
+**Tested how:** in the cloud only. `parser_tests` built and run (64-bit Linux): 15 / 15 pass. The link checks run with made-up NaN / infinity values: NaN position refused, infinity in the body clears only the body flag, a NaN car rail gives 0 cars. Every changed C++ file compiled for 32-bit Windows (clang with MinGW-w64 headers + libc++): no new errors or warnings (the only errors are in plugin-sdk's own headers and the same on the unchanged code). Both PowerShell scripts parse (PowerShell 7.4); the release script's git / path / checksum steps run against a test repo. **Not built with MSVC, not run on Windows, not run in game.**
+
+**Still to do / not tested:** a build with MSVC and a run of `parser_tests.exe`, the launcher and the games on Windows; the map built with Python 3.14 must be compared with the 3.11 one; the plugin-sdk's own source file names (inside `Plugin.lib`) still name the development folder in the `.asi` (the release script notes it; only a rebuild of plugin-sdk with path trimming would remove it). The clean release (F6) needs a commit: the user's call.
+
+## [2026-10-14] 8.35 road 3 fix 2b: unmute reTHAWed only after the map has finished loading
+
+**Changed:** `src/thaw/autostart.cpp`: the "focus gained" event (fix 2, which turns reTHAWed's sound back on) is now sent only after we have been in our level for 8 s **and** reTHAWed's window thread has drawn frames steadily (no gap over 150 ms) for 3 s. A line `autostart audio: in our level N s, frames steady N s: the load is over` marks the moment.
+
+**Why:** user 2026-10-14: "the launcher isn't turning on skate mode in san andreas". `logs\thaw.log` (01:47) and `thaw.prev.log` (01:44) both stop the same way: `change_level` runs, the level ID changes, then reTHAWed makes no new frames for the rest of the run (`new reTHAWed frames in the last second: 0`), the skater never moves, and autostart logs nothing more (not even `1 s after`). GTA's L3+R3 then waits for a skater that never comes (`gta.log`: "cancelled while waiting for reTHAWed's skater"). The 23:52 run (fix 1, before fix 2) loaded in about 1.5 s. Fix 2 checked every 0.5 s and pushed the SDL event as soon as the level ID was ours, which is while the map is still loading; that push never returned. It worked in the user's one radio test only because that push landed after the load.
+
+**Tested how:** syntax check (clang, i686 Windows target, stand-in headers). **Not built, not run in game.**
+
+**Still broken / not tested:** the reason SDL_PushEvent hangs during a load is not known (most likely reTHAWed's event handler and the loader wait on each other). The radio now comes on about 8-10 s after the map loads, not at once. The release zip and GitHub copy still have the old fix 2.
+
 ## [2026-10-14] 8.42c vehicle proxies in the map: a copy of a THAW vehicle record, read from the player's own install
 
 **Changed:** `tools/gta_to_thaw_map.py`: new `--proxy-cars N` and `--thaw-dir <reTHAWed folder>`. The tool reads one vehicle record from reTHAWed's own packs at build time (the item chain holding `Class = Vehicle`, which carries its model path, type and flags), and writes N copies as level nodes in a row 15 m east of the start point. The writer takes raw checksums as names (`_k`) and writes integer items. Nothing is copied into the repo; the output goes to `extracted\` (or the `--out` folder).

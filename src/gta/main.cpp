@@ -376,6 +376,12 @@ void SetUpLink()
 void LogThawSkater()
 {
     static LONG lastCount = -1;
+    static LONG lastBad = 0;
+    if (mp::LinkBadNumbers() != lastBad) { // 8.44 N1
+        Log("link: dropped %ld sample(s) from reTHAWed with a broken number (NaN / infinity), %ld in all",
+            mp::LinkBadNumbers() - lastBad, mp::LinkBadNumbers());
+        lastBad = mp::LinkBadNumbers();
+    }
     if (!g_link || g_link->thawPid == 0) {
         lastCount = -1;
         return;

@@ -840,6 +840,15 @@ DWORD WINAPI MainThread(LPVOID)
 
         ++beat;
         Log("heartbeat %lu", beat);
+        {
+            static LONG lastBad = 0; // 8.44 N1
+            const LONG bad = mp::LinkBadNumbers();
+            if (bad != lastBad) {
+                Log("link: ignored %ld value(s) from GTA with a broken number (NaN / infinity), %ld in all",
+                    bad - lastBad, bad);
+                lastBad = bad;
+            }
+        }
         if (canReadSkater) SkaterSecondCheck();
         mp::thaw::FocusKeeperSecond(&Log);
         ReportGtaInput();

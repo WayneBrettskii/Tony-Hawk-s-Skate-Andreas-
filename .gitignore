@@ -49,6 +49,8 @@
 /extracted/
 /extern/
 /build/
+/build-release/
+/release/
 /out/
 /bin/
 /obj/

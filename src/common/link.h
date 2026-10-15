@@ -18,6 +18,7 @@
 #pragma once
 
 #include <windows.h>
+#include <cmath>
 #include <cstdint>
 
 namespace mp {
@@ -217,6 +218,19 @@ struct LinkBlock {
 };
 static_assert(sizeof(LinkBlock) == 1108, "LinkBlock layout changed: bump kLinkVersion");
 
+// 8.44 N1 (audit, 2026-10-15): every number one side reads from the other is checked
+// for NaN / infinity before use. A bad value once spread from reTHAWed into CJ's
+// position and blanked GTA's screen (the moving-rail NaN, 8.41). Each process counts
+// the samples it dropped; the per-second logs print the count when it grows.
+inline volatile LONG g_linkBadNumbers = 0;
+inline LONG LinkBadNumbers() { return g_linkBadNumbers; }
+inline bool AllFinite(const float* p, int n)
+{
+    for (int i = 0; i < n; ++i)
+        if (!std::isfinite(p[i])) return false;
+    return true;
+}
+
 // One skater sample, as copied out of the block.
 struct SkaterShared {
     LONG seq = 0;
@@ -282,7 +296,20 @@ inline bool ReadSkaterShared(const LinkBlock* b, SkaterShared& out, int& retries
         out.frameQpc = (static_cast<long long>(b->thawFrameQpcHi) << 32) |
                        static_cast<long long>(static_cast<unsigned long>(b->thawFrameQpcLo));
         MemoryBarrier();
-        if (b->thawSeq == s1) { out.seq = s1; return true; }
+        if (b->thawSeq == s1) {
+            out.seq = s1;
+            // 8.44 N1: a bad position or speed makes the whole sample unusable (callers
+            // skip it like a torn read); bad pose / body / bike numbers only lose their flag.
+            if (!AllFinite(out.pos, 3) || !AllFinite(out.vel, 3)) {
+                InterlockedIncrement(&g_linkBadNumbers);
+                return false;
+            }
+            if (!AllFinite(out.orient, 9) || !AllFinite(out.board, 12)) out.flags &= ~kPoseValid;
+            if (!AllFinite(out.body, kLinkBodyBones * 3)) out.flags &= ~kBodyValid;
+            if (!AllFinite(out.bike, kLinkBikeFloats)) out.flags &= ~kBikeValid;
+            if (!AllFinite(out.droppedBike, 12)) out.flags &= ~kDroppedBikeValid;
+            return true;
+        }
         ++retries;
     }
     return false;
@@ -357,7 +384,14 @@ inline int ReadCarRails(const LinkBlock* b, float* out, int floats)
         }
         for (int i = 0; i < n; ++i) out[i] = b->gtaCarRail[i];
         MemoryBarrier();
-        if (b->gtaCarSeq == s1) return count;
+        if (b->gtaCarSeq == s1) {
+            // 8.44 N1: a car rail with a bad number must never reach reTHAWed's rail records
+            if (!AllFinite(out, n)) {
+                InterlockedIncrement(&g_linkBadNumbers);
+                return 0;
+            }
+            return count;
+        }
     }
     return 0;
 }

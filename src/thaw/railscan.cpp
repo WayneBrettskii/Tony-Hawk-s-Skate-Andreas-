@@ -29,7 +29,9 @@ namespace {
 // loaded without the launcher - see src/common/paths.h.
 std::string PoolPath(const char* file)
 {
-    return mp::ExtractedFolderA() + "\\thaw_maps\\_railpool\\" + file;
+    const std::string extracted = mp::ExtractedFolderA();
+    if (extracted.empty()) return "(no extracted folder: start the games with the launcher)"; // 8.44 F1b
+    return extracted + "\\thaw_maps\\_railpool\\" + file;
 }
 
 constexpr DWORD kWaitInLevelS = 15;   // after the level has been up this long

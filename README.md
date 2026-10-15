@@ -96,3 +96,18 @@ cmake --build build --config Release
 
 The build copies `SkateAndreas.asi` to `D:\Games\GTA San Andreas\modloader\SkateAndreas\`.
 To remove the mod, delete that folder.
+
+Tests (made-up data only): `build\Release\parser_tests.exe` and `build\Release\convert_test.exe`.
+
+## Making a release
+
+`powershell -ExecutionPolicy Bypass -File tools\make-release.ps1` (Developer PowerShell, from a
+**committed** tree; `-Candidate` makes a marked test package from uncommitted code). It builds from
+scratch in `build-release\` without touching the GTA folder or baking this PC's folders into the
+files, runs the tests, downloads the embeddable Python and checks its SHA-256 against python.org's
+before unpacking it, and puts `BUILD-INFO.txt` (commit, compiler, SDK, Python) and
+`SHA256SUMS.txt` in the package. Output: `release\SkateAndreas-<commit>.zip` plus its `.sha256`.
+
+**Checking a download:** every file's SHA-256 is in `SHA256SUMS.txt`, and `BUILD-INFO.txt` names
+the commit it was built from. In PowerShell: `Get-FileHash -Algorithm SHA256 SkateAndreas.asi`.
+The files are not code-signed.

@@ -493,11 +493,24 @@ int MuteState() // 1 muted, 0 not muted, -1 neither pattern (unknown: leave alon
     }
 }
 
-void AudioWatch(const GameState& st, ULONGLONG now)
+// Fix 2b (2026-10-14): the first version pushed the event as soon as the level ID
+// changed - while reTHAWed was still loading the map. In two of the user's runs
+// (01:44, 01:47) SDL_PushEvent never came back and the load froze for good (reTHAWed
+// made no new frames; GTA's L3+R3 then waited for a skater that never came). The
+// 23:52 run, before fix 2, loaded in about 1.5 s. So now: only once we have been in
+// our level for kUnmuteAfterMs AND reTHAWed's window thread has drawn frames
+// steadily (no gap over kSteadyGapMs) for kSteadyForMs - i.e. the load is over.
+constexpr ULONGLONG kUnmuteAfterMs = 8000;
+constexpr ULONGLONG kSteadyForMs = 3000;
+constexpr ULONGLONG kSteadyGapMs = 150;
+
+void AudioWatch(const GameState& st, ULONGLONG now, ULONGLONG steadyMs)
 {
     static int lastState = -2;
     static ULONGLONG lastPush = 0;
     static int pushes = 0;
+    static ULONGLONG oursSince = 0;
+    static bool saidReady = false;
     const bool ours = st.readOk && st.inFrontend == 0 && st.levelId == kLoadOurLevel;
     const int m = MuteState();
     if (m != lastState) {
@@ -506,7 +519,19 @@ void AudioWatch(const GameState& st, ULONGLONG now)
               ours ? "in our level" : "not in our level");
         lastState = m;
     }
-    if (!ours || m != 1 || now - lastPush < kUnmuteRetryMs || pushes >= 10) return;
+    if (!ours) {
+        oursSince = 0;
+        saidReady = false;
+        return;
+    }
+    if (!oursSince) oursSince = now;
+    if (now - oursSince < kUnmuteAfterMs || steadyMs < kSteadyForMs) return; // still loading (or just loaded)
+    if (!saidReady) {
+        saidReady = true;
+        g_log("autostart audio: in our level %llu s, frames steady %llu s: the load is over",
+              (now - oursSince) / 1000, steadyMs / 1000);
+    }
+    if (m != 1 || now - lastPush < kUnmuteRetryMs || pushes >= 10) return;
     lastPush = now;
     HMODULE sdl = GetModuleHandleA("SDL2.dll");
     auto push = sdl ? reinterpret_cast<PushEventFn>(GetProcAddress(sdl, "SDL_PushEvent")) : nullptr;
@@ -572,10 +597,13 @@ void AutoStartPresentTick(void* device)
         }
     }
     if (g_r3windowThread == me) { // fix 2: keep reTHAWed's sound on in our level (any start, not only road 3)
+        static ULONGLONG lastTick = 0, steadySince = 0;
+        if (!lastTick || now - lastTick > kSteadyGapMs) steadySince = now; // a gap: a load, a hitch
+        lastTick = now;
         static ULONGLONG nextWatch = 0;
         if (now >= nextWatch) {
             nextWatch = now + 500;
-            AudioWatch(ReadGameState(), now);
+            AudioWatch(ReadGameState(), now, now - steadySince);
         }
     }
     if (g_r3phase != 3 && g_r3windowThread == me) {

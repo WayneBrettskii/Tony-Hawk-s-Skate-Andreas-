@@ -1128,6 +1128,26 @@ patterns (another reTHAWed build) are left alone.
 the test is off for good and we look for a per-frame point in its game loop instead); the menu may
 also set things we haven't seen (the selected skater, a "session" flag).
 
+### 8.44 Security and privacy audit fixes (user 2026-10-15: "start with the patches we need to make based on the audit")
+
+**Source:** a friend's audit of commit `d4ca7f6` (PDF, 2026-10-14), checked finding by finding against the code (plan doc "SkateAndreas security fixes plan"). Decisions taken with the user's go-ahead on the recommended choices: the launcher uses only the bundled Python (or one the player names by hand in `SkateAndreas.ini`); STATUS.md is fixed but git history is not rewritten; no paid code signing (a SHA-256 list instead); nothing is committed without the user's word.
+
+**Fixes, in this order (each small, each logged in MODLOG):**
+
+| # | What | Where | How it is checked |
+|---|---|---|---|
+| N1 | Numbers from reTHAWed through the link are checked for NaN / infinity before GTA uses them: a bad position or speed makes the sample unreadable (skate / BMX mode skip it like a torn read); bad pose, body or bike numbers only clear their own "valid" flag. The THAW side does the same for GTA's car rails, skitch car and place request. A counter shows how many were dropped. | `src/common/link.h`, `src/gta/main.cpp`, `src/thaw/bmx.cpp` | Compile check; a desk test of the check with NaN / infinity values |
+| N2 | The launcher looks for `SkateAndreas.asi` in GTA's Mod Loader folders (and GTA's own folder and `scripts`) and compares it byte for byte with the one next to the launcher. Missing: a red setup line. Different: an amber line ("GTA has a different SkateAndreas.asi: copy the one next to this launcher into ..."), Play still allowed. No copy next to the launcher (a development build): the check only says where it found one. The launcher never writes into the GTA folder. | `src/launcher/main.cpp` | User: Desktop zip with the dev `.asi` in GTA (yesterday's case) shows amber |
+| F2 | Road files (`NODES*.DAT`): sizes computed and compared in 64-bit before anything is read; the read helper refuses reads past the end; link indices checked against the link count; a bad file is skipped whole and logged. | `src/gta/gps.cpp` | Desk test of the checks with made-up headers (the audit's `n = 0x40000000` case, short files, bad links) |
+| F2b | `gta3.img`: the entry count is checked (1..100,000) before the list is made. | `src/gta/tags.cpp` | Read |
+| F4 | `FindPython`: only the bundled `tools\python\python.exe` by full path (as the program name, never searched), or a `PythonExe=` full path the player writes in `SkateAndreas.ini`. No `python` / `python3` / `py` search. Clear message when neither works. | `src/launcher/main.cpp` | User: Build the map still works; renaming the bundled python shows the message |
+| N4 | A game folder ending in `\` (a drive root) no longer breaks the map tool's quoted command line. | `src/launcher/main.cpp` | Read |
+| F1 | STATUS.md: the two user-profile paths become `%LOCALAPPDATA%\Temp\opencode\...`. History is not rewritten. | `STATUS.md` | grep |
+| F1b | Release builds carry no developer folder: `MP_LOG_DIR` may be empty; then a plugin started without the launcher logs to `%LOCALAPPDATA%\SkateAndreas\logs` and has no rail list (rail pool off, logged). Development builds keep today's behaviour. | `src/common/paths.h`, `CMakeLists.txt` | Release binaries' strings checked for `D:/Mods` |
+| N3 / F3 / F5 / F6 | `tools\make-release.ps1`: refuses to package uncommitted code (unless `-Candidate`, which marks the package "not a clean release"); configures a fresh `build-release` folder with `GTA_DEPLOY_DIR` and `MP_LOG_DIR` empty and builds it; downloads Python **3.14.8** embeddable (amd64) and checks its SHA-256 (`a93abe45...0a310`, from python.org's release page) before unpacking, also for a cached copy; writes `SHA256SUMS.txt` and `BUILD-INFO.txt` (commit, clean or not, compiler, SDK commit, Python version) into the package; zip named with the commit. `tools\build-plugin-sdk.ps1`: asks git for the SDK's real commit, stops on a mismatch or on changed / extra files in its tree (generated build output ignored). | `tools/*.ps1` | User runs both; the map tool's `--help` and one map build with Python 3.14 |
+
+**Not changed (and why):** the reTHAWed size check stays a warning (user, 2026-10-13); every code patch already checks its bytes first. The shared memory keeps its fixed name (per-launch names would break starting the games by hand); the numbers in it are now checked instead (N1).
+
 ### 8.42 Skitch the way reTHAWed does it (user 2026-10-14: "make it work exactly like it does in rethawed") - step 1 of 2
 
 **The problems we had with skitching, in order** (MODLOG 8.33 and the tests):

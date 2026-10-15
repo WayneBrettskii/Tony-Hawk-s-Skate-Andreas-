@@ -16,8 +16,13 @@
 #include <string>
 
 #ifndef MP_LOG_DIR
-#error "MP_LOG_DIR must be set by CMakeLists.txt"
+#error "MP_LOG_DIR must be set by CMakeLists.txt (it may be empty)"
 #endif
+
+// 8.44 F1b (audit, 2026-10-15): a release build is made with MP_LOG_DIR empty, so it carries
+// no folder of the PC it was built on. Without the launcher such a build logs to
+// %LOCALAPPDATA%\SkateAndreas\logs and has no "extracted" folder (the rail pool then
+// stays off and says so). Development builds keep the project folder as before.
 
 namespace mp {
 
@@ -38,7 +43,14 @@ inline std::wstring LogFolderW()
 {
     const std::wstring home = HomeFolderW();
     if (!home.empty()) return home + L"\\logs";
-    return std::wstring(L"" MP_LOG_DIR);
+    const std::wstring built = L"" MP_LOG_DIR;
+    if (!built.empty()) return built;
+    wchar_t local[MAX_PATH] = {}; // 8.44 F1b: release build started without the launcher
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return L"";
+    const std::wstring dir = std::wstring(local) + L"\\SkateAndreas";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir + L"\\logs";
 }
 
 // The "extracted" folder the map tool writes (it holds the rail pool's csv files):
@@ -51,7 +63,25 @@ inline std::string ExtractedFolderA()
         if (WideCharToMultiByte(CP_ACP, 0, home.c_str(), -1, buf, MAX_PATH, nullptr, nullptr) > 0)
             return std::string(buf) + "\\extracted";
     }
-    return std::string(MP_LOG_DIR) + "\\..\\extracted";
+    const std::string built = MP_LOG_DIR;
+    if (built.empty()) return ""; // 8.44 F1b: release build without the launcher: no rail list
+    return built + "\\..\\extracted";
+}
+
+// 8.44: reTHAWed's folder as the player set it in the launcher (SKATEANDREAS_RETHAWED_DIR,
+// set before the games start), else the one this build was configured with. The GTA
+// plugin reads reTHAWed's logo from it for the radio wheel; before this it only ever
+// looked in the build PC's folder, so a player's copy never found the logo.
+inline std::wstring RethawedFolderW(const wchar_t* builtIn)
+{
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = GetEnvironmentVariableW(L"SKATEANDREAS_RETHAWED_DIR", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        std::wstring s = buf;
+        while (!s.empty() && s.back() == L'\\') s.pop_back();
+        if (!s.empty()) return s;
+    }
+    return builtIn ? builtIn : L"";
 }
 
 } // namespace mp

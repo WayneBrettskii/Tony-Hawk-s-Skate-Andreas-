@@ -45,6 +45,8 @@ set_target_properties(gta_plugin PROPERTIES
 
 # Where the plugin writes its log: the project's logs folder (gitignored),
 # not the Mod Loader folder (Mod Loader rescans its folders on every file change).
+# 8.44 F1b: tools\make-release.ps1 sets it EMPTY, so release binaries carry no folder of the
+# PC that built them (see src/common/paths.h for where they log then).
 set(MP_LOG_DIR "${CMAKE_SOURCE_DIR}/logs" CACHE PATH "Folder the plugins write their logs to")
 target_compile_definitions(gta_plugin PRIVATE "MP_LOG_DIR=\"${MP_LOG_DIR}\"")
 
@@ -94,3 +96,10 @@ add_executable(convert_test src/common/convert_test.cpp)
 set_target_properties(convert_test PROPERTIES
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_compile_features(convert_test PRIVATE cxx_std_17)
+
+# --- 8.44 F2: tests for the checked road-file reader (src/gta/roadfile.h), made-up files only ---
+# Run: build\Release\parser_tests.exe  (PASS/FAIL lines, then ALL PASSED; exit code 0 = passed)
+add_executable(parser_tests src/tests/parser_tests.cpp)
+set_target_properties(parser_tests PROPERTIES
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_compile_features(parser_tests PRIVATE cxx_std_17)

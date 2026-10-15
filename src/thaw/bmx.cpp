@@ -303,11 +303,16 @@ void SkitchStep(LinkBlock* link, unsigned long skater, bool upEdge, bool downEdg
 {
     const float* p = reinterpret_cast<const float*>(skater + 0x68);
     float cp[3] = {}, cf[3] = {}, cv[3] = {};
-    const bool carThere = link->gtaSkitchValid == 1;
+    bool carThere = link->gtaSkitchValid == 1;
     for (int k = 0; k < 3; ++k) {
         cp[k] = link->gtaSkitchPos[k];
         cf[k] = link->gtaSkitchFwd[k];
         cv[k] = link->gtaSkitchVel[k];
+    }
+    // 8.44 N1: a car with a bad number counts as no car (a held one is let go after the grace time)
+    if (carThere && !(AllFinite(cp, 3) && AllFinite(cf, 3) && AllFinite(cv, 3))) {
+        InterlockedIncrement(&g_linkBadNumbers);
+        carThere = false;
     }
     if (!g_skitchHeld) {
         if (!upEdge) return;
@@ -462,7 +467,10 @@ void BmxGameThreadTick(LinkBlock* link)
             pos[i] = link->gtaPlacePos[i];
             at[i] = link->gtaPlaceAt[i];
         }
-        if (PlaceRider(skater, pos, at)) {
+        if (!AllFinite(pos, 3) || !AllFinite(at, 3)) { // 8.44 N1: never place him at a bad number
+            InterlockedIncrement(&g_linkBadNumbers);
+            InterlockedIncrement(&g_placeErrors);
+        } else if (PlaceRider(skater, pos, at)) {
             InterlockedIncrement(&g_placed);
             for (int i = 0; i < 3; ++i) { g_placePos[i] = pos[i]; g_placeAt[i] = at[i]; }
         } else {

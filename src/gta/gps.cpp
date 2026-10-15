@@ -28,6 +28,7 @@
 #include <windows.h>
 
 #include "gps.h"
+#include "roadfile.h" // 8.44 F2: checked reads of the road files
 
 #include <cmath>
 #include <cstring>
@@ -90,10 +91,12 @@ bool ReadWholeFile(const wchar_t* path, std::vector<unsigned char>& out)
     return ok;
 }
 
-template <class T> T Get(const std::vector<unsigned char>& b, size_t at)
+// 8.44 F2: every read is checked (roadfile.h); a read past the end gives 0 and is counted.
+unsigned g_badReads = 0;
+template <class T> T Get(const std::vector<unsigned char>& b, uint64_t at)
 {
-    T v;
-    memcpy(&v, b.data() + at, sizeof(T));
+    T v{};
+    if (!ReadAt(b, at, v)) ++g_badReads;
     return v;
 }
 
@@ -116,35 +119,37 @@ void LoadRoads(LogFn log)
 
     struct Area {
         std::vector<unsigned char> b;
-        unsigned n = 0, nv = 0, nn = 0, nl = 0;
+        RoadHeader h;
         bool ok = false;
     };
     static Area areas[64];
     int base[64] = {};
-    int total = 0, files = 0;
+    int total = 0, files = 0, refused = 0;
+    g_badReads = 0;
     for (int a = 0; a < 64; ++a) {
         wchar_t path[MAX_PATH];
         swprintf_s(path, L"%lsdata\\Paths\\NODES%d.DAT", dir, a);
         Area& ar = areas[a];
-        if (!ReadWholeFile(path, ar.b) || ar.b.size() < 20) continue;
-        ar.n = Get<unsigned>(ar.b, 0);
-        ar.nv = Get<unsigned>(ar.b, 4);
-        ar.nn = Get<unsigned>(ar.b, 12);
-        ar.nl = Get<unsigned>(ar.b, 16);
-        const size_t need = 20 + 28ull * ar.n + 14ull * ar.nn + 4ull * ar.nl;
-        if (ar.nv > ar.n || ar.b.size() < need) continue;
+        if (!ReadWholeFile(path, ar.b)) continue;
+        // 8.44 F2: sizes compared in 64-bit before anything else is read; a damaged file is skipped whole
+        if (!ParseRoadHeader(ar.b, ar.h)) {
+            ++refused;
+            log("gps: NODES%d.DAT is damaged (counts don't fit its %u bytes); skipped", a,
+                static_cast<unsigned>(ar.b.size()));
+            std::vector<unsigned char>().swap(ar.b);
+            continue;
+        }
         ar.ok = true;
         base[a] = total;
-        total += static_cast<int>(ar.nv);
+        total += static_cast<int>(ar.h.nv);
         ++files;
     }
     g_nodes.reserve(total);
     for (int a = 0; a < 64; ++a) {
         const Area& ar = areas[a];
         if (!ar.ok) continue;
-        const size_t linkAt = 20 + 28ull * ar.n + 14ull * ar.nn;
-        for (unsigned i = 0; i < ar.nv; ++i) {
-            const size_t at = 20 + 28ull * i;
+        for (uint32_t i = 0; i < ar.h.nv; ++i) {
+            const uint64_t at = RoadNodeAt(i);
             Node nd;
             nd.x = Get<short>(ar.b, at + 8) / 8.0f;
             nd.y = Get<short>(ar.b, at + 10) / 8.0f;
@@ -155,11 +160,12 @@ void LoadRoads(LogFn log)
             const unsigned flags = Get<unsigned>(ar.b, at + 24);
             if (!(flags & 0x80)) { // not a boat road
                 for (unsigned k = 0; k < (flags & 15u); ++k) {
-                    if (first + k >= ar.nl) break;
-                    const unsigned la = Get<unsigned short>(ar.b, linkAt + 4ull * (first + k));
-                    const unsigned ln = Get<unsigned short>(ar.b, linkAt + 4ull * (first + k) + 2);
-                    if (la >= 64 || !areas[la].ok || ln >= areas[la].nv) continue;
-                    if (Get<unsigned>(areas[la].b, 20 + 28ull * ln + 24) & 0x80) continue;
+                    if (first + k >= ar.h.nl) break;
+                    const uint64_t linkAt = RoadLinkAt(ar.h, first + k);
+                    const unsigned la = Get<unsigned short>(ar.b, linkAt);
+                    const unsigned ln = Get<unsigned short>(ar.b, linkAt + 2);
+                    if (la >= 64 || !areas[la].ok || ln >= areas[la].h.nv) continue;
+                    if (Get<unsigned>(areas[la].b, RoadNodeAt(ln) + 24) & 0x80) continue;
                     g_links.push_back(base[la] + static_cast<int>(ln));
                     ++nd.count;
                 }
@@ -174,6 +180,8 @@ void LoadRoads(LogFn log)
     log("gps: read GTA's roads: %d of 64 NODES files, %d car road points, %d links (%.0f ms)%s", files,
         static_cast<int>(g_nodes.size()), static_cast<int>(g_links.size()),
         static_cast<double>(GetTickCount64() - t0), g_loaded ? "" : "; GPS off");
+    if (refused || g_badReads)
+        log("gps: %d damaged NODES file(s) skipped, %u read(s) past the end refused", refused, g_badReads);
 }
 
 // The road point nearest (x, y, z): heights count double, so a bridge and the

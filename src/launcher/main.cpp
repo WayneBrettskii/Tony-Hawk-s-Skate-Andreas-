@@ -411,6 +411,46 @@ std::wstring GtaPluginPath()
     return g_gtaDir + L"\\modloader\\SkateAndreas\\SkateAndreas.asi";
 }
 
+// 8.44 N2: every copy of a file named `name` (any case) under `dir`, up to `depth` folders down.
+void FindFilesNamed(const std::wstring& dir, const wchar_t* name, int depth, std::vector<std::wstring>& out)
+{
+    WIN32_FIND_DATAW fd = {};
+    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue; // never follow links out of the folder
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (depth > 0 && wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0)
+                FindFilesNamed(dir + L"\\" + fd.cFileName, name, depth - 1, out);
+        } else if (_wcsicmp(fd.cFileName, name) == 0) {
+            out.push_back(dir + L"\\" + fd.cFileName);
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+// 8.44 N2: true when both files exist and hold the same bytes.
+bool SameFileBytes(const std::wstring& a, const std::wstring& b)
+{
+    auto load = [](const std::wstring& p, std::vector<char>& data) {
+        HANDLE f = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
+                               nullptr);
+        if (f == INVALID_HANDLE_VALUE) return false;
+        LARGE_INTEGER size = {};
+        bool ok = GetFileSizeEx(f, &size) && size.QuadPart >= 0 && size.QuadPart < 64ll * 1024 * 1024;
+        if (ok) {
+            data.resize(static_cast<size_t>(size.QuadPart));
+            DWORD got = 0;
+            ok = data.empty() || (ReadFile(f, data.data(), static_cast<DWORD>(data.size()), &got, nullptr) &&
+                                  got == data.size());
+        }
+        CloseHandle(f);
+        return ok;
+    };
+    std::vector<char> x, y;
+    return load(a, x) && load(b, y) && x == y;
+}
+
 std::vector<SetupCheck> RunChecks()
 {
     std::vector<SetupCheck> out;
@@ -458,13 +498,44 @@ std::vector<SetupCheck> RunChecks()
         out.push_back(c);
     }
     // 3. our plugin in GTA's Mod Loader folder.
+    // 8.44 N2 (2026-10-15): GTA can load a SkateAndreas.asi from a different build than the
+    // plugin this launcher puts into reTHAWed (user 2026-10-14: the Desktop copy met the
+    // development .asi, the two never connected and nothing said why). So every copy GTA
+    // could load is found and compared byte for byte with the one next to this launcher.
+    // The launcher never writes into the GTA folder; it only says what to copy where.
     {
         SetupCheck c{L"GTA plugin (SkateAndreas.asi)", false, false, L""};
         const std::wstring asi = GtaPluginPath();
-        if (GetFileAttributesW(asi.c_str()) == INVALID_FILE_ATTRIBUTES)
+        std::vector<std::wstring> found;
+        FindFilesNamed(g_gtaDir + L"\\modloader", L"SkateAndreas.asi", 3, found);
+        FindFilesNamed(g_gtaDir + L"\\scripts", L"SkateAndreas.asi", 0, found);
+        FindFilesNamed(g_gtaDir, L"SkateAndreas.asi", 0, found);
+        const std::wstring mine = LauncherDir() + L"SkateAndreas.asi";
+        const bool haveMine = GetFileAttributesW(mine.c_str()) != INVALID_FILE_ATTRIBUTES;
+        if (found.empty()) {
             c.note = L"not found: " + asi;
-        else
+        } else if (found.size() > 1) {
             c.ok = true;
+            c.warn = true;
+            c.note = L"GTA has " + std::to_wstring(found.size()) + L" copies - keep only " + asi;
+        } else if (haveMine && !SameFileBytes(found[0], mine)) {
+            c.ok = true;
+            c.warn = true;
+            c.note = L"GTA's copy is a different version - copy the SkateAndreas.asi next to this launcher into " +
+                     g_gtaDir + L"\\modloader\\SkateAndreas";
+        } else {
+            c.ok = true;
+        }
+        static std::wstring lastTold;
+        const std::wstring told = c.note + (found.empty() ? L"" : found[0]);
+        if (told != lastTold) {
+            lastTold = told;
+            for (const std::wstring& f : found)
+                Log("check: SkateAndreas.asi found at %ls%s", f.c_str(),
+                    !haveMine ? " (no copy next to the launcher to compare with)"
+                    : SameFileBytes(f, mine) ? " - the same as the launcher's"
+                                             : " - DIFFERENT from the launcher's");
+        }
         out.push_back(c);
     }
     // 4. GTA San Andreas.
@@ -549,28 +620,65 @@ void RefreshChecks()
     }
 }
 
-// 8.40: a Python 3 to run the map tool with. The release ships an embeddable one under
-// tools\python, so a player needs nothing installed; if that cannot run (a 32-bit Windows, say)
-// a Python from PATH is used instead. Returns the command to run, or "" when there is none.
+// 8.44 N4: one command-line argument in quotes, the way Windows programs read it back:
+// backslashes just before the closing quote are doubled, so a folder like "D:\" stays itself
+// instead of swallowing the quote. (Windows paths cannot contain a quote themselves.)
+std::wstring QuoteArg(const std::wstring& s)
+{
+    std::wstring out = L"\"" + s;
+    size_t slashes = 0;
+    for (size_t i = s.size(); i > 0 && s[i - 1] == L'\\'; --i) ++slashes;
+    out.append(slashes, L'\\');
+    return out + L"\"";
+}
+
+// 8.44 F4: is this a full path ("C:\..." or "\\server\...") to an existing file?
+bool IsFullFilePath(const std::wstring& p)
+{
+    const bool drive = p.size() > 3 && std::iswalpha(p[0]) && p[1] == L':' && p[2] == L'\\';
+    const bool unc = p.size() > 2 && p[0] == L'\\' && p[1] == L'\\';
+    if (!drive && !unc) return false;
+    const DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// 8.40 / 8.44 F4: the Python 3 that runs the map tool, as a full path to python.exe, or "".
+// The release ships an embeddable one under tools\python, so a player needs nothing installed.
+// Since the audit (F4) nothing is searched for: a bare "python" let Windows run any
+// program of that name it found first, even one in the launcher's own folder. The only
+// other choice is a full path the player writes into SkateAndreas.ini ([Paths] PythonExe=).
+// Each candidate is started by its full path (never searched) with --version, from the
+// mod's folder; one that hangs is stopped after 10 s.
 std::wstring FindPython()
 {
-    std::vector<std::wstring> commands;
-    commands.push_back(L"\"" + g_modHome + L"\\tools\\python\\python.exe\"");
-    commands.push_back(L"python");
-    commands.push_back(L"python3");
-    commands.push_back(L"py -3"); // the Windows Python launcher, when only that is installed
+    std::vector<std::wstring> candidates;
+    candidates.push_back(g_modHome + L"\\tools\\python\\python.exe");
+    wchar_t buf[MAX_PATH] = {};
+    if (GetPrivateProfileStringW(L"Paths", L"PythonExe", L"", buf, MAX_PATH, SettingsPath().c_str()) > 0 && buf[0])
+        candidates.push_back(buf);
 
-    for (const std::wstring& exe : commands) {
-        std::wstring cmd = exe + L" --version";
+    for (const std::wstring& exe : candidates) {
+        if (!IsFullFilePath(exe)) {
+            Log("build map: python candidate %ls is not a full path to a file - skipped", exe.c_str());
+            continue;
+        }
+        std::wstring cmd = QuoteArg(exe) + L" --version";
         STARTUPINFOW si = {};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};
-        if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
-                            &pi))
+        if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                            g_modHome.c_str(), &si, &pi)) {
+            Log("build map: python candidate %ls would not start (Windows error %lu)", exe.c_str(), GetLastError());
             continue;
-        WaitForSingleObject(pi.hProcess, 10000);
+        }
         DWORD code = 1;
-        GetExitCodeProcess(pi.hProcess, &code);
+        if (WaitForSingleObject(pi.hProcess, 10000) == WAIT_TIMEOUT) {
+            TerminateProcess(pi.hProcess, 1); // only the probe we started
+            WaitForSingleObject(pi.hProcess, 2000);
+            Log("build map: python candidate %ls did not answer in 10 s - skipped", exe.c_str());
+        } else {
+            GetExitCodeProcess(pi.hProcess, &code);
+        }
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         if (code == 0) {
@@ -588,9 +696,9 @@ void RunMapBuild()
 {
     const std::wstring python = FindPython();
     if (python.empty()) {
-        Log("build map: no python found (no tools\\python, and none on PATH)");
-        SetStatus(L"No Python 3 found. The release normally carries its own in tools\\python - if it "
-                  L"is missing, install Python 3 from python.org (tick \"Add Python to PATH\").");
+        Log("build map: no usable python (tools\\python\\python.exe, or PythonExe= in SkateAndreas.ini)");
+        SetStatus(L"The map builder's Python (tools\\python) is missing or won't run. Unzip the mod again, or "
+                  L"put PythonExe=<full path to python.exe> under [Paths] in SkateAndreas.ini.");
         return;
     }
     const std::wstring tool = g_modHome + L"\\tools\\gta_to_thaw_map.py";
@@ -601,8 +709,8 @@ void RunMapBuild()
     }
 
     const std::wstring cmd =
-        python + L" \"" + tool + L"\" \"" + g_gtaDir +
-        L"\" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0"
+        QuoteArg(python) + L" " + QuoteArg(tool) + L" " + QuoteArg(g_gtaDir) +
+        L" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0"
         L" --name \"San Andreas (SkateAndreas)\" --folder \"SkateAndreas San Andreas\"";
     Log("build map: %ls", cmd.c_str());
     SetStatus(L"Building the map - watch the new window. This takes a few minutes.");
@@ -611,8 +719,8 @@ void RunMapBuild()
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
     std::wstring mutableCmd = cmd;
-    if (!CreateProcessW(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr,
-                        g_modHome.c_str(), &si, &pi)) {
+    if (!CreateProcessW(python.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr,
+                        g_modHome.c_str(), &si, &pi)) { // 8.44 F4: the program by its full path, never searched
         Log("build map: could not start it (Windows error %lu)", GetLastError());
         SetStatus(L"Could not start the map tool. See the logs folder.");
         return;
@@ -648,6 +756,8 @@ void RunSequence()
     const std::wstring exePath = gameDir + L"\\reTHAWed.exe";
     const std::wstring dllPath = PluginPath();
 
+    // 8.44: tell both games where reTHAWed is (the GTA plugin reads its radio logo from there)
+    SetEnvironmentVariableW(L"SKATEANDREAS_RETHAWED_DIR", g_rethawedDir.c_str());
     SetStatus(L"Setting up the controller...");
     if (SetEnvironmentVariableW(kSdlIgnoreVar, kSdlIgnoreValue))
         Log("controller fix: %ls=%ls (reTHAWed ignores Xbox 360 controllers, incl. DualSenseX's virtual one)",

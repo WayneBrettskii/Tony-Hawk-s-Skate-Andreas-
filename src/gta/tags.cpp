@@ -113,9 +113,12 @@ bool CallsTo(uintptr_t site, uintptr_t target)
 // GTA keeps no readable vertices once a model is loaded (test 23:45), so we read
 // tag_01.dff from the archive once and look at its vertices / normals.
 
-bool ReadAt(HANDLE f, DWORD offset, void* buf, DWORD size)
+bool ReadAt(HANDLE f, unsigned long long offset, void* buf, DWORD size)
 {
-    if (SetFilePointer(f, static_cast<LONG>(offset), nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) return false;
+    // 8.44: 64-bit offset (the old one went negative past 2 GB)
+    LARGE_INTEGER at;
+    at.QuadPart = static_cast<LONGLONG>(offset);
+    if (!SetFilePointerEx(f, at, nullptr, FILE_BEGIN)) return false;
     DWORD got = 0;
     return ReadFile(f, buf, size, &got, nullptr) && got == size;
 }
@@ -137,9 +140,17 @@ std::vector<unsigned char> ReadTagDff(const char*& why)
         CloseHandle(f);
         return out;
     }
-    const DWORD count = *reinterpret_cast<DWORD*>(head + 4);
+    DWORD count = 0;
+    memcpy(&count, head + 4, sizeof(count));
+    // 8.44 F2b (audit): check the entry count BEFORE making the list - a damaged archive
+    // used to make us reserve up to 128 GB first and only then refuse it.
+    if (count == 0 || count > 100000) {
+        why = "gta3.img's list has an impossible size";
+        CloseHandle(f);
+        return out;
+    }
     std::vector<unsigned char> dir(static_cast<size_t>(count) * 32);
-    if (count == 0 || count > 100000 || !ReadAt(f, 8, dir.data(), static_cast<DWORD>(dir.size()))) {
+    if (!ReadAt(f, 8, dir.data(), static_cast<DWORD>(dir.size()))) {
         why = "can't read gta3.img's list";
         CloseHandle(f);
         return out;
@@ -154,7 +165,8 @@ std::vector<unsigned char> ReadTagDff(const char*& why)
         if (!sectors) sectors = *reinterpret_cast<const unsigned short*>(e + 6);
         if (!sectors || sectors > 512) break;
         out.resize(static_cast<size_t>(sectors) * 2048);
-        if (!ReadAt(f, sector * 2048, out.data(), static_cast<DWORD>(out.size()))) out.clear();
+        if (!ReadAt(f, static_cast<unsigned long long>(sector) * 2048ull, out.data(), static_cast<DWORD>(out.size())))
+            out.clear();
         break;
     }
     CloseHandle(f);
