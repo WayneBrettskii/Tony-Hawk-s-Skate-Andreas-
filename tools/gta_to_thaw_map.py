@@ -551,6 +551,7 @@ POOL_RAIL_LEN = 40.0   # units (~1 m): every parked rail is one short 2-node pie
 # free slot of exactly its node count, or into two-node slots when none is free.
 POOL_LONG_DEFAULT = {3: 282, 4: 82, 5: 98, 6: 58, 7: 34, 8: 180, 9: 30, 10: 38, 11: 22, 12: 18,
                      13: 30, 14: 18, 15: 12, 16: 104}
+PROXY_TURNS = (0.0, math.pi / 2, math.pi / 4)  # 8.51: extra yaw (radians) for proxy cars 0, 1, 2
 POOL_LONG_WIDTH = 10000.0  # units: a row of parked long rails is this wide
 
 
@@ -930,6 +931,32 @@ def read_vehicle_template(thaw_dir):
     raise SystemExit("no vehicle record found under %s/data" % thaw_dir)
 
 
+def vehicle_model_assets(thaw_dir, vehicle):
+    """8.51: the pak entries a vehicle needs, copied from reTHAWed's loose model files. The
+    2026-10-14 and 2026-10-15 loads crashed in CRailManagerComponent::InitFromStructure for
+    the vehicle's model: reTHAWed's own levels carry the model's .qb (as .mqb), .mdl and .rnb
+    inside the level pak (z_el.pak: models\\veh\\veh_el_sign\\...), ours did not."""
+    model = next((i[2] for i in vehicle if i[0] == "string" and i[1] == qbkey("model")), None)
+    if not model or not model.lower().endswith(".mdl"):
+        raise SystemExit("the vehicle record has no .mdl model path")
+    base = "models\\" + model[:-4]
+    entries = []
+    # the full set and order of z_el.pak for veh_el_sign: .stex, .mqb, .mdl (its parent is the
+    # .tex: try 2 left the .tex out and crashed reading the pak), .rnb, .mcol
+    for t, ext, named, parent in ((T_STEX, ".tex", False, None), (T_MQB, ".qb", True, None),
+                                  (T_MDL, ".mdl", False, base + ".tex"), (T_RNB, ".rnb", False, None),
+                                  (T_MCOL, ".col", False, None)):
+        path = os.path.join(thaw_dir, "data", *(base + ext + ".wpc").split("\\"))
+        path = gad.find_case_insensitive(thaw_dir, os.path.relpath(path, thaw_dir)) or path
+        if not os.path.isfile(path):
+            raise SystemExit("vehicle model file missing: %s" % path)
+        with open(path, "rb") as f:
+            data = f.read()
+        entries.append((t, base + ext, base + ext + ".wpc" if named else None, data, parent))
+    print("vehicle:      model files put in the map: %s (.tex, .qb, .mdl, .rnb, .col)" % base)
+    return entries
+
+
 def _keep_vehicle_item(item):
     """8.42c: which items of the copied record go into the proxies. The record also carries a
     rail manager (unnamed checksums and integers) that points at rails of its own level; in our
@@ -1103,7 +1130,19 @@ def write_level_qb(prefix, objs, spawn_thaw, rails=(), geometry_nodes=True, prox
     for i, pos in enumerate(proxies):
         pname = qbkey("%s_Vehicle%d" % (prefix, i))
         proxy_names.append(pname)
-        nodes.append([("vector", "Pos", pos), ("checksum", "Name", pname)] + list(vehicle))
+        # 8.51: the cars stand at different turns (car 0 as copied, car 1 a quarter turn more,
+        # car 2 an eighth), so the THAW plugin can see which numbers in memory hold a car's turn
+        items = list(vehicle)
+        extra = PROXY_TURNS[i % len(PROXY_TURNS)]
+        if extra:
+            at = next((k for k, it in enumerate(items) if it[0] == "vector" and it[1] in ("Angles", qbkey("Angles"))), None)
+            base = items[at][2] if at is not None else (0.0, 0.0, 0.0)
+            turned = ("vector", qbkey("Angles"), (base[0], base[1] + extra, base[2]))
+            if at is None:
+                items.append(turned)
+            else:
+                items[at] = turned
+        nodes.append([("vector", "Pos", pos), ("checksum", "Name", pname)] + items)
     # Attempt 3 (4-2d): attempt 2 crashed on loading this file. LSE's level
     # script also has empty scripts the game may call while loading, and two
     # lookup arrays next to the node list. We add the same (empty) ones.
@@ -1232,6 +1271,11 @@ def write_scene(objs):
 
 T_COL, T_NQB, T_LAST = 0x72A6D78C, 0x49875607, 0xB524565F
 T_TEX, T_GEOM, T_QB = 0x8BFA5E8E, 0x7EA7357B, 0xA7F505C4
+# 8.51: a level pak's entry type is the qbkey of the file's extension. A vehicle placed in a
+# level comes with its model script (.mqb: its own node array with the car's roof rails), its
+# model and its rail data, each a byte-for-byte copy of the loose file (checked in z_el.pak).
+T_MQB, T_MDL, T_RNB = 0x4BC1E85E, 0x9BCC234D, 0x91E1028D
+T_STEX, T_MCOL = 0x2B0A3095, 0x6290993B  # the model's textures (.tex) and its collision (.col)
 
 
 def write_pak(files):
@@ -1486,11 +1530,19 @@ def main():
     if not args.natas_test:
         os.makedirs(pool_copy, exist_ok=True)
         write_rail_csv(os.path.join(pool_copy, "rails_in_map.csv"), rails, first)
+        # 8.51 step 2: where the map's reTHAWed vehicles stand, so the THAW plugin can find them in
+        # memory (an empty list when the map has none, so an old list never misleads it)
+        with open(os.path.join(pool_copy, "proxies.csv"), "w", newline="\n") as f:
+            f.write("index,x,y,z\n")
+            for i, p in enumerate(proxies):
+                q = struct.unpack("<3f", struct.pack("<3f", *p))
+                f.write("%d,%.9g,%.9g,%.9g\n" % (i, q[0], q[1], q[2]))
     base = "worlds\\worldzones\\%s\\%s" % (args.prefix.lower(), args.prefix.lower())
     named_qb = "worlds\\worldzones\\%s\\%s.qb.wpc" % (args.prefix, args.prefix)
     # Order and parents as in Los Santos East: tex, scene (parent tex),
     # level script and collision (parent scene).
-    pak = write_pak([(T_TEX, base + ".tex", None, write_tex()),
+    vehicle_files = vehicle_model_assets(args.thaw_dir, vehicle) if vehicle else []  # 8.51
+    pak = write_pak(vehicle_files + [(T_TEX, base + ".tex", None, write_tex()),
                      (T_GEOM, base + ".scn", None, write_scene(objs), base + ".tex"),
                      (T_NQB, base + ".qb", named_qb, qb, base + ".scn"),
                      (T_COL, base + ".col", None, col, base + ".scn")])

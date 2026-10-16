@@ -6,6 +6,7 @@
 #include <cstdio>
 
 #include "bmx.h"
+#include "vehscan.h" // 8.51: VehFollowOn - reTHAWed's own skitch on a following vehicle
 
 namespace mp::thaw {
 namespace {
@@ -432,6 +433,12 @@ void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
     if (!skater || link->gtaSkateMode != 1) {
         if (g_skitchHeld) SkitchLetGo(link, "skate mode off", now);
         link->thawSkitchId = -1;
+        return;
+    }
+    // 8.51: while a reTHAWed vehicle follows the GTA car, Up is reTHAWed's own skitch: ours steps aside
+    // (and leaves thawSkitchId to vehscan.cpp, which holds the GTA car it follows)
+    if (VehFollowOn()) {
+        if (g_skitchHeld) SkitchLetGo(link, "reTHAWed vehicle follow mode on", now);
         return;
     }
     __try {

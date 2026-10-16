@@ -1,4 +1,36 @@
-# NOW (2026-10-15, night): natas everywhere WORKS with 100 posts (8.50); default is 100
+# NOW (2026-10-15, night): skitching route A started (DESIGN 8.51) - step 1, the vehicle load test
+
+Whole pool map + `--proxy-cars 3 --thaw-dir D:\Games\reTHAWed`: do three reTHAWed cars load 15 m east of the skatepark?
+Try 1 crashed (vehicle's rail data missing); try 2 crashed reading the pak (the model's .tex missing); try 3 copies all five
+model files as z_el.pak does (.tex .qb .mdl .rnb .col). **Try 3 PASSED: the user skitched an invisible parked reTHAWed car.**
+Step 3 PASSED (F2 moved a car, skitched it). Step 4 (F2 follow mode, F1 nose): reTHAWed's real skitch towed the skater, then
+reTHAWed FROZE (twice): its game thread loops in reTHAWed's script interpreter. Our rotation writes don't turn the car.
+Test 3 logs the looping script and compares three cars standing at different turns to find the real turn.
+Test 3: no freeze; skitch grabbed the left side. Test 4 (turn test): reTHAWed put 6 of 7 turned matrices back within 1 s - the
+real turn is kept elsewhere. Test 5: car 2 is the test car; one angle candidate found, turning it changed nothing.
+Test 6: a 2 s hardware write watch on the matrices that get put back logs the reTHAWed code that rewrites them.
+Result: copy 1 is rewritten every frame from a matrix on the stack (THAW.exe+0x62F0); 5-7 hits look like reads.
+Test 7: the second F1 arms the watch at once and logs code bytes + dr6/dr7.
+Result: both are real writes, every frame, from one matrix on the stack. THAW.exe in memory differs from disk.
+Test 8: the code around the callers is saved from memory to extracted\veh_code\ for offline reading.
+Result: the parts are rebuilt from the object's own turn at object+0xDC (0x74 after a position copy), never written so far.
+Test 9: that turn is found and turned too. Result: it is copied every frame from object+0x88.
+Test 10: object+0x88 is turned too. Result: the car TURNS on screen (9 of 9 hold); the skitch still grabs the same side; the freeze came back.
+Test 11: twin scan for places still holding the old turn; the watchdog saves the frozen code. Result: no freeze; scan filled with NaN (bug).
+Test 12: the same with the NaN bug fixed. Result: nothing holds the old turn; still the same side.
+Test 13: near-point scan around the car. Result: no world points near the car: its rails are local and turn with it.
+Open question: is "same side" the same side of the CAR (a nose offset) or the same compass side?
+Test 14: reTHAWed's own view shows the skater on the car's LEFT, not its back. Freeze again: a script bytecode reader
+(THAW.exe+0xEF50) stuck on one spot (esi 0x18085AEA). User chose: one more round (test 15) then decide. Test 15: script bytes saved on a freeze; skater's offset in the car's frame logged.
+Result: freeze without any turn, at the release, in reTHAWed's skater animation script (a symbol at THAW.exe 0x719AE8 read as a call, the reader loops).
+Grab point measured at the car's back-left corner (93 in behind, 42 in left). Asked the user: switch to the 8.42 tow, or one more symbol test. User: one more test.
+Test 16: write watch on the THAW.exe entry 0x719AE8 for the whole level, to catch what changes it.
+Result: never written; it is a built-in C function. FREEZE CAUSE FOUND: a line in reTHAWed's skater animation script uses that
+function's name as a setting, and the script reader loops on it. GRAB POINT IS RIGHT (back-left or back-right corner).
+Test 17: the plugin blanks such lines in reTHAWed's memory once per run ("script fix" in thaw.log). PASSED: blanked 1 of 1, no freeze
+over many skitches at 0/90/180/270 degrees. Next (ask first): smooth following of GTA cars, then a pool of proxies.
+
+# EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 
 300 natas spares stalled reTHAWed's map load; 20 and 100 load fine (most needed anywhere: 83). The launcher's
 Build the map now makes 100. Uncommitted: 8.46-8.50. Next (waits for the user): commit; Gant tower names; then

@@ -64,7 +64,7 @@ endif()
 
 # --- reTHAWed plugin: SkateAndreas-thaw.dll (loaded into reTHAWed by the launcher) ---
 # Stays in the build folder next to the launcher; nothing goes into the reTHAWed install.
-add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp src/thaw/drawlog.cpp src/thaw/touchpad.cpp src/thaw/hud.cpp src/thaw/music.cpp src/thaw/tags.cpp src/thaw/bmx.cpp src/thaw/bikeparts.cpp src/thaw/bikefind.cpp src/thaw/railscan.cpp src/thaw/statefind.cpp src/thaw/autostart.cpp)
+add_library(thaw_plugin SHARED src/thaw/main.cpp src/thaw/skater.cpp src/thaw/focus.cpp src/thaw/input.cpp src/thaw/pose.cpp src/thaw/drawlog.cpp src/thaw/touchpad.cpp src/thaw/hud.cpp src/thaw/music.cpp src/thaw/tags.cpp src/thaw/bmx.cpp src/thaw/bikeparts.cpp src/thaw/bikefind.cpp src/thaw/railscan.cpp src/thaw/vehscan.cpp src/thaw/statefind.cpp src/thaw/autostart.cpp)
 set_target_properties(thaw_plugin PROPERTIES
     OUTPUT_NAME "SkateAndreas-thaw"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

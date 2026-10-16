@@ -58,6 +58,7 @@
 #include "tags.h"
 #include "bmx.h"
 #include "railscan.h"
+#include "vehscan.h"  // 8.51
 #include "statefind.h"
 #include "autostart.h"
 #include <tlhelp32.h>
@@ -746,6 +747,10 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::RailTestTick(g_link, inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
                                    pose.readOk ? pose.orient + 8 : nullptr,
                                    sample.readOk && sample.skater ? sample.vel : nullptr, logLine, &Log);
+        // 8.51 step 4 test: F2 = one of the map's reTHAWed vehicles follows the nearest moving GTA car
+        mp::thaw::VehTestTick(g_link, inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
+                              pose.readOk ? pose.orient + 8 : nullptr,
+                              sample.readOk && sample.skater ? sample.vel : nullptr, &Log);
         // 8.32 R3c: fill the rail pool with the GTA rails near the skater (pool maps only)
         mp::thaw::RailPoolTick(inOurLevelNow, sample.readOk && sample.skater ? sample.pos : nullptr,
                                sample.readOk && sample.skater ? sample.vel : nullptr, &Log);
@@ -858,6 +863,7 @@ DWORD WINAPI MainThread(LPVOID)
         mp::thaw::BmxSecond(&Log);
         mp::thaw::BikePartsSecond(&Log);
         mp::thaw::RailScanSecond(inOurLevelNow, &Log); // 8.32 R3a: find the rail records
+        mp::thaw::VehScanSecond(inOurLevelNow, &Log);  // 8.51 step 2: find the map's reTHAWed vehicles
         ReportLink(beat);
         if (g_link) Log("link: published %ld skater samples so far (%lu repeats of the same reTHAWed frame in the last second) | new reTHAWed frames in the last second: %lu",
                         published, g_repeatSamples, g_newFrames);
