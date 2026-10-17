@@ -93,7 +93,9 @@ side grab, reTHAWed held him beside the rear wheel; our 120-in let-go ended the 
 Test 38 (built, both plugins, not run): no distance let-go while towed; GTA move limit 4.5 m, back within 3 m. User skipped the test (hard to reproduce): NOT TESTED.
 Before the release (built, not run): follow mode turns on by itself after the scan (no F2); the old 8.42 tow is removed.
 Release still needs: the launcher building the map with --proxy-cars 8 --thaw-dir, then tools/make-release.ps1.
-Launcher Build the map now passes --proxy-cars 8 --thaw-dir (built; the button not run yet). Next: video at speed; then bails on riding into a car; proxy pool.
+Launcher Build the map now passes --proxy-cars 8 --thaw-dir (built; the button not run yet).
+Committed 1400200. User tests the button and no-F2 skitching tomorrow, then releases.
+Next feature: shooting on the board, plan in DESIGN 8.53 (no code; waiting for the go-ahead and the aim button). Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 

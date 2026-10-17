@@ -2,6 +2,14 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.53 plan: shooting while skating, on the board (no code)
+
+**Changed:** `docs/DESIGN.md` 8.53 (new): the plan, from the research doc "SkateAndreas research" (2026-10-15). GTA fires for CJ through `CWeapon::Fire` while reTHAWed keeps skating; 4 steps: probe + one test shot, shoot mode with lock-on, CJ's aiming upper body, rules.
+**Why:** user: "start with shooting on the board instead: write its plan in DESIGN first, no code yet".
+**Tested how:** nothing to run. The function addresses and member offsets were checked in plugin-sdk (`CWeapon::Fire` 0x742300, `CPed::SetCurrentWeapon` 0x5E61F0, `m_aWeapons` 0x5A0, `m_pTargetedObject` 0x71C); F1-F11 are all used by our plugins already.
+**Still broken / not tested:** everything; waiting for the user's go-ahead and the aim-button choice.
+**Next:** user reads 8.53; says which reTHAWed button the aim can take; go-ahead for step 1. **User's buttons (same day):** shoot mode toggled by D-pad Left + X; in shoot mode R1 (spin) and B (grab) are taken from reTHAWed, the other tricks stay. Proposed R1 = lock on, B = fire; weapon switch still open (DESIGN 8.53 Buttons).
+
 ## [2026-10-17] 8.52: skitching without F2; the old 8.42 tow removed
 
 **Changed:** `src/thaw/vehscan.cpp`: follow mode (the proxies following GTA's cars) turns on by itself when the vehicle scan is done, in every level; F2 still switches it off / on. Log: `vehicles: follow mode ON (automatic, the scan is done): ...`. `src/thaw/bmx.cpp`: the 8.42 tow (Up behind a moving car, our own velocity tow; Down let go) and its `skitch 8.42` log lines are removed; `CarSkitchGameThread` only clears thawSkitching / thawSkitchId while follow mode is off. `README.md`, `INSTALL.md`: skitching described without F2 and without the old Up / Down tow. Plan: DESIGN 8.52 "Plan: skitching without F2, old tow taken out".
