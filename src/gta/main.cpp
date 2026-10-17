@@ -53,6 +53,7 @@
 #include "cars.h"
 #include "gps.h"
 #include "hint.h"
+#include "shoot.h"
 #include "testrail.h"
 #include <atomic>
 #include <cstdarg>
@@ -127,6 +128,8 @@ void AddHooks()
         // Phase 2-2: skate mode (does nothing unless toggled on with F7 / L3 + R3).
         mp::gta::SkateModeFrameSafe(g_link, &Log);
 mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
+        // 8.53 step 1: shooting probe (log what CJ holds; F12 = one test shot)
+        mp::gta::ShootFrameSafe(&Log);
         // Test helper: F8 = move CJ to the map waypoint.
         mp::gta::TeleportFrameSafe(&Log);
         // Phase 3-2: controller into the link (installs its hook the first time).

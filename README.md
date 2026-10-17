@@ -1,12 +1,18 @@
 # Tony Hawk's SkateAndreas
 
+Update Notes:
+Skitching now works it may be a little buggy please send any feedback
+The skitching plugin takes about a minute to load 8 proxy cars from rethawed follow the gta cars as you move so you should be able to skitch from car to car easily
+Make sure to add the windowed mode plugin to your mod loader: https://github.com/ThirteenAG/III.VC.SA.WindowedMode
+Natas Spins are now in the game you should be able to natas spin anywhere including the pyramid in Las Venturas
+Some fixes to the rail system have been implemented it takes about 20 seconds to load but if it still feels jenky let me know.
+You will have to rebuild the map for this update.
+
 Some quick Notes:
 
 -First thing show some support for the rethawed team they've created the ultimate Tony Hawk Experience with their mod
--There is no car collision yet but that should be added in the future
 -The launcher may take a couple of tries at first if both games don't launch close and retry
 -Please share any bugs or glitches you run into I plan on adding some updates this weekend.
--In the future I plan on adding Natas Spins, skitching, park editor features, shooting on your board and more. 
 - You should be able to grind majority of the map I want to fine tune this in the next update but most rails and ledges should work for now.
 -You can skate the bowl in the east Los Santos skate park like you would any bowl in Tony Hawk as well as the half pipes. 
 
