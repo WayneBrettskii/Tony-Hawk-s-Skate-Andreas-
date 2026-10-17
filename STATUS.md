@@ -83,7 +83,13 @@ Test 35: no freeze; holds on proxies 0 and 1 work. Pool mostly idle (only cars h
 clipping only when not skitching: cars without a proxy are not solid in reTHAWed.
 Test 36 (built, both plugins, not run): every car within 20 m (moving or not) can get a proxy, no behind-it test.
 Test 36 PASSED for back to back (user: "way better"): 3 proxies busy most of the time, holds on all three. Often a
-4th car had no proxy (more proxies = map rebuild). Clipping about as often as before. Next: video at speed; then bails on riding into a car; proxy pool.
+4th car had no proxy (more proxies = map rebuild). Clipping about as often as before.
+Research: reTHAWed levels hold up to 49 vehicle nodes (London), but only up to 11 made at load; no vehicle cap in
+rethawed.ini. Suggested: 6 proxies next (map rebuild, link v20), then 8.
+8 proxies built (user: "straight to 8"): link v20 (8 cars published), map rebuilt with 8 proxies in extracted (3-proxy build kept
+as a backup there). Not run: user installs the map and plays (test 37).
+Test 37 (8-proxy map installed): works, up to 6 proxies busy, never short; scan 31 s. Misplaced CJ on a lowrider:
+side grab, reTHAWed held him beside the rear wheel; our 120-in let-go ended the hold while reTHAWed still towed him. Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 

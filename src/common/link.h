@@ -24,8 +24,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 19;         // ... 15: skitch (8.33); 16: skitching flag (8.33); 17: skitch grab rules (8.42); 18: skitch car's rear (8.51); 19: several skitch cars (8.52)
-constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v19";
+constexpr LONG kLinkVersion = 20;         // ... 15: skitch (8.33); 16: skitching flag (8.33); 17: skitch grab rules (8.42); 18: skitch car's rear (8.51); 19: several skitch cars (8.52); 20: 8 skitch cars
+constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v20";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -108,8 +108,8 @@ constexpr LONG kTagSpotOk = 0x80000;     // bit 19: thawTagPos / thawTagNormal h
 // gtaCarRail[(car*4 + i)*3 + 0..2], i = 0..3 (rail 0 a/b, rail 1 a/b).
 constexpr int kCarRailCars = 8;
 constexpr int kCarRailPts = 4;
-// 8.52 (version 19): the moving cars the GTA plugin publishes for the proxy pool
-constexpr int kPoolCars = 4;
+// 8.52 (version 19): the cars the GTA plugin publishes for the proxy pool (version 20: 8, was 4)
+constexpr int kPoolCars = 8;
 
 struct LinkBlock {
     volatile LONG magic;    // kLinkMagic once set up (0 in a brand-new block)
@@ -234,7 +234,7 @@ struct LinkBlock {
     volatile float gtaPoolFwd[kPoolCars * 3];
     volatile float gtaPoolBack[kPoolCars];
 };
-static_assert(sizeof(LinkBlock) == 1296, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 1472, "LinkBlock layout changed: bump kLinkVersion");
 
 // 8.44 N1 (audit, 2026-10-15): every number one side reads from the other is checked
 // for NaN / infinity before use. A bad value once spread from reTHAWed into CJ's

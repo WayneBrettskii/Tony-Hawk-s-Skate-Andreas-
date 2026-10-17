@@ -2,6 +2,27 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.52: 8 proxies (link version 20, map rebuilt with --proxy-cars 8)
+
+**Changed:** `src/common/link.h`: version 20, `kPoolCars` 8 (was 4), block 1472 bytes. `src/gta/cars.cpp`, `src/thaw/vehscan.cpp`: longer buffers for the car-list log lines; `src/gta/main.cpp`, `src/thaw/main.cpp`: a log line may now be 1536 characters (was 512; long lines such as `skitch where` were being cut). The map rebuilt in `extracted\thaw_maps\SkateAndreas San Andreas` with the launcher's arguments plus `--proxy-cars 8 --thaw-dir D:\Games\reTHAWed`; the 3-proxy build is kept next to it as `SkateAndreas San Andreas (3 proxies backup)` (and `_railpool\proxies (3 proxies backup).csv`, `rails_in_map (3 proxies backup).csv`). Plan: DESIGN 8.52 "Plan for 8 proxies".
+**Why:** test 36: a 4th nearby car often had no proxy; user: "go straight to 8 proxies".
+**Tested how:** both plugins built with MSVC: no errors or warnings; `SkateAndreas.asi` copied to the GTA modloader folder. Map build: done in about 2 minutes, no errors; level script 16,393 nodes (was 16,388: 5 more vehicles), `proxies.csv` lists 8 proxies 315 in apart, `rails_in_map.csv` byte-identical to the 3-proxy build, `[Memory]` needs unchanged (RailString 10,606). **Not run in game.**
+**Still broken / not tested:** whether reTHAWed loads and runs 8 proxies; scan time; nothing else changed.
+**Next:** user copies the rebuilt map into reTHAWed's Maps folder and plays (test 37).
+
+**Test 37, first try (user 2026-10-17 02:17): "it didn't freeze but I couldn't skitch and was unable to grind anything".** reTHAWed loaded an **old** map: the installed `SkateAndreas San Andreas` folder in reTHAWed's Maps holds files dated 2026-10-13 (79,728,640-byte pak, no proxies, the old 4,500-rail pool), not the 2026-10-17 build. thaw.log: `the level has 4500 pool rails (9000 nodes) but the pool map file lists 5606 (16384 nodes); pool off` (so no grinding on GTA rails) and `car 0..7: 0 copies of its position` (no proxies in that map, so nothing to skitch). Not a code problem; the new build was never loaded. Fix: copy the files from the project's extracted build into that folder again, then retest.
+
+**Test 37 result (user 2026-10-17, run 02:22, the 8-proxy map installed this time): "skitching from car to car seemed to work pretty well; one car where CJ got misplaced: a lowrider on an uphill section of the freeway".** **8 proxies load and work:** each found with 13-14 copies of its position (10 with a rotation); scan 31.0 s (was 10.8 s with 3, so the scan time does grow with the count); no freeze. In the 179 once-a-second lines, up to 6 proxies followed cars at once and a listed car **never** lacked a free proxy (was 31 of 56 lines with 3). 27 holds on proxies 0-4. Rail pool on (5,506 rails). **The lowrider (GTA car 38, model 567 Savanna, gta 157.5-170 s, about 5% uphill):** he grabbed proxy 1 from the side (88 in to the right of its back), and reTHAWed attached him 114 in **ahead** of the spot behind the bumper, i.e. beside the car's rear wheel, facing 124-155 deg away from the car's heading (the facing fix leaves anything over 90 deg alone, and the steer only trims 40 in along the car). For 6 s the GTA side covered it: CJ was moved 1.7-2.8 m back onto the spot and turned to the car. Then (thaw 163.9 s) **our** hold test ended the hold because he had been more than 120 in from the spot for 0.5 s (`let go of the held proxy (123 in from the spot)`), **while reTHAWed was still towing him** (no own speed). So GTA turned the move off and CJ glided back to reTHAWed's place, inside the car's side: `car solid check ... INSIDE -> push out` every half second from 165.6 to 169.8 s, facing a fixed 171.5 deg, until reTHAWed let go about 6 s later. That is the misplacement; the slope did not cause it (the side grab did).
+
+## [2026-10-17] 8.52 research: how many vehicles reTHAWed's own levels hold (read only)
+
+**Changed:** `docs/DESIGN.md` 8.52 (research paragraph). No code changed.
+**Why:** user: check for a cap before adding more proxies.
+**Tested how:** a throw-away Python script (kept outside the repo) read all 3,045 `.pak.wpc` packs under `D:\Games\reTHAWed\data` and counted `Class = Vehicle` records and their `CreatedAtStart` flags; read `rethawed.ini` `[Memory]`. Nothing was written to the game folder.
+**Result:** most vehicle nodes in a level: London 49, Burnside 48, Jinkies 44, LA 43; created at load: London 11, Burnside 4, LA 6 (Jinkies not checked). No per-vehicle limit in `[Memory]`.
+**Still broken / not tested:** how many vehicles reTHAWed can run at once is not in the files; only a test with more proxies shows it.
+**Next:** user decides: 6 proxies (map rebuild, link version 20).
+
 ## [2026-10-17] 8.52 test 36: every car within 20 m can get a proxy (both plugins)
 
 **Changed:** `src/gta/cars.cpp`: the pool list takes every car within 20 m of CJ, moving or not (was: moving only). `src/thaw/vehscan.cpp`: every listed car is wanted; the "heads his way, he is behind its centre" test is gone. Plan: DESIGN 8.52 "Plan for test 36".

@@ -240,7 +240,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
         const DWORD pNow = GetTickCount();
         if (pNow - lastPoolLog > 1000 && (n > 0 || heldId >= 0)) {
             lastPoolLog = pNow;
-            char buf[400];
+            char buf[1000];
             int len = snprintf(buf, sizeof(buf), "skitch pool: %d car(s) published of %d within %.0f m%s:", ok ? n : 0, candN,
                                kPoolNear, ok ? "" : " (NOT published: a bad position)");
             for (int a = 0; a < n && len > 0 && len < static_cast<int>(sizeof(buf)); ++a)

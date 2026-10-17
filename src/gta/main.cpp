@@ -174,7 +174,7 @@ mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
 // Append one line to the log: "[seconds since start] text".
 void Log(const char* fmt, ...)
 {
-    char line[512];
+    char line[1536]; // 8.52: the 8-proxy pool lines are longer than 512
     const double secs = (GetTickCount64() - g_startTick) / 1000.0;
     int n = _snprintf_s(line, sizeof(line), _TRUNCATE, "[%9.3f] ", secs);
     if (n < 0) n = 0;

@@ -1744,7 +1744,7 @@ followDone:
             PoolCar pc[kPoolCars];
             const int n = ReadPoolCars(link, pc);
             if (n > 0) {
-                char buf[512];
+                char buf[1200];
                 int len = snprintf(buf, sizeof(buf), "vehicles: pool list from GTA: %d car(s):", n);
                 for (int i = 0; i < n && len > 0 && len < static_cast<int>(sizeof(buf)); ++i) {
                     const float dx = pos ? pc[i].pos[0] - pos[0] : 0.0f, dz = pos ? pc[i].pos[2] - pos[2] : 0.0f;
@@ -2171,7 +2171,7 @@ followDone:
     if (now >= g_nextLog) {
         g_nextLog = now + 1000;
         // 8.52: one line for the whole pool: each proxy's GTA car (or parked) and how far he is from it
-        char buf[600];
+        char buf[1200];
         int len = snprintf(buf, sizeof(buf), "vehicles: pool:");
         for (int s = 0; s < g_carCount && len > 0 && len < static_cast<int>(sizeof(buf)); ++s) {
             const Car& pcar = g_cars[s];
