@@ -24,8 +24,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 18;         // ... 15: skitch (8.33); 16: skitching flag (8.33); 17: skitch grab rules (8.42); 18: skitch car's rear (8.51)
-constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v18";
+constexpr LONG kLinkVersion = 19;         // ... 15: skitch (8.33); 16: skitching flag (8.33); 17: skitch grab rules (8.42); 18: skitch car's rear (8.51); 19: several skitch cars (8.52)
+constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v19";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -108,6 +108,8 @@ constexpr LONG kTagSpotOk = 0x80000;     // bit 19: thawTagPos / thawTagNormal h
 // gtaCarRail[(car*4 + i)*3 + 0..2], i = 0..3 (rail 0 a/b, rail 1 a/b).
 constexpr int kCarRailCars = 8;
 constexpr int kCarRailPts = 4;
+// 8.52 (version 19): the moving cars the GTA plugin publishes for the proxy pool
+constexpr int kPoolCars = 4;
 
 struct LinkBlock {
     volatile LONG magic;    // kLinkMagic once set up (0 in a brand-new block)
@@ -219,8 +221,20 @@ struct LinkBlock {
     // published car's rear bumper is behind its centre, in THAW inches (from its collision box),
     // so the THAW side can put the proxy's hold point on the bumper.
     volatile float gtaSkitchBack;
+    // ---- 8.52 step 1 (version 19), written by the GTA plugin under gtaPoolSeq (a sequence lock
+    // like gtaCarSeq): up to kPoolCars moving cars near CJ, nearest first, the held car
+    // (thawSkitchId) always among them. Per car: GTA pool index, position and velocity (THAW
+    // units, inches per second), nose (THAW direction, unit length), rear bumper behind its
+    // centre (THAW inches). The one-car gtaSkitch* fields above are still filled as before.
+    volatile LONG gtaPoolSeq;
+    volatile LONG gtaPoolCount;
+    volatile LONG gtaPoolId[kPoolCars];
+    volatile float gtaPoolPos[kPoolCars * 3];
+    volatile float gtaPoolVel[kPoolCars * 3];
+    volatile float gtaPoolFwd[kPoolCars * 3];
+    volatile float gtaPoolBack[kPoolCars];
 };
-static_assert(sizeof(LinkBlock) == 1112, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 1296, "LinkBlock layout changed: bump kLinkVersion");
 
 // 8.44 N1 (audit, 2026-10-15): every number one side reads from the other is checked
 // for NaN / infinity before use. A bad value once spread from reTHAWed into CJ's
@@ -369,6 +383,67 @@ inline void PublishCarRails(LinkBlock* b, int count, const float* pts)
     const int n = count * kCarRailPts * 3;
     for (int i = 0; i < n; ++i) b->gtaCarRail[i] = pts[i];
     InterlockedExchange(&b->gtaCarSeq, seq + 2); // even: done
+}
+
+// 8.52 step 1: one published skitch car (see gtaPool* in LinkBlock)
+struct PoolCar {
+    LONG id = -1;
+    float pos[3] = {}, vel[3] = {}, fwd[3] = {};
+    float back = 0.0f;
+};
+
+// GTA side (the only writer): publish up to kPoolCars cars
+inline void PublishPoolCars(LinkBlock* b, int count, const PoolCar* cars)
+{
+    if (count < 0) count = 0;
+    if (count > kPoolCars) count = kPoolCars;
+    const LONG seq = b->gtaPoolSeq;
+    InterlockedExchange(&b->gtaPoolSeq, seq + 1); // odd: writing
+    b->gtaPoolCount = count;
+    for (int i = 0; i < count; ++i) {
+        b->gtaPoolId[i] = cars[i].id;
+        for (int k = 0; k < 3; ++k) {
+            b->gtaPoolPos[i * 3 + k] = cars[i].pos[k];
+            b->gtaPoolVel[i * 3 + k] = cars[i].vel[k];
+            b->gtaPoolFwd[i * 3 + k] = cars[i].fwd[k];
+        }
+        b->gtaPoolBack[i] = cars[i].back;
+    }
+    InterlockedExchange(&b->gtaPoolSeq, seq + 2); // even: done
+}
+
+// THAW side: copy them out. Returns the number of cars (0 if none / unstable / a bad number).
+inline int ReadPoolCars(const LinkBlock* b, PoolCar* out)
+{
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const LONG s1 = b->gtaPoolSeq;
+        if (s1 & 1) { YieldProcessor(); continue; }
+        MemoryBarrier();
+        int count = b->gtaPoolCount;
+        if (count < 0) count = 0;
+        if (count > kPoolCars) count = kPoolCars;
+        for (int i = 0; i < count; ++i) {
+            out[i].id = b->gtaPoolId[i];
+            for (int k = 0; k < 3; ++k) {
+                out[i].pos[k] = b->gtaPoolPos[i * 3 + k];
+                out[i].vel[k] = b->gtaPoolVel[i * 3 + k];
+                out[i].fwd[k] = b->gtaPoolFwd[i * 3 + k];
+            }
+            out[i].back = b->gtaPoolBack[i];
+        }
+        MemoryBarrier();
+        if (b->gtaPoolSeq == s1) {
+            // 8.44 N1: no bad number may reach reTHAWed
+            for (int i = 0; i < count; ++i)
+                if (!AllFinite(out[i].pos, 3) || !AllFinite(out[i].vel, 3) || !AllFinite(out[i].fwd, 3) ||
+                    !AllFinite(&out[i].back, 1)) {
+                    InterlockedIncrement(&g_linkBadNumbers);
+                    return 0;
+                }
+            return count;
+        }
+    }
+    return 0;
 }
 
 // THAW side: copy them out. Returns the number of cars (0 if none / unstable).

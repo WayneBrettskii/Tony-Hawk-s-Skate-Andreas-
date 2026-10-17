@@ -29,6 +29,9 @@ constexpr int kNoseKey = VK_F1;       // turn the car's nose by 90 degrees (whic
 constexpr float kCarDrop = 24.0f;     // GTA gives the car's middle; a reTHAWed vehicle stands on its origin (~0.6 m lower)
 constexpr DWORD kNoCarParkMs = 400;   // no GTA car this long: the proxy goes back to its own spot (1500 until test 25: "grabbed the air")
 constexpr float kKeepNear = 400.0f;   // ~10 m: the skater this close to the test car keeps it on the same GTA car
+constexpr float kParkWaitAlong = 140.0f; // test 34: inches from the proxy's centre along its length: he is on / at it
+constexpr float kParkWaitSide = 80.0f;   //   ... to either side of its centre line
+constexpr float kParkWaitBelow = 20.0f;  //   ... and no more than this below its base
 constexpr unsigned long kOurLevel = 0x9F014B98ul; // load_MPGTALSE
 
 struct Copy {
@@ -1682,6 +1685,28 @@ followDone:
             }
         }
     }
+    // 8.52 step 1 (read only): the cars the GTA side publishes for the proxy pool, once a second
+    if (link) {
+        static ULONGLONG nextPoolLog = 0;
+        const ULONGLONG pt = GetTickCount64();
+        if (pt >= nextPoolLog) {
+            nextPoolLog = pt + 1000;
+            PoolCar pc[kPoolCars];
+            const int n = ReadPoolCars(link, pc);
+            if (n > 0) {
+                char buf[512];
+                int len = snprintf(buf, sizeof(buf), "vehicles: pool list from GTA: %d car(s):", n);
+                for (int i = 0; i < n && len > 0 && len < static_cast<int>(sizeof(buf)); ++i) {
+                    const float dx = pos ? pc[i].pos[0] - pos[0] : 0.0f, dz = pos ? pc[i].pos[2] - pos[2] : 0.0f;
+                    len += snprintf(buf + len, sizeof(buf) - len, " GTA car %ld (%.0f in from the skater, %.0f in/s, rear %.0f in)%s",
+                                    static_cast<long>(pc[i].id), sqrtf(dx * dx + dz * dz),
+                                    sqrtf(pc[i].vel[0] * pc[i].vel[0] + pc[i].vel[2] * pc[i].vel[2]), pc[i].back,
+                                    pc[i].id == link->gtaSkitchId ? " = the one-car field" : "");
+                }
+                log("%s", buf);
+            }
+        }
+    }
     if (!ready || !g_follow || !link) return;
     const ULONGLONG now = GetTickCount64();
     const Car& car = TestCar();
@@ -1787,7 +1812,37 @@ followDone:
         // back to its own spot - but never while he holds it (a car jumping away under him is the
         // kind of thing that broke the rails, 8.41). Test 25: it used to wait while he was merely
         // near it, so an invisible proxy stood in the road and he could grab the air.
-        if (g_holdSide == 0) {
+        // test 34 (test 33: after a skitch jump he landed on the proxy's roof; it parked 0.4 s later and
+        // carried him to its own spot, East Los Santos in GTA): it also waits while he is on it or
+        // right next to it (the car's own box plus a hand's reach), and parks once he is clear.
+        bool onIt = false;
+        float oa = 0.0f, orr = 0.0f, ou = 0.0f;
+        if (pos) {
+            float fw[3] = {};
+            AcquireSRWLockShared(&g_lock);
+            memcpy(fw, g_track.fwd, sizeof(fw));
+            ReleaseSRWLockShared(&g_lock);
+            const float e0 = pos[0] - car.cur[0], e1 = pos[1] - car.cur[1], e2 = pos[2] - car.cur[2];
+            const float fl = sqrtf(fw[0] * fw[0] + fw[2] * fw[2]);
+            if (fl > 0.1f) {
+                oa = (e0 * fw[0] + e2 * fw[2]) / fl;
+                orr = (e0 * fw[2] - e2 * fw[0]) / fl;
+            } else { // no nose known: a round box
+                oa = sqrtf(e0 * e0 + e2 * e2);
+                orr = 0.0f;
+            }
+            ou = e1;
+            onIt = fabsf(oa) < kParkWaitAlong && fabsf(orr) < kParkWaitSide && ou > -kParkWaitBelow;
+        }
+        static bool waitLogged = false;
+        if (g_holdSide == 0 && onIt) {
+            if (!waitLogged) {
+                waitLogged = true;
+                log("vehicles: the test car would park, but the skater is on it / next to it (%.0f in along, %.0f in right, %.0f in up): "
+                    "it waits", oa, orr, ou);
+            }
+        } else if (g_holdSide == 0) {
+            waitLogged = false;
             AcquireSRWLockExclusive(&g_lock);
             g_track.valid = false;
             ReleaseSRWLockExclusive(&g_lock);

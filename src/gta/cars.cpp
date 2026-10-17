@@ -22,6 +22,9 @@ constexpr float kNear = 40.0f;   // m: cars within this of CJ are logged
 constexpr float kRailNear = 22.0f; // m: cars within this give roof rails
 constexpr float kSkitchNear = 8.0f; // m: a moving car within this can be skitched
 constexpr float kSkitchHold = 16.0f; // m: a car the skater holds is followed out to this (8.42)
+constexpr float kPoolNear = 20.0f;   // m: 8.52 step 1: moving cars within this go into the pool list
+constexpr float kPoolMoving = 0.1f;  // m per frame (5 m/s): "moving", as for the one skitch car
+constexpr int kPoolCand = 32;        // candidates looked at per pass
 constexpr float kGtaFps = 50.0f;   // GTA's move speed is metres per 50 Hz frame
 
 // 8.41: a car gets a roof rail only when it is genuinely PARKED. The old test was
@@ -76,6 +79,10 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     int lockModel = 0;
     float lockPos[3] = {}, lockVel[3] = {}, lockFwd[3] = {};
     float skBack = 0.0f, lockBack = 0.0f; // 8.51 step 6: rear bumper behind the centre, THAW inches
+    // 8.52 step 1: the pool list (moving cars within kPoolNear; the held car always)
+    struct Cand { PoolCar car; float d2; float dist; float speed; };
+    Cand cand[kPoolCand];
+    int candN = 0;
     __try {
         auto* pool = CPools::ms_pVehiclePool;
         if (!pool) return;
@@ -89,6 +96,25 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
             if (dCj > railNear2) continue;
             const CVector vs = v->m_vecMoveSpeed;
             const float cspeed = vs.Magnitude();
+            const bool isHeld = heldId >= 0 && i == heldId && dCj < kSkitchHold * kSkitchHold;
+            if (candN < kPoolCand && (isHeld || (cspeed > kPoolMoving && dCj < kPoolNear * kPoolNear))) {
+                Cand& k = cand[candN++];
+                const CVector nose = v->GetForward();
+                k.car.id = i;
+                k.car.pos[0] = (p.x - align->offset.x) / align->scale;
+                k.car.pos[1] = (p.z - align->offset.z) / align->scale;
+                k.car.pos[2] = (p.y - align->offset.y) / (align->scale * align->ySign);
+                k.car.vel[0] = vs.x * kGtaFps / align->scale;
+                k.car.vel[1] = vs.z * kGtaFps / align->scale;
+                k.car.vel[2] = vs.y * kGtaFps / (align->scale * align->ySign);
+                k.car.fwd[0] = nose.x;
+                k.car.fwd[1] = nose.z;
+                k.car.fwd[2] = nose.y / align->ySign;
+                k.car.back = RearOf(v) / align->scale;
+                k.d2 = isHeld ? -1.0f : dCj; // the held car sorts first, so it is never left out
+                k.dist = sqrtf(dCj);
+                k.speed = cspeed;
+            }
             // 8.42: the car the skater holds is followed by its pool index, out to kSkitchHold,
             // even when it is slow (the THAW side lets go when it stops). It is never swapped
             // for the nearest car while he holds it.
@@ -191,6 +217,39 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     PublishCarRails(link, count, pts);
+    // 8.52 step 1: the nearest kPoolCars of the list (the held car first), for the proxy pool
+    {
+        for (int a = 1; a < candN; ++a) { // insertion sort: at most kPoolCand entries
+            const Cand x = cand[a];
+            int b = a - 1;
+            while (b >= 0 && cand[b].d2 > x.d2) {
+                cand[b + 1] = cand[b];
+                --b;
+            }
+            cand[b + 1] = x;
+        }
+        const int n = candN < kPoolCars ? candN : kPoolCars;
+        PoolCar pub[kPoolCars];
+        bool ok = true;
+        for (int a = 0; a < n; ++a) {
+            pub[a] = cand[a].car;
+            for (int k = 0; k < 3; ++k)
+                if (!OkThaw(pub[a].pos[k])) ok = false;
+        }
+        PublishPoolCars(link, ok ? n : 0, pub);
+        static DWORD lastPoolLog = 0;
+        const DWORD pNow = GetTickCount();
+        if (pNow - lastPoolLog > 1000 && (n > 0 || heldId >= 0)) {
+            lastPoolLog = pNow;
+            char buf[400];
+            int len = snprintf(buf, sizeof(buf), "skitch pool: %d car(s) published of %d moving within %.0f m%s:", ok ? n : 0, candN,
+                               kPoolNear, ok ? "" : " (NOT published: a bad position)");
+            for (int a = 0; a < n && len > 0 && len < static_cast<int>(sizeof(buf)); ++a)
+                len += snprintf(buf + len, sizeof(buf) - len, " car %ld (%s%.1f m, speed %.2f)", static_cast<long>(cand[a].car.id),
+                                cand[a].d2 < 0.0f ? "HELD, " : "", cand[a].dist, cand[a].speed);
+            log("%s", buf);
+        }
+    }
     // 8.33 / 8.42 skitch: the car the skater holds, if he holds one and it is still in
     // reach; otherwise the nearest moving car, as the candidate for a grab. Values first,
     // then the id and the flag.

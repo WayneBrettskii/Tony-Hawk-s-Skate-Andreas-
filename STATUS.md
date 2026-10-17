@@ -71,7 +71,13 @@ facing fix). Uphill: reTHAWed's skater stopped dead ~0.9 s, then let go; CJ stut
 Test 32 (built, both plugins, not run): CJ faces the held car (GTA side); the move comes back only after 0.3 s within
 2 m; THAW stall log (`vehicles: STALL`) records what the skater does when he falls off the spot.
 Test 32 PASSED (user + logs): 7 holds up to 50 s, CJ on the spot and facing the car (0.0 deg off), no hill stutter.
-Not tested: faster than ~55 km/h; the stall log (never triggered). Next: bails when riding into a car; a pool of proxies for several cars. Next: video at speed; then bails on riding into a car; proxy pool.
+Not tested: faster than ~55 km/h; the stall log (never triggered). Next: a pool of proxies for several cars (DESIGN 8.52); bails on the back burner (user 2026-10-17).
+Pool step 1 built (link v19, both plugins, not run): GTA publishes up to 4 moving cars; reTHAWed only logs the list (test 33).
+Test 33: list OK on both sides. Found: the parked proxy carried the skater (on its roof) to its parking spot =
+East Los Santos; a side grab left CJ holding air (move dropped at 3 m); car-to-car slow (one proxy).
+Test 34 (built, reTHAWed plugin only, not run): the proxy waits instead of parking while he is on / next to it. Then pool step 2.
+Test 34 played: the wait fired once and parked when he was clear; no map jump. Landing on a car roof pushes CJ off
+the side (dead roof branch, deferred). Next: pool step 2. Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 
