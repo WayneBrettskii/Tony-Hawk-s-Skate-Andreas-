@@ -168,6 +168,8 @@ mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
     mp::gta::BmxAddHook();
     // 8.31 D5: the GPS route drawn on the radar and the pause menu map.
     mp::gta::GpsAddHook(&Log);
+    // 8.53 step 2: the shoot-mode lock-on marker.
+    mp::gta::ShootAddHook();
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);

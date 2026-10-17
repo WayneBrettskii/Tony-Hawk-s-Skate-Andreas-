@@ -105,6 +105,18 @@ Release candidate: release/SkateAndreas-0001221.zip.
 Test 39 PASSED: CWeapon::Fire shoots for CJ on the board (car damage, wanted level, peds react); no aiming pose yet;
 Fire does not limit the fire rate (shoot mode must). Next: step 2 (shoot mode, lock-on, B fires).
 Step 2 planned in detail (DESIGN 8.53), waiting for the go-ahead.
+Step 2 BUILT (GTA plugin, not run): Left + X toggles shoot mode, R1 locks on, B fires at the gun's rate, reload (test 40).
+Test 40: never turned on (the user's X is PS5 Cross, the code listened for Square). Fixed + aim moved to L1 (R1 is
+also the bert slide): PS5 Left + X toggles, L1 locks on, Circle fires (test 41, built, not run).
+Test 41: toggle, shots and reload work; no marker, aim off the camera, MP5 semi-auto. Fixed (test 42, built, not run):
+camera matrix for aim, 35-deg cone + GTA lock-on fallback, marker checks, automatic by gun type, centred "Gun mode ON".
+Test 42: full auto OK; no lock (L1 is held to aim, code wanted a tap); unlocked shots ran parallel to the camera.
+Test 43 (built, not run): L1 held = GTA's own lock-on, unlocked shots to the screen centre, black/white centred box.
+Test 43: lock-on + marker work, no damage (the ped bone aim point was near CJ). Test 44 (built, not run): aim at the
+ped's position, log what each shot line meets + target health; message box at the top centre.
+Test 44: line met the ped 81x, health stayed 100 (Fire ignores our line). Test 45 (built, not run): the hit is ours,
+GTA's CWeapon::ProcessLineOfSight + DoBulletImpact after each Fire; health before / after logged.
+Test 45 PASSED (user: "that worked"): peds take damage (25 per MP5 hit), no double damage. Next: step 3 (CJ aims the gun).
 Next feature: shooting on the board, plan in DESIGN 8.53 (no code; waiting for the go-ahead and the aim button).
 Shooting step 1 built (GTA plugin, not run): skate-mode weapon log once a second; F12 = one test shot via CWeapon::Fire (test 39). Next: video at speed; then bails on riding into a car; proxy pool.
 

@@ -7,6 +7,7 @@
 
 #include "padlink.h"
 #include "radio.h"
+#include "shoot.h"
 #include "spawner.h"
 #include "skatemode.h"
 
@@ -94,6 +95,7 @@ void Publish()
     in.axes[kAxisR2] = Clamp16(s.RightShoulder2);
     // 8.27: Back hold = radio wheel (right stick picks), tap = passed on to reTHAWed
     RadioFilterPad(in.buttons, in.axes);
+    ShootFilterPad(in.buttons, in.axes); // 8.53 step 2
 
     g_lastButtons.store(b, std::memory_order_relaxed);
     for (int i = 0; i < kAxisCount; ++i) g_lastAxes[i].store(in.axes[i], std::memory_order_relaxed);
