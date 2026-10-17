@@ -2,6 +2,14 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.53 step 2 planned in detail (no code)
+
+**Changed:** `docs/DESIGN.md` 8.53 "Step 2 plan in detail": Left + X toggles shoot mode (X held back so the toggle does no trick), R1 and B kept from reTHAWed while it is on, R1 locks on (our own picker if GTA's lock-on does nothing outside its own aiming), B fires at the gun's rate from GTA's weapon info (held for automatic guns), reload left to GTA's weapon code (or `CWeapon::Reload` once), logs.
+**Why:** user: "write the step 2 plan details in DESIGN before any code".
+**Tested how:** nothing to run; field names checked in plugin-sdk (`CWeaponInfo` m_fTargetRange, m_fAnimLoopStart / End, m_nFlags.bContinuosFire, m_nAmmoClip; `CWeapon::m_nState`, `Reload`, `Update`); the button filter place found (`padlink.cpp`, next to `RadioFilterPad`).
+**Next:** user reads the plan; go-ahead for the code.
+
+
 ## [2026-10-17] Zip 59691e0 on the 5.0.0.2 install: controller joins now, but reTHAWed still never reads it - findings, no change
 
 **User:** "CJ still teleported to East Los Santos and couldn't control him in skate mode." The Desktop install runs the 59691e0 files (hashes match the package).

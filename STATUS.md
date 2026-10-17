@@ -104,6 +104,7 @@ WORKS on the 5.0.0.2 install (user, zip 0001221): controller read, CJ stays put,
 Release candidate: release/SkateAndreas-0001221.zip.
 Test 39 PASSED: CWeapon::Fire shoots for CJ on the board (car damage, wanted level, peds react); no aiming pose yet;
 Fire does not limit the fire rate (shoot mode must). Next: step 2 (shoot mode, lock-on, B fires).
+Step 2 planned in detail (DESIGN 8.53), waiting for the go-ahead.
 Next feature: shooting on the board, plan in DESIGN 8.53 (no code; waiting for the go-ahead and the aim button).
 Shooting step 1 built (GTA plugin, not run): skate-mode weapon log once a second; F12 = one test shot via CWeapon::Fire (test 39). Next: video at speed; then bails on riding into a car; proxy pool.
 
