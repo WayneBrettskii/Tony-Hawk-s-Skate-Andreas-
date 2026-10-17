@@ -201,18 +201,18 @@ CVehicle* g_skitchIgnored = nullptr;
 // test 29: CJ on the spot behind the held car's bumper (offset from reTHAWed's place, GTA metres)
 constexpr float kSkitchGapM = 0.51f;      // 20 in, as the THAW side's kGap
 constexpr float kSkitchBlendMs = 200.0f;  // blend in when he grabs / out when he lets go
-constexpr float kSkitchSnapMax = 3.0f;    // metres: further than this from reTHAWed's place, do not move him
+constexpr float kSkitchSnapMax = 4.5f;    // metres: further than this from reTHAWed's place, do not move him (test 38: was 3)
 CVehicle* g_skitchSnapCar = nullptr; // test 31: the move's goal (the held car's spot), nullptr = no move
 DWORD g_skitchSnapSince = 0;          // when the goal last changed (start of the 0.2 s glide)
 float g_skitchSnapOff[2] = {};        // the move CJ got last frame (x, y)
 float g_skitchSnapBase[2] = {};       // the move when the goal changed (the glide starts here)
 long g_skitchGoalChanges = 0;         // goal changes since the last "skitch move" log line
-// test 32: once the move stops during a hold (reTHAWed's place over 3 m from the spot), it only comes
+// test 32: once the move stops during a hold (reTHAWed's place over kSkitchSnapMax from the spot), it only comes
 // back after that place has been within kSkitchBackM of the spot for kSkitchBackMs
-constexpr float kSkitchBackM = 2.0f;
+constexpr float kSkitchBackM = 3.0f;  // test 38: was 2
 constexpr DWORD kSkitchBackMs = 300;
 CVehicle* g_skitchDropCar = nullptr; // the held car the move stopped for (nullptr: not stopped)
-DWORD g_skitchNearSince = 0;         // since when reTHAWed's place is back within 2 m (0: not yet)
+DWORD g_skitchNearSince = 0;         // since when reTHAWed's place is back within kSkitchBackM (0: not yet)
 // test 32: CJ faces the held car's way, eased in and out with the move's glide
 float g_skitchFaceW = 0.0f, g_skitchFaceBase = 0.0f; // how much of the turn toward the car (0..1)
 float g_skitchCarYaw = 0.0f;                          // the held car's GTA heading (radians)
@@ -953,8 +953,8 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
             const float back = rear + kSkitchGapM;
             const float sx = cp.x - f.x * back + r.x * midX, sy = cp.y - f.y * back + r.y * midX;
             const float ox = sx - t.x, oy = sy - t.y; // from reTHAWed's place to the spot
-            // further than 3 m: leave him (a bad sample, or reTHAWed's skater stuck, test 31); test 32: back
-            // only after 0.3 s within 2 m, so a place hovering around 3 m does not flip the move each frame
+            // further than kSkitchSnapMax: leave him (a bad sample, or reTHAWed's skater stuck, test 31); test 32:
+            // back only after 0.3 s within kSkitchBackM, so a place hovering at the limit does not flip the move
             const float off = std::sqrt(ox * ox + oy * oy);
             if (g_skitchDropCar != want) {
                 if (off > kSkitchSnapMax) {
@@ -987,7 +987,7 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
                 log("skitch where: reTHAWed's place %.2f m along / %.2f m right of car %ld's centre; spot %.2f m behind "
                     "it (rear bumper %.2f + %.2f)%s; car heading %.1f deg, speed %.2f",
                     dx * f.x + dy * f.y, dx * r.x + dy * r.y, static_cast<long>(held), back, rear, kSkitchGapM,
-                    goalCar ? "" : ", CJ NOT MOVED THERE (went over 3 m, not back within 2 m for 0.3 s yet)", atan2f(-f.x, f.y) * 57.2958f,
+                    goalCar ? "" : ", CJ NOT MOVED THERE (went over 4.5 m, not back within 3 m for 0.3 s yet)", atan2f(-f.x, f.y) * 57.2958f,
                     want->m_vecMoveSpeed.Magnitude());
             }
         } else if (g_skitchIgnored || g_skitchCollisionOff) {

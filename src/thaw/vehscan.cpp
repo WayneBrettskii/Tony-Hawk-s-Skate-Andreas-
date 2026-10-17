@@ -2156,11 +2156,27 @@ followDone:
             log("vehicles: the skater let go of the held proxy (reTHAWed gives him his own speed again, %.0f in/s; %.0f in from the "
                 "spot): the steer goes back", fieldSpeed, errLen);
         } else if (errLen > kLoseDist) {
-            if (!awaySince) awaySince = tnow;
-            if (tnow - awaySince >= 500) {
+            // test 38 (test 37: on a lowrider reTHAWed towed him 114-132 in ahead of the spot; this rule ended
+            // our hold while it still towed him, so GTA let CJ go into the car's side for 6 s): the distance
+            // only ends the hold when reTHAWed gives him his own speed (it no longer tows him); while it reads
+            // 0 the hold stays (the GTA side keeps CJ on the spot). No speed field: as before.
+            const bool towed = fieldSpeed >= 0.0f && fieldSpeed < 1.0f;
+            static bool towedLogged = false;
+            if (!awaySince) {
+                awaySince = tnow;
+                towedLogged = false; // once per stretch away from the spot
+            }
+            if (towed) {
+                if (tnow - awaySince >= 500 && !towedLogged) {
+                    towedLogged = true;
+                    log("vehicles: the held skater is %.0f in from the spot but reTHAWed still tows him (own speed 0): the hold stays",
+                        errLen);
+                }
+            } else if (tnow - awaySince >= 500) {
                 InterlockedExchange(&g_holdSide, 0);
                 InterlockedExchange(&g_heldSlot, -1);
                 holdSince = 0;
+                towedLogged = false;
                 log("vehicles: the skater let go of the held proxy (%.0f in from the spot): the steer goes back", errLen);
             }
         } else {

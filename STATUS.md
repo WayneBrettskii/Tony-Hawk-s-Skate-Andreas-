@@ -89,7 +89,8 @@ rethawed.ini. Suggested: 6 proxies next (map rebuild, link v20), then 8.
 8 proxies built (user: "straight to 8"): link v20 (8 cars published), map rebuilt with 8 proxies in extracted (3-proxy build kept
 as a backup there). Not run: user installs the map and plays (test 37).
 Test 37 (8-proxy map installed): works, up to 6 proxies busy, never short; scan 31 s. Misplaced CJ on a lowrider:
-side grab, reTHAWed held him beside the rear wheel; our 120-in let-go ended the hold while reTHAWed still towed him. Next: video at speed; then bails on riding into a car; proxy pool.
+side grab, reTHAWed held him beside the rear wheel; our 120-in let-go ended the hold while reTHAWed still towed him.
+Test 38 (built, both plugins, not run): no distance let-go while towed; GTA move limit 4.5 m, back within 3 m. User skipped the test (hard to reproduce): NOT TESTED. Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 

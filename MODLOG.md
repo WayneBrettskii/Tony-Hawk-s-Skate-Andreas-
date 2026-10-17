@@ -2,6 +2,14 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.52 test 38: no distance let-go while reTHAWed tows him; skitch move limit 4.5 m
+
+**Changed:** `src/thaw/vehscan.cpp`: the 120-in distance let-go only ends the hold when reTHAWed gives the skater his own speed again; while it reads 0 (towed) the hold stays and the log says `the held skater is N in from the spot but reTHAWed still tows him (own speed 0): the hold stays`. `src/gta/skatemode.cpp`: the skitch move stops beyond 4.5 m (was 3 m) and comes back after 0.3 s within 3 m (was 2 m). Plan: DESIGN 8.52 "Plan for test 38".
+**Why:** test 37: on a lowrider grabbed from the side, reTHAWed towed him beside the rear wheel; our distance rule ended the hold while he was still towed, and CJ spent 6 s in the car's side.
+**Tested how:** built both plugins with MSVC: no errors or warnings; `SkateAndreas.asi` copied to the GTA modloader folder. **Not run in game.**
+**Still broken / not tested:** a side grab still makes reTHAWed hold him in an odd place; only what CJ shows is fixed. The map is unchanged (8 proxies).
+**Next:** test 38 (user). User 2026-10-17: skipped (the side grab on a long car is hard to make happen on purpose); the change stays in, **not tested**; watch for it in later runs (`still tows him` in thaw.log).
+
 ## [2026-10-17] 8.52: 8 proxies (link version 20, map rebuilt with --proxy-cars 8)
 
 **Changed:** `src/common/link.h`: version 20, `kPoolCars` 8 (was 4), block 1472 bytes. `src/gta/cars.cpp`, `src/thaw/vehscan.cpp`: longer buffers for the car-list log lines; `src/gta/main.cpp`, `src/thaw/main.cpp`: a log line may now be 1536 characters (was 512; long lines such as `skitch where` were being cut). The map rebuilt in `extracted\thaw_maps\SkateAndreas San Andreas` with the launcher's arguments plus `--proxy-cars 8 --thaw-dir D:\Games\reTHAWed`; the 3-proxy build is kept next to it as `SkateAndreas San Andreas (3 proxies backup)` (and `_railpool\proxies (3 proxies backup).csv`, `rails_in_map (3 proxies backup).csv`). Plan: DESIGN 8.52 "Plan for 8 proxies".
