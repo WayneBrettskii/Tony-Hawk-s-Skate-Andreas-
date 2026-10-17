@@ -61,6 +61,17 @@ Test 29 video: grab/let-go now instant. Measured: CJ 0.65-1.15 m behind the spot
 twice stood on a stopped car's roof (push-out took him up). Test 30: CJ put on the spot behind the held car in GTA (0.2 s blends);
 push-out from the road goes to the side, not the roof. Rebuild the GTA plugin only.
 User: being stopped at a car is fine for now; bails on hitting a car maybe later.
+Test 30 (logs, no video): CJ on the spot behind the bumper on every hold sample after the 0.2 s blend (61/61), centre line;
+moves needed 0.1-1.25 m back, up to 0.68 m aside in turns. Not tested: speeds above 0.30 m/frame, how it looks. Possible
+jump: two 0.5 s side grabs pull him up to 2.5 m. Codex review: 4 code bugs in the move + push-out (DESIGN 8.51 test 30).
+Test 31 (GTA side only, built and installed 2026-10-17, not run): the move comes before the ground and car checks, eases
+from where it is on every goal change (no jumps at 3 m, re-grab, car switch), cleared on turn-off. Roof landing left for later.
+Test 31 played: holds 27-34 s, the move steady. In turns CJ keeps facing the old way (45-81 deg off; reTHAWed undoes our
+facing fix). Uphill: reTHAWed's skater stopped dead ~0.9 s, then let go; CJ stuttered (goal flipping at 3 m). Cause of the stop unknown.
+Test 32 (built, both plugins, not run): CJ faces the held car (GTA side); the move comes back only after 0.3 s within
+2 m; THAW stall log (`vehicles: STALL`) records what the skater does when he falls off the spot.
+Test 32 PASSED (user + logs): 7 holds up to 50 s, CJ on the spot and facing the car (0.0 deg off), no hill stutter.
+Not tested: faster than ~55 km/h; the stall log (never triggered). Next: bails when riding into a car; a pool of proxies for several cars. Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 

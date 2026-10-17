@@ -141,6 +141,7 @@ constexpr unsigned long kSkaterRows = 0x88;
 volatile unsigned long g_skater = 0;
 volatile float g_faceFixMax = 0.0f;   // degrees, the largest correction since the last log
 volatile LONG g_faceFixes = 0;
+volatile float g_faceFixLast = 0.0f;  // test 32: the last correction (degrees, signed), for the stall log
 float g_steerApplied[2] = {};         // game thread
 struct Track {
     bool valid;
@@ -1367,6 +1368,7 @@ void VehGameThreadTick()
                         v[2] = z;
                     }
                     if (ad > g_faceFixMax) g_faceFixMax = ad;
+                    g_faceFixLast = d * 57.2958f;
                     InterlockedIncrement(&g_faceFixes);
                 }
             } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -1903,6 +1905,67 @@ followDone:
                 g_steer[0] = sa * fw[0] + sr * fw[2];
                 g_steer[1] = sa * fw[2] - sr * fw[0];
             }
+        }
+        // test 32 (test 31: uphill, the held skater stopped dead for 0.9 s at one spot while the car drove
+        // on, then reTHAWed let go): the last 0.5 s of the hold is kept, and when he falls more than 60 in
+        // off the spot it is written out, followed by every read for the next 2 s ("stall"), to find out
+        // what stops him. At most 3 such logs per hold.
+        {
+            struct StallRow {
+                double t;
+                float pos[3], vel[3], at[3], errAlong, errRight, proxy[3], face;
+            };
+            static StallRow ring[32];
+            static int ringN = 0, ringHead = 0, stallLogs = 0;
+            static double stallUntil = 0.0, lastRow = 0.0, holdStart = 0.0;
+            static int wasHold = 0;
+            if (g_holdSide != 0 && wasHold == 0) holdStart = sn;
+            if (g_holdSide == 0) {
+                if (wasHold != 0 && stallUntil != 0.0) log("vehicles: stall log ends (he let go)");
+                ringN = ringHead = stallLogs = 0;
+                stallUntil = 0.0;
+            } else if (pos && tv && sn - lastRow >= 0.015) {
+                lastRow = sn;
+                StallRow r = {};
+                r.t = sn;
+                for (int k = 0; k < 3; ++k) {
+                    r.pos[k] = pos[k];
+                    r.vel[k] = vel ? vel[k] : 0.0f;
+                    r.at[k] = at ? at[k] : 0.0f;
+                    r.proxy[k] = g_target.pos[k]; // a racy read: only for the log
+                }
+                r.errAlong = errAlong;
+                r.errRight = errRight;
+                r.face = g_faceFixLast;
+                auto put = [&](const StallRow& w, const char* what) {
+                    log("vehicles: stall %s %.3f s: skater %.1f %.1f %.1f | own speed %.1f %.1f %.1f | facing %.2f %.2f %.2f | "
+                        "%.0f in ahead / %.0f in right of the spot | test car at %.1f %.1f %.1f | facing fix %.0f deg",
+                        what, w.t - sn, w.pos[0], w.pos[1], w.pos[2], w.vel[0], w.vel[1], w.vel[2], w.at[0], w.at[1], w.at[2],
+                        w.errAlong, w.errRight, w.proxy[0], w.proxy[1], w.proxy[2], w.face);
+                };
+                if (stallUntil != 0.0 && sn <= stallUntil) {
+                    put(r, "now");
+                } else {
+                    if (stallUntil != 0.0) {
+                        log("vehicles: stall log ends (2 s); he is %.0f in from the spot", errLen);
+                        stallUntil = 0.0;
+                    }
+                    if (errLen > 60.0f && stallLogs < 3 && sn - holdStart >= 1.0) { // not while a grab is pulled in
+                        ++stallLogs;
+                        log("vehicles: STALL %d: the held skater is %.0f in from the spot behind GTA car %ld; the last %d reads, "
+                            "then every read for 2 s (times from now):",
+                            stallLogs, errLen, static_cast<long>(g_lastCarId), ringN);
+                        for (int i = 0; i < ringN; ++i) put(ring[(ringHead - ringN + i + 32) % 32], "before");
+                        put(r, "now");
+                        stallUntil = sn + 2.0;
+                        ringN = 0;
+                    }
+                }
+                ring[ringHead] = r;
+                ringHead = (ringHead + 1) % 32;
+                if (ringN < 32) ++ringN;
+            }
+            wasHold = g_holdSide;
         }
         // test 26 ("grabbed what looked like the air and wasn't skitching with it"): the skater was
         // 1-2.5 m from the proxy for 7 s before a hold was seen, so grabs outside the zone leave no

@@ -202,9 +202,61 @@ CVehicle* g_skitchIgnored = nullptr;
 constexpr float kSkitchGapM = 0.51f;      // 20 in, as the THAW side's kGap
 constexpr float kSkitchBlendMs = 200.0f;  // blend in when he grabs / out when he lets go
 constexpr float kSkitchSnapMax = 3.0f;    // metres: further than this from reTHAWed's place, do not move him
-CVehicle* g_skitchSnapCar = nullptr;
-DWORD g_skitchSnapSince = 0, g_skitchSnapLeft = 0;
-float g_skitchSnapOff[2] = {};
+CVehicle* g_skitchSnapCar = nullptr; // test 31: the move's goal (the held car's spot), nullptr = no move
+DWORD g_skitchSnapSince = 0;          // when the goal last changed (start of the 0.2 s glide)
+float g_skitchSnapOff[2] = {};        // the move CJ got last frame (x, y)
+float g_skitchSnapBase[2] = {};       // the move when the goal changed (the glide starts here)
+long g_skitchGoalChanges = 0;         // goal changes since the last "skitch move" log line
+// test 32: once the move stops during a hold (reTHAWed's place over 3 m from the spot), it only comes
+// back after that place has been within kSkitchBackM of the spot for kSkitchBackMs
+constexpr float kSkitchBackM = 2.0f;
+constexpr DWORD kSkitchBackMs = 300;
+CVehicle* g_skitchDropCar = nullptr; // the held car the move stopped for (nullptr: not stopped)
+DWORD g_skitchNearSince = 0;         // since when reTHAWed's place is back within 2 m (0: not yet)
+// test 32: CJ faces the held car's way, eased in and out with the move's glide
+float g_skitchFaceW = 0.0f, g_skitchFaceBase = 0.0f; // how much of the turn toward the car (0..1)
+float g_skitchCarYaw = 0.0f;                          // the held car's GTA heading (radians)
+
+void SkitchMoveClear()
+{
+    g_skitchSnapCar = nullptr;
+    g_skitchSnapSince = 0;
+    g_skitchSnapOff[0] = g_skitchSnapOff[1] = 0.0f;
+    g_skitchSnapBase[0] = g_skitchSnapBase[1] = 0.0f;
+    g_skitchGoalChanges = 0;
+    g_skitchDropCar = nullptr;
+    g_skitchNearSince = 0;
+    g_skitchFaceW = g_skitchFaceBase = 0.0f;
+}
+
+float WrapAngle(float a)
+{
+    while (a > kPi) a -= 2.0f * kPi;
+    while (a < -kPi) a += 2.0f * kPi;
+    return a;
+}
+
+// test 32: turn the skater's orientation rows (right, up, at; THAW world directions) about THAW's
+// up axis (y) by `th` radians, as vehscan.cpp turns reTHAWed's skater
+void TurnOrientYaw(float* o, float th)
+{
+    const float c = std::cos(th), sn = std::sin(th);
+    for (int r = 0; r < 3; ++r) {
+        float* v = o + 3 * r;
+        const float x = v[0] * c + v[2] * sn, z = -v[0] * sn + v[2] * c;
+        v[0] = x;
+        v[2] = z;
+    }
+}
+
+// GTA heading (radians) of the skater's facing row, or false if it points straight up / down
+bool OrientHeading(const float* o, float& heading)
+{
+    const Vec3 at = ThawDeltaToGta(Vec3{o[6], o[7], o[8]}, kMapping);
+    if (at.x * at.x + at.y * at.y < 1e-8f) return false;
+    heading = GtaHeadingFor(at.x, at.y);
+    return true;
+}
 
 void SkitchCollisionRestore(CPlayerPed* ped)
 {
@@ -219,6 +271,7 @@ void SkitchCollisionRestore(CPlayerPed* ped)
 void TurnOff(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* reason)
 {
     SkitchCollisionRestore(ped); // never leave skate mode with CJ's collision off
+    SkitchMoveClear();           // test 31: a quick restart starts with no skitch move
     g.on = false;
     g.haveLastTarget = false;
     g.lastHold = nullptr;
@@ -856,22 +909,12 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     }
     t.z += kBoardLift; // phase 5-1: CJ stands on the board's deck
 
-    // Never below GTA's ground (THAW's slopes don't exist in GTA).
-    float gz = 0.0f;
-    const bool haveGround = GroundZ(t.x, t.y, t.z, gz);
-    if (haveGround && t.z < gz + g.feetOffset + kBoardLift) {
-        t.z = gz + g.feetOffset + kBoardLift;
-        ++g.clamps;
-    }
-
-    // 8.33: keep CJ out of the cars (they are solid to him) - unless reTHAWed is
-    // towing him along one, where being against / inside it is the point.
-    if (link->thawSkitching != 1) PushOutOfCars(t, log);
-
     // 8.51 step 8 (test 23: "cj appears to be pushing the cars forward when they slow down or
     // stop"): while he holds a car (reTHAWed's skitch on a proxy, link thawSkitching / thawSkitchId),
     // GTA ignores collisions between CJ and that car, so a car that brakes is not shoved along by
     // the CJ we place behind it every frame. Cleared again when he lets go.
+    // test 31 (Codex review): this comes before the ground check and the car push-out, so both
+    // look at the place CJ really ends up (the skitch move used to be added after them).
     {
         // test-26 video (user: "the car not being able to move uphill like cj was dragging it"): with
         // only the ignored-collision link the held taxi still slowed from 0.13 to 0.00-0.02 m/frame
@@ -881,6 +924,9 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
         const LONG held = link->thawSkitchId;
         if (link->thawSkitching == 1 && held >= 0 && CPools::ms_pVehiclePool && held < CPools::ms_pVehiclePool->m_nSize)
             want = CPools::ms_pVehiclePool->GetAt(held);
+        const DWORD sNow = GetTickCount();
+        CVehicle* goalCar = nullptr; // the car whose spot CJ is moved to (nullptr: no move)
+        float goal[2] = {0.0f, 0.0f};
         if (want) {
             ped->m_pEntityIgnoredCollision = want;
             if (!g_skitchCollisionOff) {
@@ -894,8 +940,8 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
             // bumper at speed and up to 0.56 m to one side in turns (reTHAWed's steer lags the turn; its
             // numbers come one or two frames late). reTHAWed's skater is never seen, only CJ: so while he
             // holds, CJ is put on the spot behind the held car's bumper as GTA has the car this frame (this
-            // runs after GTA's world update, so it is where the car is drawn). Blended in over 0.2 s when
-            // he grabs and out over 0.2 s when he lets go. reTHAWed's pose (crouch, lean) is unchanged.
+            // runs after GTA's world update, so it is where the car is drawn). reTHAWed's pose (crouch,
+            // lean) is unchanged.
             const CVector cp = want->GetPosition();
             const CVector f = want->GetForward();
             const CVector r = want->GetRight();
@@ -907,50 +953,136 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
             const float back = rear + kSkitchGapM;
             const float sx = cp.x - f.x * back + r.x * midX, sy = cp.y - f.y * back + r.y * midX;
             const float ox = sx - t.x, oy = sy - t.y; // from reTHAWed's place to the spot
-            const DWORD sNow = GetTickCount();
-            if (g_skitchSnapCar != want) {
-                g_skitchSnapCar = want;
-                g_skitchSnapSince = sNow;
+            // further than 3 m: leave him (a bad sample, or reTHAWed's skater stuck, test 31); test 32: back
+            // only after 0.3 s within 2 m, so a place hovering around 3 m does not flip the move each frame
+            const float off = std::sqrt(ox * ox + oy * oy);
+            if (g_skitchDropCar != want) {
+                if (off > kSkitchSnapMax) {
+                    g_skitchDropCar = want;
+                    g_skitchNearSince = 0;
+                    log("skitch move: reTHAWed's place %.1f m from the spot behind car %ld: CJ left at reTHAWed's place", off,
+                        static_cast<long>(held));
+                }
+            } else if (off < kSkitchBackM) {
+                if (g_skitchNearSince == 0) g_skitchNearSince = sNow;
+                if (sNow - g_skitchNearSince >= kSkitchBackMs) {
+                    g_skitchDropCar = nullptr;
+                    log("skitch move: reTHAWed's place within %.1f m of the spot for %lu ms: CJ back on the spot behind car %ld",
+                        kSkitchBackM, kSkitchBackMs, static_cast<long>(held));
+                }
+            } else {
+                g_skitchNearSince = 0;
             }
-            float w = static_cast<float>(sNow - g_skitchSnapSince) / kSkitchBlendMs;
-            if (w > 1.0f) w = 1.0f;
-            if (ox * ox + oy * oy > kSkitchSnapMax * kSkitchSnapMax) w = 0.0f; // far off: leave him (a bad sample)
-            g_skitchSnapOff[0] = ox * w;
-            g_skitchSnapOff[1] = oy * w;
-            g_skitchSnapLeft = sNow;
-            static DWORD nextWhereLog = 0;
-            if (sNow >= nextWhereLog) {
-                nextWhereLog = sNow + 500;
+            if (g_skitchDropCar != want) {
+                goalCar = want;
+                goal[0] = ox;
+                goal[1] = oy;
+            }
+            g_skitchCarYaw = GtaHeadingFor(f.x, f.y);
+            static DWORD lastWhereLog = 0;
+            if (sNow - lastWhereLog >= 500) {
+                lastWhereLog = sNow;
                 const float dx = t.x - cp.x, dy = t.y - cp.y;
-                log("skitch where: reTHAWed's place %.2f m along / %.2f m right of car %ld's centre; CJ put on the spot "
-                    "%.2f m behind it (rear bumper %.2f + %.2f), %.0f%% of the way; car heading %.1f deg, speed %.2f",
-                    dx * f.x + dy * f.y, dx * r.x + dy * r.y, static_cast<long>(held), back, rear, kSkitchGapM, w * 100.0f,
-                    atan2f(-f.x, f.y) * 57.2958f, want->m_vecMoveSpeed.Magnitude());
+                // the move CJ really gets is in the "skitch move" line below
+                log("skitch where: reTHAWed's place %.2f m along / %.2f m right of car %ld's centre; spot %.2f m behind "
+                    "it (rear bumper %.2f + %.2f)%s; car heading %.1f deg, speed %.2f",
+                    dx * f.x + dy * f.y, dx * r.x + dy * r.y, static_cast<long>(held), back, rear, kSkitchGapM,
+                    goalCar ? "" : ", CJ NOT MOVED THERE (went over 3 m, not back within 2 m for 0.3 s yet)", atan2f(-f.x, f.y) * 57.2958f,
+                    want->m_vecMoveSpeed.Magnitude());
             }
         } else if (g_skitchIgnored || g_skitchCollisionOff) {
             SkitchCollisionRestore(ped);
             log("skitch: CJ collides with cars again");
         }
+        if (!want) {
+            g_skitchDropCar = nullptr;
+            g_skitchNearSince = 0;
+        }
+
+        // test 31 (Codex review of test 30): the move has one goal at a time (the held car's spot, or
+        // none). When the goal changes - grab, let-go, another car, crossing the 3 m limit either way -
+        // the move eases from wherever it is now to the new goal over 0.2 s (S-curve), then follows the
+        // goal exactly. The old timer restarted from zero on a car switch or a re-grab, and the 3 m test
+        // dropped and restored the whole move in one frame: both were visible jumps.
+        if (goalCar != g_skitchSnapCar) {
+            g_skitchSnapCar = goalCar;
+            g_skitchSnapSince = sNow;
+            g_skitchSnapBase[0] = g_skitchSnapOff[0];
+            g_skitchSnapBase[1] = g_skitchSnapOff[1];
+            g_skitchFaceBase = g_skitchFaceW;
+            ++g_skitchGoalChanges;
+        }
+        float u = static_cast<float>(sNow - g_skitchSnapSince) / kSkitchBlendMs;
+        if (u > 1.0f) u = 1.0f;
+        const float e = u * u * (3.0f - 2.0f * u);
+        g_skitchSnapOff[0] = g_skitchSnapBase[0] + (goal[0] - g_skitchSnapBase[0]) * e;
+        g_skitchSnapOff[1] = g_skitchSnapBase[1] + (goal[1] - g_skitchSnapBase[1]) * e;
+        // test 32 (test 31: after turns CJ kept facing the old way, 45-81 deg off the car, for many
+        // seconds: reTHAWed undoes vehscan's facing fix): while the move has the car's spot as its goal,
+        // the skater's orientation as we got it (CJ's facing, lean, body and board all come from it) is
+        // turned to the car's heading. Eased with the same glide; reTHAWed's own skater is not touched.
+        g_skitchFaceW = g_skitchFaceBase + ((goalCar ? 1.0f : 0.0f) - g_skitchFaceBase) * e;
+        float faceBefore = 0.0f, faceAfter = 0.0f; // degrees off the car's heading, for the log
+        if (g_skitchFaceW > 0.0f && (s.flags & kPoseValid)) {
+            float have = 0.0f;
+            if (OrientHeading(s.orient, have)) {
+                const float d = WrapAngle(g_skitchCarYaw - have);
+                const float turn = d * g_skitchFaceW;
+                float o[9];
+                for (int k = 0; k < 9; ++k) o[k] = s.orient[k];
+                TurnOrientYaw(o, -kMapping.ySign * turn); // THAW's y turn shows in GTA as -ySign times it
+                float now = have;
+                if (OrientHeading(o, now) && fabsf(WrapAngle(g_skitchCarYaw - now)) > fabsf(d) * (1.0f - g_skitchFaceW) + 0.02f) {
+                    // the turn went the wrong way: the other sign (a fallback; logged)
+                    static bool warned = false;
+                    if (!warned) {
+                        warned = true;
+                        log("skitch face: WARNING: the turn sign was wrong (%.1f deg off after, %.1f before); using the other",
+                            WrapAngle(g_skitchCarYaw - now) * 180.0f / kPi, d * 180.0f / kPi);
+                    }
+                    for (int k = 0; k < 9; ++k) o[k] = s.orient[k];
+                    TurnOrientYaw(o, kMapping.ySign * turn);
+                    OrientHeading(o, now);
+                }
+                for (int k = 0; k < 9; ++k) s.orient[k] = o[k];
+                faceBefore = d * 180.0f / kPi;
+                faceAfter = WrapAngle(g_skitchCarYaw - now) * 180.0f / kPi;
+            }
+        }
+        if (g_skitchSnapOff[0] != 0.0f || g_skitchSnapOff[1] != 0.0f) {
+            // his height follows the ground at the new spot (on a slope it is higher or lower there)
+            float gzFrom = 0.0f, gzTo = 0.0f;
+            const bool haveFrom = GroundZ(t.x, t.y, t.z, gzFrom);
+            const float z0 = t.z;
+            t.x += g_skitchSnapOff[0];
+            t.y += g_skitchSnapOff[1];
+            if (haveFrom && GroundZ(t.x, t.y, z0, gzTo) && fabsf(gzTo - gzFrom) < 1.0f) t.z += gzTo - gzFrom;
+        }
+        if (want || g_skitchSnapOff[0] != 0.0f || g_skitchSnapOff[1] != 0.0f) {
+            static DWORD lastMoveLog = 0;
+            if (sNow - lastMoveLog >= 500) {
+                lastMoveLog = sNow;
+                const float m = std::sqrt(g_skitchSnapOff[0] * g_skitchSnapOff[0] + g_skitchSnapOff[1] * g_skitchSnapOff[1]);
+                log("skitch move: CJ moved %.2f m from reTHAWed's place (glide %.0f%% done, toward %s); goal changes %ld; "
+                    "face: reTHAWed's skater %.1f deg off the car, CJ %.1f deg off (turn %.0f%%)",
+                    m, u * 100.0f, goalCar ? "the spot" : "no move", g_skitchGoalChanges, faceBefore, faceAfter,
+                    g_skitchFaceW * 100.0f);
+                g_skitchGoalChanges = 0;
+            }
+        }
     }
 
-    // test 29: the skitch spot (see above); after he lets go the last offset fades out over 0.2 s
-    {
-        const DWORD fNow = GetTickCount();
-        float k = 1.0f;
-        if (g_skitchIgnored == nullptr) {
-            g_skitchSnapCar = nullptr;
-            const DWORD since = fNow - g_skitchSnapLeft;
-            k = since >= kSkitchBlendMs ? 0.0f : 1.0f - static_cast<float>(since) / kSkitchBlendMs;
-        }
-        if (k > 0.0f && (g_skitchSnapOff[0] != 0.0f || g_skitchSnapOff[1] != 0.0f)) {
-            t.x += g_skitchSnapOff[0] * k;
-            t.y += g_skitchSnapOff[1] * k;
-            float gz2 = 0.0f;
-            if (GroundZ(t.x, t.y, t.z, gz2) && t.z < gz2 + g.feetOffset + kBoardLift) t.z = gz2 + g.feetOffset + kBoardLift;
-        } else if (k <= 0.0f) {
-            g_skitchSnapOff[0] = g_skitchSnapOff[1] = 0.0f;
-        }
+    // Never below GTA's ground (THAW's slopes don't exist in GTA).
+    float gz = 0.0f;
+    const bool haveGround = GroundZ(t.x, t.y, t.z, gz);
+    if (haveGround && t.z < gz + g.feetOffset + kBoardLift) {
+        t.z = gz + g.feetOffset + kBoardLift;
+        ++g.clamps;
     }
+
+    // 8.33: keep CJ out of the cars (they are solid to him) - unless reTHAWed is
+    // towing him along one, where being against / inside it is the point.
+    if (link->thawSkitching != 1) PushOutOfCars(t, log);
     ped->SetPosn(CVector(t.x, t.y, t.z));
     ped->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
     float heading = 0.0f;

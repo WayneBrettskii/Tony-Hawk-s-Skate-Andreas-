@@ -50,9 +50,10 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 - **On-screen hints** (tested 2026-10-12): GTA's own black message box says **`Press L3+R3 to Skate`** when you are on foot (once per session), and **`Press L3+R3 to toggle BMX mode`** while you are on a BMX (at most once a minute). It never covers a message GTA itself is showing, and stays quiet in cars.
 
+- **Skitching on GTA cars, with reTHAWed's own skitch** (tested 2026-10-17, test 32): needs a map built with `--proxy-cars`; press **F2** in reTHAWed to turn follow mode on, then grab a moving car from behind with **Up** (reTHAWed's skitch). CJ holds on at the rear bumper, faces the car's way through turns and up hills; holds of up to 50 s seen. Limits: one car at a time; not tested faster than about 55 km/h; riding into a car stops you at its side (no bail yet); landing on a car's roof from a jump pushes you off its side.
+
 ## What doesn't work / not tested
 
-- **Skitching, reTHAWed's way** (8.42, not tested yet): press **Up** directly behind a moving car to grab on, **Down** to let go. Balance (Left and Right) is not in yet, and the tow point and speeds are ours, not reTHAWed's. Before 8.42 it was a tow on **L1** from any side.
 - **Free skate on Play** now works (8.35 road 3, tested 2026-10-14): about 8 seconds after reTHAWed opens, the map loads in free skate by itself. If it ever doesn't, load it by hand: alt-tab to reTHAWed and pick Free Skate, your map, and your skater. The earlier attempts that did not work are in `docs/DESIGN.md` 8.35.
 
 - **GTA in exclusive full screen freezes reTHAWed** when you switch back to reTHAWed (not caused by our code; happens without it). Run GTA in a window instead (see Requirements). With GTA in a window our full setup works (tested 2026-10-07, GTA on its main menu; not yet tested with GTA in a loaded game).
