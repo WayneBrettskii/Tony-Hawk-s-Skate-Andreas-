@@ -17,7 +17,7 @@ These don't come with the download — set them up yourself, in any order:
 |---|---|
 | **GTA San Andreas, 1.0 US** | The "HoodLum" build. SkateAndreas checks the file and **won't start** on other versions (including the Steam 3.0 one). |
 | **ASI Loader and Mod Loader** | Most GTA modding setups already have these. Without them GTA ignores `.asi` files, and the mod can't load. |
-| **reTHAWed 5.0.0.1** | Its own folder, anywhere you like. SkateAndreas only *reads* from reTHAWed — nothing of ours is ever written inside it. |
+| **reTHAWed 5.0.0.1 or 5.0.0.2** | Its own folder, anywhere you like. SkateAndreas only *reads* from reTHAWed — nothing of ours is ever written inside it. |
 | **GTA in a window or borderless** | **Not** exclusive full screen — in full screen, switching to reTHAWed freezes it. Press **Alt+Enter** in GTA to cycle the display mode, or install ThirteenAG's Windowed Mode plugin. |
 
 **You do not need Python.** The download carries its own small Python for the map tool in step 3.
@@ -157,7 +157,7 @@ copied into GTA, so follow what the game shows you for grinds and tricks.
 - **No controller in reTHAWed** — it's set up for a PlayStation controller. A real Xbox controller
   may be ignored by reTHAWed for now.
 - **A different reTHAWed version** — the launcher warns (amber) but still starts. If skating
-  misbehaves, put 5.0.0.1 back, or send us the logs and we'll look.
+  misbehaves, put 5.0.0.2 or 5.0.0.1 back, or send us the logs and we'll look.
 - **Nothing else obvious** — check `README.md` for the current list of known limits.
 
 ---

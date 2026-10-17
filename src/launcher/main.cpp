@@ -458,7 +458,7 @@ std::vector<SetupCheck> RunChecks()
 
     // 1. reTHAWed.exe, present and the expected version.
     {
-        SetupCheck c{L"reTHAWed 5.0.0.1", false, false, L""};
+        SetupCheck c{L"reTHAWed 5.0.0.1 or 5.0.0.2", false, false, L""};
         const std::wstring exe = g_rethawedDir + L"\\reTHAWed.exe";
         WIN32_FILE_ATTRIBUTE_DATA info = {};
         if (!GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &info)) {

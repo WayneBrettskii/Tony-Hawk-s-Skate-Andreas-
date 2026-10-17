@@ -2,6 +2,35 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] Release zip d8d79d8 on the second install: CJ sent to East LS, no control - cause found (reTHAWed 5.0.0.2), no change yet
+
+**User:** "it's teleporting CJ to East Los Santos and not allowing me to move while in skate mode" (Desktop install, GTA now windowed, new zip, new map installed correctly).
+**Read (read only):** the Desktop install's logs; its reTHAWed's `version.txt` and `rthw.dll`; the D: install's for comparison.
+**Found:** reTHAWed itself is fine now: the map loads by itself (`autostart road 3: IT WORKED`), rails are placed. But the Desktop reTHAWed is **version 5.0.0.2** (`version.txt`), the D: one 5.0.0.1; `reTHAWed.exe` is the same size (the exe check passes), `rthw.dll` is not (different SHA-256). thaw.log: `autostart road 3: code check in rthw.dll (add player, 0x65154C40) DIFFERENT; not joining a controller`: our plugin never makes the controller player 1, so reTHAWed never reads the input we pass it (**can't move**). GTA's skate start then asked reTHAWed to move its skater to CJ and got no answer in 1.5 s (`reTHAWed didn't move its skater in time (no answer, 961 m away); CJ goes to the skater instead`), so CJ was moved to the skater, at the map's start in **East Los Santos**. That second part is most likely the same cause (no player joined), not proven. **Offline check of the two rthw.dll files (read only):** the add-player function is the same code, moved from 0x54C40 (5.0.0.1) to 0x54D40 (5.0.0.2); the data it uses (player count 0x269F00, slots 0x269EF0, opened pads 0x269FE8 / 0x269FF0) is at the same place in both (the same number of references to each). Nothing else of ours depends on rthw.dll addresses.
+**Next (waits for the user):** accept either address, each with the same byte-for-byte check; rebuild the zip; retest on the Desktop install. **Done (user: "yes, accept the 5.0.0.2 address too"):** `src/thaw/autostart.cpp` tries the add-player check at 0x54C40 (5.0.0.1) and 0x54D40 (5.0.0.2) and logs `rthw.dll add player found where reTHAWed 5.0.0.x has it`; `src/launcher/main.cpp` check label, INSTALL.md and README.md name both versions. Built (MSVC): no errors or warnings. **Not run** on 5.0.0.2 yet.
+
+## [2026-10-17] Release package SkateAndreas-d8d79d8.zip built (not tested on the second install yet)
+
+**Changed:** nothing in the source. `tools/make-release.ps1` run on commit d8d79d8 (clean): the uncommitted shooting step 1 was set aside with `git stash` for the build and put back afterwards, so it is **not** in the package. Output: `release/SkateAndreas-d8d79d8.zip` (12.29 MB) and its `.sha256` (the script removed the old 62d774b zip from `release/`).
+**Tested how:** the script's own checks: fresh build in `build-release`, `parser_tests` and `convert_test` passed, no user-profile paths in the binaries, the embeddable Python 3.14.8 downloaded from python.org with a matching SHA-256 and able to run the map tool. Then read back from the zip: 48 files (the 13 of ours + the bundled Python), no game files; the launcher carries `--proxy-cars 8 --thaw-dir`; the reTHAWed plugin has the automatic follow mode and no 8.42 tow; the GTA plugin has no shooting probe. **Not run** on the second install yet.
+**Still broken / not tested:** README.md's own opening lines (the user's words) still say skitching is planned and there is no car collision.
+**Next:** user tests the zip on the Desktop install with GTA in a window, then releases.
+
+## [2026-10-17] Release check on a second install (user's Desktop): it did not work - findings, no change
+
+**What was tested:** the user's second, fresh copy of GTA SA and reTHAWed (Desktop), with `SkateAndreas-62d774b.zip`: the **old** release from 2026-10-15 (no proxy cars, no pool, the old tow). No newer zip had been built yet (that step was stopped before it ran).
+**Read (read only):** that install's `logs` folder, its `SkateAndreas.ini`, GTA's `modloader` folder and log, reTHAWed's `Maps` folder.
+**Found:** the launcher started both games and loaded both plugins; the map was built and installed. But **reTHAWed hardly drew anything:** `lean drawing (10 s): 2 drawn` (on the working install: 132,287 in the same 10 s), so its front-end auto start (which waits for reTHAWed's frames) never ran and it stayed on its menu. GTA drew 0 frames a second most of the time too, and **GTA crashed** both runs about 45 s in (exit code 0xC0000005, an access violation; no crash line in gta.log). The working install has ThirteenAG's Windowed Mode plugin in `modloader\WindowedMode`; the Desktop install **does not**, so its GTA most likely runs in exclusive full screen, which INSTALL.md already warns freezes reTHAWed. Likely cause, **not proven**. Also seen: `modloader\PipeLink` holds only an old `PipeLink.log` (another mod that hooks the same controller function as ours); its .asi is gone and modloader did not load it in these runs.
+**Next:** user runs GTA in a window or borderless on that install (Alt+Enter, or the Windowed Mode plugin), and tests a **new** zip built from the latest commit.
+
+## [2026-10-17] 8.53 step 1: shooting probe and one test shot (GTA side)
+
+**Changed:** new `src/gta/shoot.cpp`, `src/gta/shoot.h`; `src/gta/main.cpp` calls `ShootFrameSafe` each world update; `CMakeLists.txt` lists the new file. In skate mode: a once-a-second log of what CJ holds; F12 fires one shot of the held gun from his right wrist along the camera through GTA's `CWeapon::Fire`, and logs the result, the ammo before / after and what lies on the line. Details: DESIGN 8.53 "Step 1 built".
+**Why:** step 1 of the shooting plan: does `CWeapon::Fire` work for CJ without GTA's own firing task?
+**Tested how:** built the GTA plugin with MSVC: no errors or warnings; `SkateAndreas.asi` copied to the GTA modloader folder. **Not run in game.**
+**Still broken / not tested:** everything in game; no shoot mode, aiming, wheel or arm pose yet (steps 2-4).
+**Next:** test 39 (user): skate with a pistol, F12 at a parked car.
+
 ## [2026-10-17] 8.53 plan: shooting while skating, on the board (no code)
 
 **Changed:** `docs/DESIGN.md` 8.53 (new): the plan, from the research doc "SkateAndreas research" (2026-10-15). GTA fires for CJ through `CWeapon::Fire` while reTHAWed keeps skating; 4 steps: probe + one test shot, shoot mode with lock-on, CJ's aiming upper body, rules.

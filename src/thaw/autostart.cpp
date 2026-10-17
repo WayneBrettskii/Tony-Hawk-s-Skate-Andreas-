@@ -383,7 +383,12 @@ void Clear(ParamList* p)
 // controller reTHAWed has opened - then mark no buttons held (reTHAWed reads a newly
 // joined pad only once the joining press is released). Addresses are rthw.dll
 // 5.0.0.1 offsets, checked byte for byte (with rthw's actual load address) first.
-constexpr DWORD kRthwAddPlayer = 0x00054C40;   // cdecl (SDL_GameController*)
+// 2026-10-17 (the user's second install runs reTHAWed 5.0.0.2: no controller joined, no control
+// in skate mode): in 5.0.0.2 the same add-player code sits 0x100 further on; the data it uses is
+// at the same offsets in both (checked offline in both rthw.dll files). Each place is tried with
+// the same byte check.
+constexpr DWORD kRthwAddPlayers[] = {0x00054C40, 0x00054D40}; // 5.0.0.1, 5.0.0.2; cdecl (SDL_GameController*)
+const char* const kRthwVersions[] = {"5.0.0.1", "5.0.0.2"};
 constexpr DWORD kRthwSlots = 0x00269EF0;       // 2 x {controller*, held count byte, ...}, 8 bytes each
 constexpr DWORD kRthwPlayerCount = 0x00269F00; // byte
 constexpr DWORD kRthwPads = 0x00269FE8;        // SDL_GameController** (controllers reTHAWed opened)
@@ -391,14 +396,14 @@ constexpr DWORD kRthwPadCount = 0x00269FF0;    // int
 
 using AddPlayerFn = void(__cdecl*)(void*);
 
-bool RthwCodeMatches(unsigned long base)
+bool RthwCodeMatches(unsigned long base, DWORD addPlayer)
 {
     unsigned char want[21] = {0x83, 0xEC, 0x18, 0x80, 0x3D, 0, 0, 0, 0, 0x01, 0x77, 0x24, 0x8B, 0x15, 0, 0, 0, 0, 0x85, 0xD2, 0x74};
     const unsigned long a = base + kRthwPlayerCount, b = base + kRthwSlots;
     memcpy(&want[5], &a, 4);
     memcpy(&want[14], &b, 4);
     __try {
-        return memcmp(reinterpret_cast<const void*>(base + kRthwAddPlayer), want, sizeof(want)) == 0;
+        return memcmp(reinterpret_cast<const void*>(base + addPlayer), want, sizeof(want)) == 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -411,11 +416,17 @@ void JoinFirstController()
         g_log("autostart road 3: rthw.dll not loaded; can't join a controller");
         return;
     }
-    if (!RthwCodeMatches(base)) {
-        g_log("autostart road 3: code check in rthw.dll (add player, 0x%08lX) DIFFERENT; not joining a controller",
-              base + kRthwAddPlayer);
+    int which = -1;
+    for (int i = 0; i < static_cast<int>(sizeof(kRthwAddPlayers) / sizeof(kRthwAddPlayers[0])) && which < 0; ++i)
+        if (RthwCodeMatches(base, kRthwAddPlayers[i])) which = i;
+    if (which < 0) {
+        g_log("autostart road 3: code check in rthw.dll (add player, at 0x%08lX or 0x%08lX) DIFFERENT (not reTHAWed 5.0.0.1 "
+              "or 5.0.0.2?); not joining a controller", base + kRthwAddPlayers[0], base + kRthwAddPlayers[1]);
         return;
     }
+    const DWORD kRthwAddPlayer = kRthwAddPlayers[which];
+    g_log("autostart road 3: rthw.dll add player found where reTHAWed %s has it (0x%08lX)", kRthwVersions[which],
+          base + kRthwAddPlayer);
     __try {
         void** slot0 = reinterpret_cast<void**>(base + kRthwSlots);
         if (*slot0) {

@@ -79,7 +79,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 - GTA San Andreas 1.0 US with ASI Loader and Mod Loader.
 - GTA in a window or borderless window, **not exclusive full screen**: [Windowed Mode plugin](https://github.com/ThirteenAG/III.VC.SA.WindowedMode) by ThirteenAG (v2.1) in `modloader\WindowedMode\`; Alt+Enter in GTA cycles window styles.
-- reTHAWed 5.0.0.1.
+- reTHAWed 5.0.0.1 or 5.0.0.2.
 - To build: Visual Studio 2026 with "Desktop development with C++".
 
 ## Building
