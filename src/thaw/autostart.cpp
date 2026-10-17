@@ -6,6 +6,7 @@
 
 #include "autostart.h"
 #include "skater.h"
+#include "input.h" // 8.54: InputCallTotal
 #include "../common/link.h"
 
 #include <cstring>
@@ -409,6 +410,64 @@ bool RthwCodeMatches(unsigned long base, DWORD addPlayer)
     }
 }
 
+// 8.54 (the 5.0.0.2 install: joined, but reTHAWed never asked for a button; 3 controllers open
+// there): which open controllers are attached, SDL's own name for each; join the first attached
+// one; then, on this thread, if reTHAWed asks our input hook nothing for 3 s, give player 1 the
+// next attached controller (see JoinWatchTick).
+using SdlNameFn = const char*(__cdecl*)(void*);
+using SdlAttachedFn = int(__cdecl*)(void*);
+constexpr int kMaxPads = 16;
+constexpr ULONGLONG kJoinWatchMs = 3000;
+unsigned long g_joinBase = 0;   // rthw.dll's base while watching
+int g_joinIdx = -1;             // the controller player 1 has now (index into reTHAWed's open list)
+int g_joinTries = 0;            // controllers given to player 1 so far
+ULONGLONG g_joinAt = 0;         // when it got it
+LONG g_joinCalls = 0;           // our input hook's call count then
+int g_joinState = 0;            // 0 nothing to watch, 1 watching, 2 done
+
+bool PadAttached(void* pad)
+{
+    static SdlAttachedFn attached = nullptr;
+    if (!attached) {
+        HMODULE sdl = GetModuleHandleA("SDL2.dll");
+        if (sdl) attached = reinterpret_cast<SdlAttachedFn>(GetProcAddress(sdl, "SDL_GameControllerGetAttached"));
+    }
+    if (!attached || !pad) return pad != nullptr; // can't ask: count it as attached
+    __try {
+        return attached(pad) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+const char* PadName(void* pad)
+{
+    static SdlNameFn name = nullptr;
+    if (!name) {
+        HMODULE sdl = GetModuleHandleA("SDL2.dll");
+        if (sdl) name = reinterpret_cast<SdlNameFn>(GetProcAddress(sdl, "SDL_GameControllerName"));
+    }
+    if (!name || !pad) return "?";
+    __try {
+        const char* n = name(pad);
+        return n ? n : "(no name)";
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "?";
+    }
+}
+
+// The next attached controller after `from` (-1 = from the start), or -1.
+int NextAttachedPad(unsigned long base, int from)
+{
+    const int count = *reinterpret_cast<const int*>(base + kRthwPadCount);
+    void** pads = *reinterpret_cast<void***>(base + kRthwPads);
+    if (count <= 0 || !pads) return -1;
+    const int n = count < kMaxPads ? count : kMaxPads;
+    for (int i = from + 1; i < n; ++i)
+        if (pads[i] && PadAttached(pads[i])) return i;
+    return -1;
+}
+
 void JoinFirstController()
 {
     const unsigned long base = reinterpret_cast<unsigned long>(GetModuleHandleA("rthw.dll"));
@@ -440,14 +499,67 @@ void JoinFirstController()
                   "reTHAWed in front once", count);
             return;
         }
-        reinterpret_cast<AddPlayerFn>(base + kRthwAddPlayer)(pads[0]);
+        for (int i = 0; i < count && i < kMaxPads; ++i)
+            g_log("autostart road 3: open controller %d: 0x%p \"%s\" attached %s", i, pads[i], PadName(pads[i]),
+                  PadAttached(pads[i]) ? "yes" : "NO");
+        int pick = NextAttachedPad(base, -1);
+        if (pick < 0) {
+            g_log("autostart road 3: none of the %d open controllers says it is attached; joining controller 0 anyway", count);
+            pick = 0;
+        }
+        reinterpret_cast<AddPlayerFn>(base + kRthwAddPlayer)(pads[pick]);
         unsigned char* held = reinterpret_cast<unsigned char*>(base + kRthwSlots + 4);
         const unsigned char was = *held;
         *held = 0; // no buttons held: reTHAWed reads it from now on
-        g_log("autostart road 3: joined controller 0x%p (of %d open) as player 1 (players now %u, held count %u -> 0)",
-              pads[0], count, *reinterpret_cast<const unsigned char*>(base + kRthwPlayerCount), was);
+        g_log("autostart road 3: joined controller %d, 0x%p (of %d open) as player 1 (players now %u, held count %u -> 0)",
+              pick, pads[pick], count, *reinterpret_cast<const unsigned char*>(base + kRthwPlayerCount), was);
+        g_joinBase = base;
+        g_joinIdx = pick;
+        g_joinTries = 1;
+        g_joinAt = GetTickCount64();
+        g_joinCalls = InputCallTotal();
+        g_joinState = 1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_log("autostart road 3: joining a controller FAULTED (0x%08X)", static_cast<unsigned>(GetExceptionCode()));
+    }
+}
+
+// 8.54: after the join, on reTHAWed's drawing thread (the join's thread). Does reTHAWed read the
+// joined controller (our input hook asked at all)? If not within 3 s, the next attached one.
+void JoinWatchTick()
+{
+    if (g_joinState != 1) return;
+    const ULONGLONG now = GetTickCount64();
+    const LONG calls = InputCallTotal();
+    if (calls != g_joinCalls) {
+        g_log("autostart road 3: reTHAWed reads controller %d (%ld questions to our input hook since it got it)", g_joinIdx,
+              static_cast<long>(calls - g_joinCalls));
+        g_joinState = 2;
+        return;
+    }
+    if (now - g_joinAt < kJoinWatchMs) return;
+    __try {
+        const int next = NextAttachedPad(g_joinBase, g_joinIdx);
+        if (next < 0) {
+            g_log("autostart road 3: reTHAWed asked nothing in %llu s with controller %d, and no other attached controller is "
+                  "left (%d tried): no controller input in reTHAWed", kJoinWatchMs / 1000, g_joinIdx, g_joinTries);
+            g_joinState = 2;
+            return;
+        }
+        void** pads = *reinterpret_cast<void***>(g_joinBase + kRthwPads);
+        void** slot0 = reinterpret_cast<void**>(g_joinBase + kRthwSlots);
+        unsigned char* held = reinterpret_cast<unsigned char*>(g_joinBase + kRthwSlots + 4);
+        g_log("autostart road 3: reTHAWed asked nothing in %llu s with controller %d: switching player 1 to controller %d, "
+              "0x%p \"%s\"", kJoinWatchMs / 1000, g_joinIdx, next, pads[next], PadName(pads[next]));
+        *slot0 = pads[next];
+        *held = 0;
+        g_joinIdx = next;
+        ++g_joinTries;
+        g_joinAt = now;
+        g_joinCalls = calls;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_log("autostart road 3: switching controllers FAULTED (0x%08X)", static_cast<unsigned>(GetExceptionCode()));
+        g_joinState = 2;
     }
 }
 
@@ -598,6 +710,7 @@ void AutoStartPresentTick(void* device)
     if (InterlockedCompareExchange(&g_r3busy, 1, 0) != 0) return; // re-entered from inside our own call
     const ULONGLONG now = GetTickCount64();
     const DWORD me = GetCurrentThreadId();
+    if (g_r3windowThread == me) JoinWatchTick(); // 8.54
     if (!g_r3windowThread && device) {
         D3DDEVICE_CREATION_PARAMETERS cp = {};
         if (SUCCEEDED(static_cast<IDirect3DDevice9*>(device)->GetCreationParameters(&cp)) && cp.hFocusWindow) {

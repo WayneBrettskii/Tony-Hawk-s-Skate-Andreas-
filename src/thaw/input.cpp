@@ -270,6 +270,11 @@ void InputTick(LinkBlock* link, InputLogFn log)
     }
 }
 
+LONG InputCallTotal()
+{
+    return g_calls[0] + g_calls[1] + g_calls[2];
+}
+
 void InputSecond(InputLogFn log)
 {
     if (!g_installed) return;

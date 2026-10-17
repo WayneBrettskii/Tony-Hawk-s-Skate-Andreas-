@@ -1128,6 +1128,12 @@ patterns (another reTHAWed build) are left alone.
 the test is off for good and we look for a per-frame point in its game loop instead); the menu may
 also set things we haven't seen (the selected skater, a "session" flag).
 
+### 8.54 Controller join on reTHAWed 5.0.0.2 (user 2026-10-17, release test on a second install: "CJ still teleported to East Los Santos and couldn't control him")
+
+**Why:** on the second install (reTHAWed 5.0.0.2) the road-3 join (8.35 fix 1) now works, but reTHAWed never asks for a button afterwards: no `input: questions answered` line at all. All our game-thread work hangs off that question (moving the skater to CJ, rail writes, proxy cars), so CJ is moved to the skater in East LS and nothing reaches the skater. 3 controllers were open there (2 on the D: install); the first one is likely not the pad reTHAWed reads.
+
+**Change (`src/thaw/autostart.cpp`, `src/thaw/input.cpp`):** (1) when joining, every controller reTHAWed has open is logged (its number, SDL's name for it, attached yes / no; SDL2.dll's own `SDL_GameControllerName` / `SDL_GameControllerGetAttached`, read only). (2) The first **attached** one is joined (was: simply the first). (3) Afterwards, on reTHAWed's drawing thread: if reTHAWed has asked our input hook nothing for 3 s, player 1 is given the next attached controller (the player slot's controller pointer is changed, its held count set to 0, as the join does), and so on through all of them; the first time it does ask, the log says which controller it reads. Log: `autostart road 3: open controller N: 0x... "<name>" attached yes/no`, `... switching player 1 to controller N`, `... reTHAWed reads controller N (N questions in the first 3 s)`. **Risk:** changing the slot's controller directly is what rthw's own add-player does to that slot, but not through its code; if reTHAWed keeps other per-player state for the pad, it may need more. Test: the second install, skate mode wherever CJ is: CJ stays put and the skater moves.
+
 ### 8.53 Shooting while skating, on the board (user 2026-10-17: "start with shooting on the board instead: write its plan in DESIGN first, no code yet") - PLAN, waiting for the go-ahead
 
 **Source:** the research doc "SkateAndreas research: skitching, rails, shooting, natas" (2026-10-15, section "Shooting on the board and the BMX"). The BMX drive-by comes later.

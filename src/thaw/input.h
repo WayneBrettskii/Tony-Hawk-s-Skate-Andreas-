@@ -35,6 +35,9 @@ void InputTick(LinkBlock* link, InputLogFn log);
 // Once per second: counts per source.
 void InputSecond(InputLogFn log);
 
+// 8.54: how many times reTHAWed has asked our input hook (buttons and axes, any source) so far.
+LONG InputCallTotal();
+
 // Pure conversions (also used by the unit test).
 short GtaStickToSdl(short gta);
 short GtaTriggerToSdl(short gta);

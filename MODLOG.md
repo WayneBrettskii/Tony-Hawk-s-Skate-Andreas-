@@ -2,6 +2,12 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] Zip 59691e0 on the 5.0.0.2 install: controller joins now, but reTHAWed still never reads it - findings, no change
+
+**User:** "CJ still teleported to East Los Santos and couldn't control him in skate mode." The Desktop install runs the 59691e0 files (hashes match the package).
+**Found:** the join now works (`rthw.dll add player found where reTHAWed 5.0.0.2 has it`, `joined controller 0x03D991F8 (of 3 open) as player 1`), the map loads by itself, input is passed on (`input: source now GTA`). But **reTHAWed never calls the controller functions we replaced**: there is no `input: questions answered` line in the whole log (on the 5.0.0.1 install, about 1,200 a second once a controller has joined). Our game-thread work runs from that same call (the BMX code that moves the skater to CJ, the rail pool's writes, the proxy cars), so nothing of it runs either: GTA's request to move the skater gets no answer and CJ is moved to the skater (East LS). **Checked offline (read only):** rthw.dll 5.0.0.2 imports the same 28 SDL functions as 5.0.0.1, calls them through the same kind of jump stub, and its controller-reading code is the same, only 0x100 further on. So the reason is most likely **which controller was joined**: 3 were open on this run (2 on the D: install), and our touchpad reader lost and found the PS5 controller again at 3-8 s (`no PS5 controller (DualSense) found; looking again`), so the first open controller may be a stale or different device that reTHAWed then skips. Not proven.
+**Next (waits for the user):** log every open controller (name, attached) when joining; join the first attached real gamepad; if reTHAWed asks for no buttons within 3 s, try the next one. **Done (user: "yes ... commit and rebuild the zip"), DESIGN 8.54:** `src/thaw/autostart.cpp` logs every open controller (`open controller N: 0x... "name" attached yes/NO`), joins the first attached one, and `JoinWatchTick` (on reTHAWed's drawing thread) gives player 1 the next attached controller when reTHAWed has asked our input hook nothing for 3 s; `src/thaw/input.cpp` / `input.h`: `InputCallTotal`. Built (MSVC): no errors or warnings. **Not run** yet.
+
 ## [2026-10-17] Release zip d8d79d8 on the second install: CJ sent to East LS, no control - cause found (reTHAWed 5.0.0.2), no change yet
 
 **User:** "it's teleporting CJ to East Los Santos and not allowing me to move while in skate mode" (Desktop install, GTA now windowed, new zip, new map installed correctly).

@@ -98,6 +98,8 @@ Committed 1400200. User tests the button and no-F2 skitching tomorrow, then rele
 Release zip built: release/SkateAndreas-d8d79d8.zip (from d8d79d8; no shooting code). User tests it on the Desktop install.
 Desktop test: reTHAWed there is 5.0.0.2; the controller join failed (no control, CJ sent to East LS). Fixed: both
 add-player addresses accepted; zip rebuilt. Shooting step 1 code is still uncommitted (kept out of the release).
+Still no input on 5.0.0.2 (reTHAWed never asks our hook). DESIGN 8.54: join the first attached controller, switch
+to the next if reTHAWed asks nothing for 3 s; all open controllers logged. Built, not run; zip rebuilt.
 Next feature: shooting on the board, plan in DESIGN 8.53 (no code; waiting for the go-ahead and the aim button).
 Shooting step 1 built (GTA plugin, not run): skate-mode weapon log once a second; F12 = one test shot via CWeapon::Fire (test 39). Next: video at speed; then bails on riding into a car; proxy pool.
 
