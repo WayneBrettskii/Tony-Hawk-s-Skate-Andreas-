@@ -77,7 +77,10 @@ Test 33: list OK on both sides. Found: the parked proxy carried the skater (on i
 East Los Santos; a side grab left CJ holding air (move dropped at 3 m); car-to-car slow (one proxy).
 Test 34 (built, reTHAWed plugin only, not run): the proxy waits instead of parking while he is on / next to it. Then pool step 2.
 Test 34 played: the wait fired once and parked when he was clear; no map jump. Landing on a car roof pushes CJ off
-the side (dead roof branch, deferred). Next: pool step 2. Next: video at speed; then bails on riding into a car; proxy pool.
+the side (dead roof branch, deferred). Next: pool step 2.
+Pool steps 2 + 3 built (reTHAWed plugin, not run): all 3 proxies follow their own GTA cars; grab any of them (test 35).
+Test 35: no freeze; holds on proxies 0 and 1 work. Pool mostly idle (only cars he is already behind get a proxy);
+clipping only when not skitching: cars without a proxy are not solid in reTHAWed. Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 

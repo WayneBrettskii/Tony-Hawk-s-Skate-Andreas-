@@ -85,11 +85,7 @@ SRWLOCK g_lock = SRWLOCK_INIT;
 volatile LONG g_follow = 0;
 int g_noseQuarter = 0;                // 0..3: extra turn of 0, 90, 180, 270 degrees
 struct Target { float pos[3]; float yaw; LONG version; LONG gen; };
-Target g_target = {};
-LONG g_appliedVersion = 0;
 volatile LONG g_applied = 0, g_skippedCopies = 0, g_refused = 0;
-DWORD g_lastCarSeen = 0;
-LONG g_lastCarId = -1;
 ULONGLONG g_nextLog = 0;
 DWORD g_turnCheckAt = 0;              // our thread: check the rotations this long after a test move
 
@@ -118,6 +114,7 @@ constexpr double kSlideS = 0.25;      // s for the full sideways slide
 constexpr float kDefaultBack = 87.0f; // 2.2 m when the GTA side has no number
 float g_shift = 0.0f;                 // (step 6 slide, replaced by the steer below; kept for the log)
 volatile LONG g_holdSide = 0;         // -1 left, +1 right, 0 not holding (our thread)
+volatile LONG g_heldSlot = -1;        // 8.52: the proxy he holds (index into g_cars / g_slots), -1 = none
 // 8.51 step 7 (test 20 + user: "even when I put the meter back to the center he would stay on the
 // side"): in a turn reTHAWed keeps the skater where he was instead of turning him with the car, so
 // after a 25-35 degree turn he hangs 40-55 in to the side. Steer: while he holds, our thread
@@ -155,7 +152,27 @@ struct Track {
     float err[3], errYaw;             // where we had the car minus the new sample, faded out over kBlendS
     double t;                         // when the sample arrived
 };
-Track g_track = {};
+// 8.52 step 2: one slot per proxy (g_cars[i] <-> g_slots[i]): its track, its target, its GTA car.
+// Track and target under g_lock; the rest is our thread's.
+struct Slot {
+    Track track;
+    Target target;
+    LONG appliedVersion;
+    LONG carId;                       // the GTA car it follows, -1 = parked (or never used)
+    DWORD lastSeen;                   // when its car was last wanted (GetTickCount)
+    float lastCp[3];                  // the last sample handed to the track (to tell a new one)
+    LONG lastId;
+    bool waitLogged;                  // test 34: "would park, but the skater is on it" logged
+};
+Slot g_slots[kMaxCars];
+void ResetSlots()
+{
+    for (int i = 0; i < kMaxCars; ++i) {
+        g_slots[i] = Slot{};
+        g_slots[i].carId = -1;
+        g_slots[i].lastId = -2;
+    }
+}
 double g_lastWrite = 0.0;
 volatile LONG g_samples = 0, g_snaps = 0;
 float g_errSum = 0.0f;                // inches, summed over the samples of the last second
@@ -177,15 +194,15 @@ float WrapPi(float a)
     return a;
 }
 
-// Where the track puts the car at time now (lock held).
-void TrackAt(double now, float* p, float& yaw)
+// Where a track puts its car at time now (lock held).
+void TrackAt(const Track& tr, double now, float* p, float& yaw)
 {
-    double dt = now - g_track.t;
+    double dt = now - tr.t;
     if (dt < 0.0) dt = 0.0;
     if (dt > kPredictMax) dt = kPredictMax;
     const float w = dt >= kBlendS ? 0.0f : static_cast<float>(1.0 - dt / kBlendS);
-    for (int k = 0; k < 3; ++k) p[k] = g_track.pos[k] + g_track.vel[k] * static_cast<float>(dt) + g_track.err[k] * w;
-    yaw = g_track.yaw + g_track.errYaw * w;
+    for (int k = 0; k < 3; ++k) p[k] = tr.pos[k] + tr.vel[k] * static_cast<float>(dt) + tr.err[k] * w;
+    yaw = tr.yaw + tr.errYaw * w;
 }
 
 // 8.51 step 4, first test (2026-10-15): reTHAWed froze about 2 s into a skitch on a following
@@ -266,6 +283,9 @@ std::string ProxyPath()
 bool LoadCars()
 {
     g_carCount = 0;
+    AcquireSRWLockExclusive(&g_lock);
+    ResetSlots();
+    ReleaseSRWLockExclusive(&g_lock);
     const std::string path = ProxyPath();
     FILE* f = nullptr;
     if (path.empty() || fopen_s(&f, path.c_str(), "r") != 0 || !f) {
@@ -610,63 +630,72 @@ void TurnRow(const float* v, float yaw, float* out)
     out[2] = -v[0] * s + v[2] * c;
 }
 
-void SetTarget(const float* pos, float yaw)
+void SetTarget(int slot, const float* pos, float yaw)
 {
     AcquireSRWLockExclusive(&g_lock);
-    for (int k = 0; k < 3; ++k) g_target.pos[k] = pos[k];
-    g_target.yaw = yaw;
-    g_target.gen = g_levelGen;
-    ++g_target.version;
+    Target& tg = g_slots[slot].target;
+    for (int k = 0; k < 3; ++k) tg.pos[k] = pos[k];
+    tg.yaw = yaw;
+    tg.gen = g_levelGen;
+    ++tg.version;
     ReleaseSRWLockExclusive(&g_lock);
 }
 
-// Game thread, lock held: write the test car's copies to the target. A copy that no longer holds
-// what we last wrote is skipped (its memory may have been reused).
-void ApplyLocked()
+// reTHAWed's game state allows writing the proxies now (our level, not the menus, the scan done)
+bool WriteAllowed()
 {
-    if (g_target.version == g_appliedVersion) return;
-    g_appliedVersion = g_target.version;
     const GameState st = ReadGameState();
-    if (!st.readOk || st.inFrontend != 0 || st.levelId != kOurLevel || g_target.gen != g_levelGen ||
-        g_scanState != 2 || g_carCount == 0) {
+    return st.readOk && st.inFrontend == 0 && st.levelId == kOurLevel && g_scanState == 2 && g_carCount > 0;
+}
+
+// Game thread, lock held: write a proxy's copies to its target. A copy that no longer holds
+// what we last wrote is skipped (its memory may have been reused). 8.52: any proxy, not only
+// the test car; `allowed` is WriteAllowed(), read once per pass.
+void ApplySlotLocked(int slot, bool allowed)
+{
+    Slot& sl = g_slots[slot];
+    const Target& tg = sl.target;
+    if (tg.version == sl.appliedVersion) return;
+    sl.appliedVersion = tg.version;
+    if (!allowed || tg.gen != g_levelGen) {
         InterlockedIncrement(&g_refused);
         return;
     }
-    Car& car = TestCar();
+    Car& car = g_cars[slot];
     int written = 0;
     for (int h = 0; h < car.hits; ++h) {
         Copy& cp = car.c[h];
         __try {
             float* w = reinterpret_cast<float*>(cp.a);
             if (!Near(w, car.cur, kApplyTol, kApplyTol)) { InterlockedIncrement(&g_skippedCopies); continue; }
-            for (int k = 0; k < 3; ++k) w[k] = g_target.pos[k];
+            for (int k = 0; k < 3; ++k) w[k] = tg.pos[k];
             if (cp.rows) {
                 float* m = reinterpret_cast<float*>(RowsAddr(cp));
-                for (int r = 0; r < 3; ++r) TurnRow(cp.r0[r], g_target.yaw, m + 4 * r);
+                for (int r = 0; r < 3; ++r) TurnRow(cp.r0[r], tg.yaw, m + 4 * r);
             }
             ++written;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             InterlockedIncrement(&g_skippedCopies);
         }
     }
-    // the turn sources (candidates): turned by the same amount from how they were found
-    for (int i = 0; i < g_srcCount; ++i) {
+    // the turn sources (candidates, test car only): turned by the same amount from how they were found
+    for (int i = 0; slot == g_fc && i < g_srcCount; ++i) {
         TurnSrc& t = g_src[i];
         __try {
             float* v = reinterpret_cast<float*>(t.a);
             if (t.kind == 1) {
                 const float h0 = atan2f(t.v0[t.sSlot], t.v0[t.cSlot]);
-                v[t.sSlot] = sinf(h0 + 0.5f * g_target.yaw);
-                v[t.cSlot] = cosf(h0 + 0.5f * g_target.yaw);
+                v[t.sSlot] = sinf(h0 + 0.5f * tg.yaw);
+                v[t.cSlot] = cosf(h0 + 0.5f * tg.yaw);
             } else {
-                v[0] = t.v0[0] + g_target.yaw;
+                v[0] = t.v0[0] + tg.yaw;
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
     }
     if (written) {
-        for (int k = 0; k < 3; ++k) car.cur[k] = g_target.pos[k];
-        car.yaw = g_target.yaw;
+        for (int k = 0; k < 3; ++k) car.cur[k] = tg.pos[k];
+        car.yaw = tg.yaw;
         InterlockedIncrement(&g_applied);
     }
 }
@@ -1320,69 +1349,84 @@ void VehGameThreadTick()
         InterlockedExchange(&g_hangPatched, done);
         InterlockedExchange(&g_hangPending, 0);
     }
-    if (g_follow && g_track.valid) {
-        // smooth following: place the car where the last GTA sample says it is now
-        const double now = NowSec();
-        if (now - g_lastWrite < kWriteEvery) return;
-        if (!TryAcquireSRWLockExclusive(&g_lock)) return;
-        if (g_track.valid) {
+    // 8.52 step 2: every proxy with a GTA car is placed each frame (one pass under the lock);
+    // parked ones and the turn tests get their single target written once
+    const double now = NowSec();
+    const bool follow = g_follow != 0;
+    if (follow && now - g_lastWrite < kWriteEvery) return;
+    {   // nothing to place or write: done (a racy peek is fine: the lock decides)
+        bool any = false;
+        for (int i = 0; i < g_carCount && !any; ++i)
+            any = (follow && g_slots[i].track.valid) || g_slots[i].target.version != g_slots[i].appliedVersion;
+        if (!any) return;
+    }
+    if (!TryAcquireSRWLockExclusive(&g_lock)) return;
+    const bool allowed = WriteAllowed();
+    const LONG held = g_heldSlot;
+    double dtw = now - g_lastWrite;
+    if (dtw < 0.0 || dtw > 0.1) dtw = 0.1;
+    const float stepMax = static_cast<float>(kSteerRate * dtw);
+    for (int k = 0; k < 2; ++k) { // the steer (step 7) belongs to the held proxy only
+        const float want = (g_holdSide != 0 && held >= 0) ? g_steer[k] : 0.0f;
+        const float d = want - g_steerApplied[k];
+        g_steerApplied[k] += d > stepMax ? stepMax : d < -stepMax ? -stepMax : d;
+    }
+    static LONG steerSlot = -1;
+    if (held >= 0 && held != steerSlot) { // a hold on another proxy: the old steer does not move over
+        g_steerApplied[0] = g_steerApplied[1] = 0.0f;
+        steerSlot = held;
+    }
+    for (int i = 0; i < g_carCount; ++i) {
+        Slot& sl = g_slots[i];
+        if (follow && sl.track.valid) {
+            // smooth following: place the car where the last GTA sample says it is now
             float p[3], yaw;
-            TrackAt(now, p, yaw);
+            TrackAt(sl.track, now, p, yaw);
             // step 6: the hold on the rear bumper; step 7: steered onto it while he holds
-            double dtw = now - g_lastWrite;
-            if (dtw < 0.0 || dtw > 0.1) dtw = 0.1;
-            const float stepMax = static_cast<float>(kSteerRate * dtw);
-            for (int k = 0; k < 2; ++k) {
-                const float want = g_holdSide != 0 ? g_steer[k] : 0.0f;
-                const float d = want - g_steerApplied[k];
-                g_steerApplied[k] += d > stepMax ? stepMax : d < -stepMax ? -stepMax : d;
+            const float along = kHoldBack - sl.track.back;
+            const float* f = sl.track.fwd;
+            p[0] += f[0] * along;
+            p[2] += f[2] * along;
+            if (i == steerSlot) { // the steer fades out on the proxy it was on after a let-go
+                p[0] += g_steerApplied[0];
+                p[2] += g_steerApplied[1];
             }
-            const float along = kHoldBack - g_track.back;
-            const float* f = g_track.fwd;
-            p[0] += f[0] * along + g_steerApplied[0];
-            p[2] += f[2] * along + g_steerApplied[1];
             // test 24 ("floated in the air while going uphill"): the proxy stands level, so the hold
             // is at the GTA car's centre height; behind a car going uphill the road is lower. The
             // proxy is put at the height of the spot behind the bumper on the car's slope.
-            p[1] -= g_track.rise * (g_track.back + kGap);
-            for (int k = 0; k < 3; ++k) g_target.pos[k] = p[k];
-            g_target.yaw = yaw;
-            g_target.gen = g_levelGen;
-            ++g_target.version;
-            g_lastWrite = now;
+            p[1] -= sl.track.rise * (sl.track.back + kGap);
+            for (int k = 0; k < 3; ++k) sl.target.pos[k] = p[k];
+            sl.target.yaw = yaw;
+            sl.target.gen = g_levelGen;
+            ++sl.target.version;
         }
-        ApplyLocked();
-        // step 8: face the held skater the GTA car's way
-        const unsigned long sk = g_skater;
-        if (g_holdSide != 0 && sk && g_track.valid) {
-            __try {
-                float* m = reinterpret_cast<float*>(sk + kSkaterRows);
-                const float* f = g_track.fwd;
-                const float have = atan2f(m[8], m[10]), want = atan2f(f[0], f[2]);
-                const float d = WrapPi(want - have);
-                const float ad = fabsf(d) * 57.2958f;
-                if (ad > 1.0f && ad < 90.0f) { // test 24: 177-178 deg at a grab turned him round; leave those
-
-                    const float c = cosf(d), sn = sinf(d);
-                    for (int r = 0; r < 3; r += 2) { // rows 0 and 2 turn about the up axis; row 1 (up) stays
-                        float* v = m + 4 * r;
-                        const float x = v[0] * c + v[2] * sn, z = -v[0] * sn + v[2] * c;
-                        v[0] = x;
-                        v[2] = z;
-                    }
-                    if (ad > g_faceFixMax) g_faceFixMax = ad;
-                    g_faceFixLast = d * 57.2958f;
-                    InterlockedIncrement(&g_faceFixes);
-                }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-            }
-        }
-        ReleaseSRWLockExclusive(&g_lock);
-        return;
+        ApplySlotLocked(i, allowed);
     }
-    if (g_target.version == g_appliedVersion) return; // nothing new (a racy peek is fine: the lock decides)
-    if (!TryAcquireSRWLockExclusive(&g_lock)) return;
-    ApplyLocked();
+    if (follow) g_lastWrite = now;
+    // step 8: face the held skater the GTA car's way
+    const unsigned long sk = g_skater;
+    if (follow && g_holdSide != 0 && held >= 0 && held < g_carCount && sk && g_slots[held].track.valid) {
+        __try {
+            float* m = reinterpret_cast<float*>(sk + kSkaterRows);
+            const float* f = g_slots[held].track.fwd;
+            const float have = atan2f(m[8], m[10]), want = atan2f(f[0], f[2]);
+            const float d = WrapPi(want - have);
+            const float ad = fabsf(d) * 57.2958f;
+            if (ad > 1.0f && ad < 90.0f) { // test 24: 177-178 deg at a grab turned him round; leave those
+                const float c = cosf(d), sn = sinf(d);
+                for (int r = 0; r < 3; r += 2) { // rows 0 and 2 turn about the up axis; row 1 (up) stays
+                    float* v = m + 4 * r;
+                    const float x = v[0] * c + v[2] * sn, z = -v[0] * sn + v[2] * c;
+                    v[0] = x;
+                    v[2] = z;
+                }
+                if (ad > g_faceFixMax) g_faceFixMax = ad;
+                g_faceFixLast = d * 57.2958f;
+                InterlockedIncrement(&g_faceFixes);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
     ReleaseSRWLockExclusive(&g_lock);
 }
 
@@ -1400,8 +1444,9 @@ void VehScanSecond(bool inOurLevel, void (*log)(const char*, ...))
                 g_cars[c].yaw = 0.0f;
             }
             InterlockedExchange(&g_follow, 0);
-            g_track.valid = false;
+            ResetSlots();
             InterlockedExchange(&g_holdSide, 0);
+            InterlockedExchange(&g_heldSlot, -1);
             g_srcCount = 0;
             g_lastFailedN = 0;
             g_followPending = false;
@@ -1600,7 +1645,7 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
                 InterlockedExchange(&g_follow, 0);
                 if (link) link->thawSkitchId = -1;
                 const float t3[3] = {pos[0] + fx / len * 300.0f, pos[1], pos[2] + fz / len * 300.0f};
-                SetTarget(t3, TestCar().yaw);
+                SetTarget(g_fc, t3, TestCar().yaw);
                 g_turnCheckAt = GetTickCount() + 1000;
                 log("vehicles (Shift+F2): follow mode off; the test car put in front of the skater at %.0f %.0f %.0f, turned %.0f deg",
                     t3[0], t3[1], t3[2], TestCar().yaw * 57.2958f);
@@ -1619,13 +1664,18 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
             }
             InterlockedExchange(&g_follow, g_follow ? 0 : 1);
             AcquireSRWLockExclusive(&g_lock);
-            g_track.valid = false;
+            for (int i = 0; i < kMaxCars; ++i) { // 8.52: every proxy stops where it is and is free again
+                g_slots[i].track.valid = false;
+                g_slots[i].carId = -1;
+                g_slots[i].lastId = -2;
+            }
             ReleaseSRWLockExclusive(&g_lock);
             InterlockedExchange(&g_holdSide, 0);
+            InterlockedExchange(&g_heldSlot, -1);
             if (link) link->thawSkitching = 0;
             if (!g_follow && link) link->thawSkitchId = -1;
-            log("vehicles (F2): follow mode %s%s", g_follow ? "ON: the test car follows the nearest moving GTA car (within 8 m)"
-                                                           : "OFF: the test car stays where it is",
+            log("vehicles (F2): follow mode %s%s", g_follow ? "ON: the proxies follow the moving GTA cars near the skater (up to 4 published)"
+                                                           : "OFF: the proxies stay where they are",
                 g_follow ? "; our own skitch (8.42) is off meanwhile, so Up is reTHAWed's" : "");
         }
     }
@@ -1634,7 +1684,7 @@ followDone:
         // F1 with follow mode off: turn the test car a quarter turn where it stands. From the
         // second F1 on, the copies the last check saw put back are watched from now (test 7).
         if (g_lastFailedN && !g_watchArmed) ArmWatch(g_lastFailed, g_lastFailedN, "from F1", log);
-        SetTarget(TestCar().cur, TestCar().yaw + 1.5707963f);
+        SetTarget(g_fc, TestCar().cur, TestCar().yaw + 1.5707963f);
         g_turnCheckAt = GetTickCount() + 1000;
         log("vehicles (F1): the test car turned a quarter turn where it stands (now %.0f deg from its start)",
             (TestCar().yaw + 1.5707963f) * 57.2958f);
@@ -1709,120 +1759,152 @@ followDone:
     }
     if (!ready || !g_follow || !link) return;
     const ULONGLONG now = GetTickCount64();
-    const Car& car = TestCar();
-    const float base = StartHeading(car);
-    bool have = link->gtaSkitchValid == 1;
-    float cp[3] = {}, cf[3] = {}, cv[3] = {};
-    const LONG id = link->gtaSkitchId;
-    for (int k = 0; k < 3; ++k) { cp[k] = link->gtaSkitchPos[k]; cf[k] = link->gtaSkitchFwd[k]; cv[k] = link->gtaSkitchVel[k]; }
-    for (int k = 0; k < 3 && have; ++k)
-        if (!(cp[k] > -1.0e6f && cp[k] < 1.0e6f) || !(cf[k] > -2.0f && cf[k] < 2.0f) || !(cv[k] > -1.0e5f && cv[k] < 1.0e5f))
-            have = false; // NaN / nonsense
-    // test-26 video: he grabbed cars coming the other way or passing beside him (and, likely, the
-    // "air"). Unless he holds one, a car is only followed if it heads the way he faces (within
-    // about 60 degrees) and he is behind its centre; otherwise it counts as no car (the proxy parks).
-    if (have && g_holdSide == 0 && pos && at) {
-        const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]), al = sqrtf(at[0] * at[0] + at[2] * at[2]);
-        float same = (fl > 0.1f && al > 0.1f) ? fabsf(cf[0] * at[0] + cf[2] * at[2]) / (fl * al) : 0.0f; // fakie counts too
-        if (vel) { // or he rolls the way the car goes
-            const float vl = sqrtf(vel[0] * vel[0] + vel[2] * vel[2]);
-            if (vl > 50.0f && fl > 0.1f) {
-                const float sv = (cf[0] * vel[0] + cf[2] * vel[2]) / (fl * vl);
-                if (sv > same) same = sv;
-            }
-        }
-        const float behind = fl > 0.1f ? ((pos[0] - cp[0]) * cf[0] + (pos[2] - cp[2]) * cf[2]) / fl : 0.0f;
-        if (same < 0.5f || behind > 0.0f) have = false;
-    }
     const DWORD t = GetTickCount();
-    if (have) {
-        g_lastCarSeen = t;
+    // 8.52 step 2: every proxy follows its own GTA car. The GTA side publishes up to kPoolCars
+    // moving cars near CJ (the held one first); a car is wanted if it passes the test below.
+    PoolCar pc[kPoolCars];
+    const int pn = ReadPoolCars(link, pc);
+    bool wanted[kPoolCars] = {};
+    const LONG heldSlot = g_heldSlot;
+    const LONG heldCar = (g_holdSide != 0 && heldSlot >= 0 && heldSlot < g_carCount) ? g_slots[heldSlot].carId : -1;
+    bool heldInList = false;
+    for (int i = 0; i < pn; ++i) {
+        const float* cp = pc[i].pos;
+        const float* cf = pc[i].fwd;
+        const float* cv = pc[i].vel;
+        bool ok = true;
+        for (int k = 0; k < 3; ++k)
+            if (!(cp[k] > -1.0e6f && cp[k] < 1.0e6f) || !(cf[k] > -2.0f && cf[k] < 2.0f) || !(cv[k] > -1.0e5f && cv[k] < 1.0e5f))
+                ok = false; // nonsense
+        // test-26 video: he grabbed cars coming the other way or passing beside him (and, likely, the
+        // "air"). Unless he holds it, a car is only followed if it heads the way he faces (within
+        // about 60 degrees) and he is behind its centre.
+        if (ok && pc[i].id != heldCar && pos && at) {
+            const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]), al = sqrtf(at[0] * at[0] + at[2] * at[2]);
+            float same = (fl > 0.1f && al > 0.1f) ? fabsf(cf[0] * at[0] + cf[2] * at[2]) / (fl * al) : 0.0f; // fakie counts too
+            if (vel) { // or he rolls the way the car goes
+                const float vl = sqrtf(vel[0] * vel[0] + vel[2] * vel[2]);
+                if (vl > 50.0f && fl > 0.1f) {
+                    const float sv = (cf[0] * vel[0] + cf[2] * vel[2]) / (fl * vl);
+                    if (sv > same) same = sv;
+                }
+            }
+            const float behind = fl > 0.1f ? ((pos[0] - cp[0]) * cf[0] + (pos[2] - cp[2]) * cf[2]) / fl : 0.0f;
+            if (same < 0.5f || behind > 0.0f) ok = false;
+        }
+        wanted[i] = ok;
+        if (ok && pc[i].id == heldCar) heldInList = true;
+    }
+    // test 21: the held car must not vanish under him; if it is missing from the list for 1 s, the hold ends
+    {
+        static ULONGLONG goneSince = 0;
+        if (heldCar >= 0 && !heldInList) {
+            if (!goneSince) {
+                goneSince = now;
+                log("vehicles: the held car (GTA car %ld, proxy %ld) is not in the GTA list: proxy kept where it was", static_cast<long>(heldCar),
+                    static_cast<long>(heldSlot));
+            } else if (now - goneSince >= 1000) {
+                InterlockedExchange(&g_holdSide, 0);
+                InterlockedExchange(&g_heldSlot, -1);
+                goneSince = 0;
+                log("vehicles: GTA car %ld is gone for 1 s: the hold ends", static_cast<long>(heldCar));
+            }
+        } else {
+            goneSince = 0;
+        }
+    }
+    // each wanted car keeps its proxy, or takes a free one (parked); the samples go to the tracks
+    int noRoom = 0;
+    for (int i = 0; i < pn; ++i) {
+        if (!wanted[i]) continue;
+        const LONG id = pc[i].id;
+        int s = -1;
+        for (int k = 0; k < g_carCount; ++k)
+            if (g_slots[k].carId == id) { s = k; break; }
+        if (s < 0)
+            for (int k = 0; k < g_carCount; ++k)
+                if (g_slots[k].carId == -1) { s = k; break; }
+        if (s < 0) { ++noRoom; continue; }
+        Slot& sl = g_slots[s];
+        sl.lastSeen = t;
+        const float* cp = pc[i].pos;
+        const float* cf = pc[i].fwd;
+        const float* cv = pc[i].vel;
         const float target[3] = {cp[0], cp[1] - kCarDrop, cp[2]};
         const float heading = atan2f(cf[0], cf[2]) + g_noseQuarter * 1.5707963f;
         // a new sample (the GTA side writes about once a GTA frame): hand it to the track
-        static float lastCp[3] = {};
-        static LONG lastId = -2;
-        // test 21: while he holds, the GTA side once published another car and the proxy jumped
-        // to it under him. Samples of another car are ignored while he holds (the track carries
-        // on from the held car's last sample); after 1 s of that, the hold ends.
-        static ULONGLONG otherSince = 0;
-        if (g_holdSide != 0 && g_track.valid && id != g_track.id) {
-            const ULONGLONG t0 = GetTickCount64();
-            if (!otherSince) {
-                otherSince = t0;
-                log("vehicles: the GTA side publishes car %ld while the skater holds car %ld: ignored", static_cast<long>(id),
-                    static_cast<long>(g_track.id));
-            }
-            if (t0 - otherSince < 1000) have = false;
-            else {
-                InterlockedExchange(&g_holdSide, 0);
-                log("vehicles: car %ld is gone for 1 s: the hold ends", static_cast<long>(g_track.id));
-            }
-        } else {
-            otherSince = 0;
-        }
-        bool fresh = have && id != lastId;
-        for (int k = 0; k < 3 && have; ++k)
-            if (fabsf(cp[k] - lastCp[k]) > 0.01f) fresh = true;
+        bool fresh = id != sl.lastId;
+        for (int k = 0; k < 3; ++k)
+            if (fabsf(cp[k] - sl.lastCp[k]) > 0.01f) fresh = true;
         if (fresh) {
-            memcpy(lastCp, cp, sizeof(lastCp));
-            lastId = id;
+            memcpy(sl.lastCp, cp, sizeof(sl.lastCp));
+            sl.lastId = id;
             const double tnow = NowSec();
+            const float base = StartHeading(g_cars[s]);
             AcquireSRWLockExclusive(&g_lock);
+            Track& tr = sl.track;
             float was[3] = {}, wasYaw = 0.0f;
-            const bool cont = g_track.valid && g_track.id == id;
-            if (cont) TrackAt(tnow, was, wasYaw);
-            g_track.id = id;
-            for (int k = 0; k < 3; ++k) { g_track.pos[k] = target[k]; g_track.vel[k] = cv[k]; }
+            const bool cont = tr.valid && tr.id == id;
+            if (cont) TrackAt(tr, tnow, was, wasYaw);
+            tr.id = id;
+            for (int k = 0; k < 3; ++k) { tr.pos[k] = target[k]; tr.vel[k] = cv[k]; }
             {
                 const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]);
-                g_track.fwd[0] = fl > 0.1f ? cf[0] / fl : 0.0f;
-                g_track.fwd[1] = 0.0f;
-                g_track.fwd[2] = fl > 0.1f ? cf[2] / fl : 1.0f;
+                tr.fwd[0] = fl > 0.1f ? cf[0] / fl : 0.0f;
+                tr.fwd[1] = 0.0f;
+                tr.fwd[2] = fl > 0.1f ? cf[2] / fl : 1.0f;
                 float rise = fl > 0.3f ? cf[1] / fl : 0.0f;
                 if (rise > 0.6f) rise = 0.6f;
                 if (rise < -0.6f) rise = -0.6f;
-                g_track.rise = rise;
-                const float b = link->gtaSkitchBack;
-                g_track.back = (b > 10.0f && b < 500.0f) ? b : kDefaultBack;
+                tr.rise = rise;
+                const float b = pc[i].back;
+                tr.back = (b > 10.0f && b < 500.0f) ? b : kDefaultBack;
             }
-            g_track.yaw = heading - base;
-            g_track.t = tnow;
+            tr.yaw = heading - base;
+            tr.t = tnow;
             float e2 = 0.0f;
-            for (int k = 0; k < 3; ++k) { g_track.err[k] = cont ? was[k] - target[k] : 0.0f; e2 += g_track.err[k] * g_track.err[k]; }
-            g_track.errYaw = cont ? WrapPi(wasYaw - g_track.yaw) : 0.0f;
+            for (int k = 0; k < 3; ++k) { tr.err[k] = cont ? was[k] - target[k] : 0.0f; e2 += tr.err[k] * tr.err[k]; }
+            tr.errYaw = cont ? WrapPi(wasYaw - tr.yaw) : 0.0f;
             const float e = sqrtf(e2);
-            if (!cont || e > kSnapDist || fabsf(g_track.errYaw) > 0.785f) {
-                for (int k = 0; k < 3; ++k) g_track.err[k] = 0.0f;
-                g_track.errYaw = 0.0f;
+            if (!cont || e > kSnapDist || fabsf(tr.errYaw) > 0.785f) {
+                for (int k = 0; k < 3; ++k) tr.err[k] = 0.0f;
+                tr.errYaw = 0.0f;
                 InterlockedIncrement(&g_snaps);
             } else {
                 g_errSum += e;
                 ++g_errN;
             }
-            g_track.valid = true;
+            tr.valid = true;
             ReleaseSRWLockExclusive(&g_lock);
             InterlockedIncrement(&g_samples);
         }
-        if (have && id != g_lastCarId) {
-            log("vehicles: the test car now follows GTA car %ld (at %.0f %.0f %.0f)", static_cast<long>(id), cp[0], cp[1], cp[2]);
-            g_lastCarId = id;
+        if (sl.carId != id) {
+            log("vehicles: proxy %d now follows GTA car %ld (at %.0f %.0f %.0f)", s, static_cast<long>(id), cp[0], cp[1], cp[2]);
+            sl.carId = id;
+            sl.waitLogged = false;
         }
-    } else if (g_lastCarId != -1 && t - g_lastCarSeen > kNoCarParkMs) {
-        // back to its own spot - but never while he holds it (a car jumping away under him is the
-        // kind of thing that broke the rails, 8.41). Test 25: it used to wait while he was merely
-        // near it, so an invisible proxy stood in the road and he could grab the air.
-        // test 34 (test 33: after a skitch jump he landed on the proxy's roof; it parked 0.4 s later and
-        // carried him to its own spot, East Los Santos in GTA): it also waits while he is on it or
-        // right next to it (the car's own box plus a hand's reach), and parks once he is clear.
+    }
+    static int noRoomMax = 0;
+    if (noRoom > noRoomMax) noRoomMax = noRoom;
+    // a proxy whose car has not been wanted for kNoCarParkMs goes back to its own spot - but never
+    // while he holds it (a car jumping away under him is the kind of thing that broke the rails,
+    // 8.41). Test 25: it used to wait while he was merely near it, so an invisible proxy stood in
+    // the road and he could grab the air. Test 34 (test 33: after a skitch jump he landed on the
+    // proxy's roof; it parked 0.4 s later and carried him to its own spot, East Los Santos in GTA):
+    // it also waits while he is on it or right next to it (the car's own box plus a hand's reach).
+    for (int s = 0; s < g_carCount; ++s) {
+        Slot& sl = g_slots[s];
+        if (sl.carId == -1 || t - sl.lastSeen <= kNoCarParkMs) continue;
+        if (g_holdSide != 0 && s == g_heldSlot) continue;
         bool onIt = false;
         float oa = 0.0f, orr = 0.0f, ou = 0.0f;
         if (pos) {
             float fw[3] = {};
             AcquireSRWLockShared(&g_lock);
-            memcpy(fw, g_track.fwd, sizeof(fw));
+            memcpy(fw, sl.track.fwd, sizeof(fw));
             ReleaseSRWLockShared(&g_lock);
-            const float e0 = pos[0] - car.cur[0], e1 = pos[1] - car.cur[1], e2 = pos[2] - car.cur[2];
+            const Car& pcar = g_cars[s];
+            const float e0 = pos[0] - pcar.cur[0], e1 = pos[1] - pcar.cur[1], e2 = pos[2] - pcar.cur[2];
             const float fl = sqrtf(fw[0] * fw[0] + fw[2] * fw[2]);
             if (fl > 0.1f) {
                 oa = (e0 * fw[0] + e2 * fw[2]) / fl;
@@ -1834,40 +1916,59 @@ followDone:
             ou = e1;
             onIt = fabsf(oa) < kParkWaitAlong && fabsf(orr) < kParkWaitSide && ou > -kParkWaitBelow;
         }
-        static bool waitLogged = false;
-        if (g_holdSide == 0 && onIt) {
-            if (!waitLogged) {
-                waitLogged = true;
-                log("vehicles: the test car would park, but the skater is on it / next to it (%.0f in along, %.0f in right, %.0f in up): "
-                    "it waits", oa, orr, ou);
+        if (onIt) {
+            if (!sl.waitLogged) {
+                sl.waitLogged = true;
+                log("vehicles: proxy %d would park, but the skater is on it / next to it (%.0f in along, %.0f in right, %.0f in up): "
+                    "it waits", s, oa, orr, ou);
             }
-        } else if (g_holdSide == 0) {
-            waitLogged = false;
-            AcquireSRWLockExclusive(&g_lock);
-            g_track.valid = false;
-            ReleaseSRWLockExclusive(&g_lock);
-            SetTarget(car.p, 0.0f);
-            log("vehicles: no moving GTA car near for %lu ms: the test car parked at its own spot", kNoCarParkMs);
-            g_lastCarId = -1;
+            continue;
+        }
+        sl.waitLogged = false;
+        AcquireSRWLockExclusive(&g_lock);
+        sl.track.valid = false;
+        ReleaseSRWLockExclusive(&g_lock);
+        SetTarget(s, g_cars[s].p, 0.0f);
+        log("vehicles: proxy %d (GTA car %ld not wanted for %lu ms) parked at its own spot", s, static_cast<long>(sl.carId), kNoCarParkMs);
+        sl.carId = -1;
+        sl.lastId = -2;
+    }
+    // the focus proxy for the grab tests: the held one, else the nearest one that follows a car
+    int fs = -1;
+    if (g_holdSide != 0 && g_heldSlot >= 0 && g_heldSlot < g_carCount) {
+        fs = g_heldSlot;
+    } else if (pos) {
+        float best = 1.0e18f;
+        for (int s = 0; s < g_carCount; ++s) {
+            if (g_slots[s].carId == -1) continue;
+            const float dx = pos[0] - g_cars[s].cur[0], dz = pos[2] - g_cars[s].cur[2];
+            if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; fs = s; }
         }
     }
-    // keep the GTA side publishing the car we follow while the skater is at it (it may switch to
-    // another passing car otherwise, and the test car would jump under him)
+    static int prevFs = -1;
+    const bool focusChanged = fs != prevFs;
+    prevFs = fs;
+    const Car& car = g_cars[fs >= 0 ? fs : g_fc];
+    const LONG focusCar = fs >= 0 ? g_slots[fs].carId : -1;
+    // keep the GTA side publishing the car he holds or is at (8.42; with the pool it is also first in the list)
     {
         float e[3] = {};
         if (pos)
             for (int k = 0; k < 3; ++k) e[k] = pos[k] - car.cur[k];
-        const bool close = pos && g_lastCarId >= 0 && e[0] * e[0] + e[2] * e[2] < kKeepNear * kKeepNear;
-        link->thawSkitchId = close ? g_lastCarId : -1;
+        const bool close = pos && focusCar >= 0 && e[0] * e[0] + e[2] * e[2] < kKeepNear * kKeepNear;
+        link->thawSkitchId = close ? focusCar : -1;
         // step 6: is he holding the proxy's back corner? (his offset in the proxy's frame: about
         // kHoldBack behind it and kHoldSide to one side, for 0.3 s; off again after 0.3 s away)
         static ULONGLONG holdSince = 0, awaySince = 0;
         const ULONGLONG tnow = GetTickCount64();
         float fw[3] = {};
+        Track ftr = {};
         AcquireSRWLockShared(&g_lock);
-        const bool tv = g_track.valid;
-        memcpy(fw, g_track.fwd, sizeof(fw));
+        if (fs >= 0) ftr = g_slots[fs].track;
         ReleaseSRWLockShared(&g_lock);
+        const bool tv = fs >= 0 && ftr.valid;
+        memcpy(fw, ftr.fwd, sizeof(fw));
+        if (focusChanged) holdSince = 0;
         int side = 0;
         if (pos && tv && g_holdSide == 0) {
             const float nose = e[0] * fw[0] + e[2] * fw[2];
@@ -1882,6 +1983,7 @@ followDone:
                 side = right > 0.0f ? 1 : -1;
             static float startNose = 0.0f, startRight = 0.0f;
             static bool startSet = false;
+            if (focusChanged) startSet = false; // 8.52: another proxy: start again
             if (side == 0) {
                 startSet = false;
             } else if (!startSet) {
@@ -1939,8 +2041,8 @@ followDone:
             float c[3], yaw;
             float back;
             AcquireSRWLockShared(&g_lock);
-            TrackAt(sn, c, yaw);
-            back = g_track.back;
+            TrackAt(g_slots[fs].track, sn, c, yaw);
+            back = g_slots[fs].track.back;
             // TrackAt includes the fading sample difference: fine for where the GTA car is now
             ReleaseSRWLockShared(&g_lock);
             const float want[2] = {c[0] - fw[0] * (back + kGap), c[2] - fw[2] * (back + kGap)};
@@ -1987,7 +2089,7 @@ followDone:
                     r.pos[k] = pos[k];
                     r.vel[k] = vel ? vel[k] : 0.0f;
                     r.at[k] = at ? at[k] : 0.0f;
-                    r.proxy[k] = g_target.pos[k]; // a racy read: only for the log
+                    r.proxy[k] = g_slots[fs].target.pos[k]; // a racy read: only for the log
                 }
                 r.errAlong = errAlong;
                 r.errRight = errRight;
@@ -2009,7 +2111,7 @@ followDone:
                         ++stallLogs;
                         log("vehicles: STALL %d: the held skater is %.0f in from the spot behind GTA car %ld; the last %d reads, "
                             "then every read for 2 s (times from now):",
-                            stallLogs, errLen, static_cast<long>(g_lastCarId), ringN);
+                            stallLogs, errLen, static_cast<long>(focusCar), ringN);
                         for (int i = 0; i < ringN; ++i) put(ring[(ringHead - ringN + i + 32) % 32], "before");
                         put(r, "now");
                         stallUntil = sn + 2.0;
@@ -2029,14 +2131,14 @@ followDone:
         if (g_holdSide == 0 && pos && tv && tnow >= nextNearLog && e[0] * e[0] + e[2] * e[2] < 200.0f * 200.0f) {
             nextNearLog = tnow + 500;
             const float nn = e[0] * fw[0] + e[2] * fw[2], rr = e[0] * fw[2] - e[2] * fw[0];
-            log("vehicles: near (no hold seen): skater %.0f along / %.0f right / %.0f up of the test car's centre (GTA car %ld)", nn, rr, e[1],
-                static_cast<long>(g_lastCarId));
+            log("vehicles: near (no hold seen): skater %.0f along / %.0f right / %.0f up of proxy %d's centre (GTA car %ld)", nn, rr, e[1],
+                fs, static_cast<long>(focusCar));
         }
         static ULONGLONG nextHoldLog = 0;
         if (g_holdSide != 0 && pos && tv && tnow >= nextHoldLog) {
             nextHoldLog = tnow + 500;
-            log("vehicles: holding: skater %.0f in ahead / %.0f in right of the spot behind GTA car %ld's bumper; steer %.0f in; "
-                "facing turned %ld time(s), at most %.0f deg", errAlong, errRight, static_cast<long>(g_lastCarId),
+            log("vehicles: holding proxy %d: skater %.0f in ahead / %.0f in right of the spot behind GTA car %ld's bumper; steer %.0f in; "
+                "facing turned %ld time(s), at most %.0f deg", fs, errAlong, errRight, static_cast<long>(focusCar),
                 sqrtf(g_steer[0] * g_steer[0] + g_steer[1] * g_steer[1]), static_cast<long>(InterlockedExchange(&g_faceFixes, 0)),
                 g_faceFixMax);
             g_faceFixMax = 0.0f;
@@ -2049,26 +2151,29 @@ followDone:
                 if (signSide != 0 || tnow - holdSince >= 300) {
                     g_steer[0] = 0.0f;
                     g_steer[1] = 0.0f;
+                    InterlockedExchange(&g_heldSlot, fs);
                     InterlockedExchange(&g_holdSide, side);
-                    log("vehicles: the skater holds the test car's back (%.0f along / %.0f right of its centre): steering him onto GTA car "
-                        "%ld's centre line, %.0f in behind its bumper (rear %.0f in behind its centre)", e[0] * fw[0] + e[2] * fw[2],
-                        e[0] * fw[2] - e[2] * fw[0], static_cast<long>(g_lastCarId), kGap, link->gtaSkitchBack);
+                    log("vehicles: the skater holds proxy %d's back (%.0f along / %.0f right of its centre): steering him onto GTA car "
+                        "%ld's centre line, %.0f in behind its bumper (rear %.0f in behind its centre)", fs, e[0] * fw[0] + e[2] * fw[2],
+                        e[0] * fw[2] - e[2] * fw[0], static_cast<long>(focusCar), kGap, ftr.back);
                 }
             } else {
                 holdSince = 0;
             }
         } else if (fastReads >= 2) {
             InterlockedExchange(&g_holdSide, 0);
+            InterlockedExchange(&g_heldSlot, -1);
             holdSince = 0;
             awaySince = 0;
-            log("vehicles: the skater let go of the test car (reTHAWed gives him his own speed again, %.0f in/s; %.0f in from the "
+            log("vehicles: the skater let go of the held proxy (reTHAWed gives him his own speed again, %.0f in/s; %.0f in from the "
                 "spot): the steer goes back", fieldSpeed, errLen);
         } else if (errLen > kLoseDist) {
             if (!awaySince) awaySince = tnow;
             if (tnow - awaySince >= 500) {
                 InterlockedExchange(&g_holdSide, 0);
+                InterlockedExchange(&g_heldSlot, -1);
                 holdSince = 0;
-                log("vehicles: the skater let go of the test car (%.0f in from the spot): the steer goes back", errLen);
+                log("vehicles: the skater let go of the held proxy (%.0f in from the spot): the steer goes back", errLen);
             }
         } else {
             awaySince = 0;
@@ -2077,24 +2182,32 @@ followDone:
     }
     if (now >= g_nextLog) {
         g_nextLog = now + 1000;
-        float d = -1.0f;
-        if (pos) {
-            float e[3];
-            for (int k = 0; k < 3; ++k) e[k] = pos[k] - car.cur[k];
-            d = sqrtf(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+        // 8.52: one line for the whole pool: each proxy's GTA car (or parked) and how far he is from it
+        char buf[600];
+        int len = snprintf(buf, sizeof(buf), "vehicles: pool:");
+        for (int s = 0; s < g_carCount && len > 0 && len < static_cast<int>(sizeof(buf)); ++s) {
+            const Car& pcar = g_cars[s];
+            float d = -1.0f;
+            if (pos) {
+                const float e0 = pos[0] - pcar.cur[0], e1 = pos[1] - pcar.cur[1], e2 = pos[2] - pcar.cur[2];
+                d = sqrtf(e0 * e0 + e1 * e1 + e2 * e2);
+            }
+            if (g_slots[s].carId >= 0)
+                len += snprintf(buf + len, sizeof(buf) - len, " proxy %d -> GTA car %ld (%.0f in from the skater)%s%s", s,
+                                static_cast<long>(g_slots[s].carId), d, s == g_heldSlot && g_holdSide != 0 ? " HELD" : "",
+                                g_slots[s].waitLogged ? " WAITING" : "");
+            else
+                len += snprintf(buf + len, sizeof(buf) - len, " proxy %d parked", s);
         }
-        int rotTotal = 0;
-        const int rotHeld = RotationsHeld(rotTotal);
         const float meanErr = g_errN ? g_errSum / g_errN : 0.0f;
         g_errSum = 0.0f;
         g_errN = 0;
-        log("vehicles: follow: the test car at %.0f %.0f %.0f (turned %.0f deg; %d of %d rotations hold it), skater %.0f away (%.0f "
-            "higher) | last second: %ld moves written on reTHAWed's game thread, %ld copies skipped, %ld refused (level); "
-            "%ld GTA samples, %ld snapped, a new sample was on average %.1f inches from where we had the car",
-            car.cur[0], car.cur[1], car.cur[2], car.yaw * 57.2958f, rotHeld, rotTotal, d, pos ? pos[1] - car.cur[1] : 0.0f,
-            static_cast<long>(InterlockedExchange(&g_applied, 0)), static_cast<long>(InterlockedExchange(&g_skippedCopies, 0)),
-            static_cast<long>(InterlockedExchange(&g_refused, 0)), static_cast<long>(InterlockedExchange(&g_samples, 0)),
-            static_cast<long>(InterlockedExchange(&g_snaps, 0)), meanErr);
+        log("%s | %d wanted car(s) had no free proxy (most at once, last second) | last second: %ld moves written on reTHAWed's game "
+            "thread, %ld copies skipped, %ld refused (level); %ld GTA samples, %ld snapped, a new sample was on average %.1f inches "
+            "from where we had the car", buf, noRoomMax, static_cast<long>(InterlockedExchange(&g_applied, 0)),
+            static_cast<long>(InterlockedExchange(&g_skippedCopies, 0)), static_cast<long>(InterlockedExchange(&g_refused, 0)),
+            static_cast<long>(InterlockedExchange(&g_samples, 0)), static_cast<long>(InterlockedExchange(&g_snaps, 0)), meanErr);
+        noRoomMax = 0;
     }
 }
 
