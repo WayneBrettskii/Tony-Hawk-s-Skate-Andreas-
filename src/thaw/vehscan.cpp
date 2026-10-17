@@ -78,7 +78,7 @@ void (*g_log)(const char*, ...) = nullptr;
 void CopyMem(void* to, DWORD from, size_t n, bool& ok); // below (watchdog)
 void CompareTurns();                                    // below
 bool g_followKeyWas = false, g_noseKeyWas = false;
-bool g_followPending = false;         // F2 pressed before the scan was done (test 22)
+bool g_followPending = true;          // follow mode turns on when the scan is done (test 22: F2 early; 8.52: always, no F2)
 
 // Follow mode: our thread decides where the test car goes; reTHAWed's game thread writes it.
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -553,7 +553,7 @@ DWORD WINAPI ScanThread(LPVOID)
         else
             g_log("vehicles:   angle at 0x%08lX: %.5f", t.a, t.v0[0]);
     }
-    g_log("vehicles: ready: F2 = the test car follows the nearest moving GTA car (on / off); F1 = turn its nose 90 degrees");
+    g_log("vehicles: ready: follow mode turns on by itself (F2 = off / on); F1 with follow mode off = turn the test car 90 degrees");
     InterlockedExchange(&g_scanState, 2);
     // test 22 (2026-10-16): this search took 14 s and held the cars back from "ready"; it now runs after
     // (follow mode can start meanwhile; the hang line is only reached when the skater lets go)
@@ -1449,7 +1449,7 @@ void VehScanSecond(bool inOurLevel, void (*log)(const char*, ...))
             InterlockedExchange(&g_heldSlot, -1);
             g_srcCount = 0;
             g_lastFailedN = 0;
-            g_followPending = false;
+            g_followPending = true; // 8.52: the next level turns follow mode on by itself again
             if (g_twinState == 2) InterlockedExchange(&g_twinState, 0);
             ReleaseSRWLockExclusive(&g_lock);
         }
@@ -1658,6 +1658,7 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
             log("vehicles (F2): not ready yet (the vehicle scan runs %lu s into the level and takes about 10 s; needs a map built with "
                 "--proxy-cars): follow mode %s", kWaitInLevelS, g_followPending ? "will turn ON when it is done" : "will stay off");
         } else {
+            const bool automatic = g_followPending && !followPressed;
             if (g_followPending) {
                 g_followPending = false;
                 if (g_follow) goto followDone; // already on
@@ -1674,9 +1675,10 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
             InterlockedExchange(&g_heldSlot, -1);
             if (link) link->thawSkitching = 0;
             if (!g_follow && link) link->thawSkitchId = -1;
-            log("vehicles (F2): follow mode %s%s", g_follow ? "ON: the proxies follow the moving GTA cars near the skater (up to 4 published)"
-                                                           : "OFF: the proxies stay where they are",
-                g_follow ? "; our own skitch (8.42) is off meanwhile, so Up is reTHAWed's" : "");
+            log("vehicles%s: follow mode %s", automatic ? "" : " (F2)",
+                g_follow ? (automatic ? "ON (automatic, the scan is done): the proxies follow the GTA cars near the skater"
+                                      : "ON: the proxies follow the GTA cars near the skater")
+                         : "OFF: the proxies stay where they are");
         }
     }
 followDone:

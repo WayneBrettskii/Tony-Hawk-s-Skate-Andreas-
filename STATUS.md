@@ -90,7 +90,10 @@ rethawed.ini. Suggested: 6 proxies next (map rebuild, link v20), then 8.
 as a backup there). Not run: user installs the map and plays (test 37).
 Test 37 (8-proxy map installed): works, up to 6 proxies busy, never short; scan 31 s. Misplaced CJ on a lowrider:
 side grab, reTHAWed held him beside the rear wheel; our 120-in let-go ended the hold while reTHAWed still towed him.
-Test 38 (built, both plugins, not run): no distance let-go while towed; GTA move limit 4.5 m, back within 3 m. User skipped the test (hard to reproduce): NOT TESTED. Next: video at speed; then bails on riding into a car; proxy pool.
+Test 38 (built, both plugins, not run): no distance let-go while towed; GTA move limit 4.5 m, back within 3 m. User skipped the test (hard to reproduce): NOT TESTED.
+Before the release (built, not run): follow mode turns on by itself after the scan (no F2); the old 8.42 tow is removed.
+Release still needs: the launcher building the map with --proxy-cars 8 --thaw-dir, then tools/make-release.ps1.
+Launcher Build the map now passes --proxy-cars 8 --thaw-dir (built; the button not run yet). Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 

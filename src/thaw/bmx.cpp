@@ -246,205 +246,16 @@ void CarTowGameThread(LinkBlock* link, unsigned long skater)
     g_towValid = true;
 }
 
-// 8.42 skitch, the way reTHAWed does it (DESIGN 8.42). Press Up, a new press, directly behind a
-// moving car to grab on. The car pulls the skater along: his velocity is set to the car's, with
-// a spring to a point just behind it, and his position is never touched. Press Down, a new press,
-// to let go. He holds the car by its GTA pool index, so the tow cannot switch to another car.
-// Balance (Left / Right) is not modelled yet: that is step 2.
-constexpr LONG kSkitchGrabButton = kBtnUp;      // reTHAWed: Up on the D-pad (L1 before 8.42)
-constexpr LONG kSkitchLetGoButton = kBtnDown;   // reTHAWed: Down lets go
-constexpr float kSkitchBackMin = 39.4f;   // 1 m behind the car, in THAW units (inches)
-constexpr float kSkitchBackMax = 315.0f;  // 8 m
-constexpr float kSkitchCone = 0.6f;       // sideways at most 0.6 x the distance back: about 31 degrees
-constexpr float kSkitchLevel = 59.0f;     // 1.5 m: not on another level
-constexpr float kSkitchFar = 472.0f;      // 12 m: let go
-constexpr float kSkitchStopSpeed = 39.4f; // 1 m/s: slower than this counts as stopped
-constexpr DWORD kSkitchGraceMs = 500;     // a stop, or a car that is missing, is allowed this long
-constexpr int kSkitchMsgSlots = 8;
-char g_skitchMsgs[kSkitchMsgSlots][160] = {}; // lines for BmxSecond to write (the game thread never logs)
-volatile LONG g_skitchMsgCount = 0;
-char g_skitchWhy[120] = "";  // why the last Up press did not grab
-LONG g_skitchRefused = 0;    // Up presses without a grab this second
-LONG g_skitchFrames = 0;     // towed frames this second
-float g_skitchDist = -1.0f;  // last distance to the car (THAW units)
-bool g_skitchHeld = false;   // he is holding a car
-LONG g_skitchId = -1;        // its GTA pool index
-DWORD g_skitchSince = 0;     // when he grabbed it (GetTickCount)
-DWORD g_skitchGone = 0;      // when the held car first stopped or went missing (0 = fine)
-bool g_skitchUpPrev = false;
-bool g_skitchDownPrev = false;
-
-// The game thread must not touch the log file: it queues a line, and BmxSecond writes it.
-void SkitchNote(const char* text)
-{
-    const LONG n = InterlockedIncrement(&g_skitchMsgCount) - 1;
-    snprintf(g_skitchMsgs[n % kSkitchMsgSlots], sizeof g_skitchMsgs[0], "%s", text);
-}
-
-void SkitchRefuse(const char* why)
-{
-    InterlockedIncrement(&g_skitchRefused);
-    snprintf(g_skitchWhy, sizeof g_skitchWhy, "%s", why);
-}
-
-void SkitchLetGo(LinkBlock* link, const char* why, DWORD now)
-{
-    char msg[160];
-    snprintf(msg, sizeof msg, "skitch 8.42: let go (%s) after %.1f s", why, (now - g_skitchSince) / 1000.0);
-    SkitchNote(msg);
-    g_skitchHeld = false;
-    g_skitchId = -1;
-    g_skitchGone = 0;
-    link->thawSkitchId = -1;
-    link->thawSkitching = 0;
-}
-
-// The grab, the hold and the let-go. Runs under the SEH guard in CarSkitchGameThread.
-void SkitchStep(LinkBlock* link, unsigned long skater, bool upEdge, bool downEdge, DWORD now)
-{
-    const float* p = reinterpret_cast<const float*>(skater + 0x68);
-    float cp[3] = {}, cf[3] = {}, cv[3] = {};
-    bool carThere = link->gtaSkitchValid == 1;
-    for (int k = 0; k < 3; ++k) {
-        cp[k] = link->gtaSkitchPos[k];
-        cf[k] = link->gtaSkitchFwd[k];
-        cv[k] = link->gtaSkitchVel[k];
-    }
-    // 8.44 N1: a car with a bad number counts as no car (a held one is let go after the grace time)
-    if (carThere && !(AllFinite(cp, 3) && AllFinite(cf, 3) && AllFinite(cv, 3))) {
-        InterlockedIncrement(&g_linkBadNumbers);
-        carThere = false;
-    }
-    if (!g_skitchHeld) {
-        if (!upEdge) return;
-        if (!carThere || link->gtaSkitchId < 0) {
-            SkitchRefuse("no moving car in reach");
-            return;
-        }
-        const float rx = p[0] - cp[0], ry = p[1] - cp[1], rz = p[2] - cp[2];
-        const float dist = sqrtf(rx * rx + ry * ry + rz * rz);
-        g_skitchDist = dist;
-        if (dist > 1.0e7f) {
-            SkitchRefuse("bad position");
-            return;
-        }
-        const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]);
-        if (fl < 0.5f) {
-            SkitchRefuse("the car's nose is not known");
-            return;
-        }
-        const float fx = cf[0] / fl, fz = cf[2] / fl;
-        const float back = -(rx * fx + rz * fz); // more than 0 = behind the car
-        const float side = fabsf(rx * fz - rz * fx);
-        const float level = fabsf(ry);
-        const float degrees = atan2f(side, back) * 57.29578f;
-        char why[120];
-        if (back < kSkitchBackMin) {
-            if (back <= 0.0f) snprintf(why, sizeof why, "not behind it (beside it or in front)");
-            else snprintf(why, sizeof why, "not far enough behind it (%.1f m)", back * 0.0254f);
-            SkitchRefuse(why);
-            return;
-        }
-        if (back > kSkitchBackMax) {
-            snprintf(why, sizeof why, "too far behind it (%.1f m)", back * 0.0254f);
-            SkitchRefuse(why);
-            return;
-        }
-        if (side > kSkitchCone * back) {
-            snprintf(why, sizeof why, "off to one side of it (%.0f degrees off its nose)", degrees);
-            SkitchRefuse(why);
-            return;
-        }
-        if (level > kSkitchLevel) {
-            snprintf(why, sizeof why, "on another level (%.1f m)", level * 0.0254f);
-            SkitchRefuse(why);
-            return;
-        }
-        g_skitchHeld = true;
-        g_skitchId = link->gtaSkitchId;
-        g_skitchSince = now;
-        g_skitchGone = 0;
-        link->thawSkitchId = g_skitchId;
-        char msg[160];
-        snprintf(msg, sizeof msg, "skitch 8.42: grabbed car %ld from behind (%.1f m back, %.0f degrees off its nose)",
-                 g_skitchId, back * 0.0254f, degrees);
-        SkitchNote(msg);
-    }
-
-    // Holding.
-    if (downEdge) {
-        SkitchLetGo(link, "Down pressed", now);
-        return;
-    }
-    const bool here = carThere && link->gtaSkitchId == g_skitchId;
-    const float speed = sqrtf(cv[0] * cv[0] + cv[1] * cv[1] + cv[2] * cv[2]);
-    if (here && speed >= kSkitchStopSpeed) g_skitchGone = 0;
-    else if (g_skitchGone == 0) g_skitchGone = now;
-    if (g_skitchGone != 0 && now - g_skitchGone > kSkitchGraceMs) {
-        SkitchLetGo(link, here ? "car stopped" : "car out of reach", now);
-        return;
-    }
-    if (!here) return; // this pass holds another car's data, or none: do not tow it
-    const float rx = p[0] - cp[0], ry = p[1] - cp[1], rz = p[2] - cp[2];
-    const float dist = sqrtf(rx * rx + ry * ry + rz * rz);
-    g_skitchDist = dist;
-    if (dist > kSkitchFar) {
-        SkitchLetGo(link, "too far from the car", now);
-        return;
-    }
-    // Tow: his velocity is the car's, plus a spring towards a point 3.2 m behind the car's
-    // centre along its nose, so he does not drift into the car or wander off.
-    const float kBack = 126.0f;    // 3.2 m, in inches
-    const float kGain = 2.0f;      // spring, 1/s
-    const float kMaxCorr = 500.0f; // cap the correction (about 12 m/s)
-    float* v = reinterpret_cast<float*>(skater + 0xC8);
-    float corr[3] = {0.0f, 0.0f, 0.0f};
-    const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]);
-    if (fl >= 0.5f) {
-        const float fx = cf[0] / fl, fz = cf[2] / fl;
-        corr[0] = (cp[0] - fx * kBack - p[0]) * kGain;
-        corr[2] = (cp[2] - fz * kBack - p[2]) * kGain;
-        const float cm = sqrtf(corr[0] * corr[0] + corr[2] * corr[2]);
-        if (cm > kMaxCorr) {
-            const float s = kMaxCorr / cm;
-            corr[0] *= s;
-            corr[2] *= s;
-        }
-    }
-    for (int k = 0; k < 3; ++k) v[k] = cv[k] + corr[k];
-    link->thawSkitching = 1; // tell GTA: leave his spot alone while this lasts
-    ++g_skitchFrames;
-}
-
-void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
+// 8.52 (user 2026-10-17, before the release: "take out the old tow skitch"): the 8.42 tow (Up behind
+// a moving car: his velocity set to the car's, Down let go) is gone. Skitching is reTHAWed's own, on
+// the proxy cars (vehscan.cpp), which owns thawSkitching / thawSkitchId while follow mode is on;
+// follow mode turns on by itself once the vehicle scan is done. Until then nobody skitches.
+void CarSkitchGameThread(LinkBlock* link)
 {
     if (!link) return;
-    // set again by SkitchStep while a tow is happening; in follow mode vehscan.cpp owns it (8.51 step 6)
-    if (!VehFollowOn()) link->thawSkitching = 0;
-    InputShared in;
-    const bool read = ReadInputShared(link, in);
-    // Grab: the D-pad Up, or the left stick pushed up (GTA's stick is negative up, as in spawner.cpp).
-    const bool up = read && ((in.buttons & kSkitchGrabButton) != 0 || in.axes[kAxisLY] < -80);
-    const bool down = read && (in.buttons & kSkitchLetGoButton) != 0;
-    const bool upEdge = up && !g_skitchUpPrev;
-    const bool downEdge = down && !g_skitchDownPrev;
-    g_skitchUpPrev = up;
-    g_skitchDownPrev = down;
-    const DWORD now = GetTickCount();
-    if (!skater || link->gtaSkateMode != 1) {
-        if (g_skitchHeld) SkitchLetGo(link, "skate mode off", now);
+    if (!VehFollowOn()) {
+        link->thawSkitching = 0;
         link->thawSkitchId = -1;
-        return;
-    }
-    // 8.51: while a reTHAWed vehicle follows the GTA car, Up is reTHAWed's own skitch: ours steps aside
-    // (and leaves thawSkitchId to vehscan.cpp, which holds the GTA car it follows)
-    if (VehFollowOn()) {
-        if (g_skitchHeld) SkitchLetGo(link, "reTHAWed vehicle follow mode on", now);
-        return;
-    }
-    __try {
-        SkitchStep(link, skater, upEdge, downEdge, now);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
@@ -455,8 +266,7 @@ void BmxGameThreadTick(LinkBlock* link)
     unsigned long skater = 0;
     const int onBike = ReadOnBike(skater);
     VehSetSkater(skater); // 8.51 step 8: the skitch facing fix needs the skater object
-    // 8.33 skitch: every call, because it sets a velocity and wants every frame
-    CarSkitchGameThread(link, skater);
+    CarSkitchGameThread(link);
 
     const DWORD now = GetTickCount();
     if (g_next && static_cast<LONG>(now - g_next) < 0) return;
@@ -538,18 +348,6 @@ void BmxSecond(void (*log)(const char*, ...))
     const LONG tf = InterlockedExchange(&g_towFrames, 0);
     if (tf)
         log("cars: towing in %ld frames this second (skater velocity matched to the car)", tf);
-    // 8.42 skitch: the grabs and let-gos queued by the game thread, and refused Up presses
-    static LONG notesPrinted = 0;
-    const LONG notesNow = g_skitchMsgCount;
-    if (notesNow - notesPrinted > kSkitchMsgSlots) notesPrinted = notesNow - kSkitchMsgSlots;
-    for (LONG m = notesPrinted; m < notesNow; ++m) log("%s", g_skitchMsgs[m % kSkitchMsgSlots]);
-    notesPrinted = notesNow;
-    const LONG sf = InterlockedExchange(&g_skitchFrames, 0);
-    const LONG sref = InterlockedExchange(&g_skitchRefused, 0);
-    if (sf)
-        log("skitch 8.42: towing %ld frames this second (%.1f m from the car)", sf, g_skitchDist * 0.0254f);
-    if (sref)
-        log("skitch 8.42: Up pressed %ld time(s) without a grab; last reason: %s", sref, g_skitchWhy);
 }
 
 } // namespace mp::thaw

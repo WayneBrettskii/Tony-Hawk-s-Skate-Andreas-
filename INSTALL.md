@@ -77,12 +77,17 @@ included in the download (that data is GTA's, not ours). You make it yourself in
    *(The launcher can't do this step for you — nothing of ours writes inside your reTHAWed folder.)*
 4. **Only one SkateAndreas map at a time.** If an older one is already there, remove it first.
 
+**Updating from an older SkateAndreas?** Build the map again and replace the old map folder in
+reTHAWed's `Maps`: the map now carries the stand-in cars that make skitching work. The button needs
+the reTHAWed folder set in the launcher (it reads the cars from your own reTHAWed; nothing is
+written there).
+
 **Leave `extracted\` where it is.** The mod reads your rail list from it every time you play, so
 if you move the launcher, move `extracted\` with it.
 
 *(Prefer a command prompt? In the launcher's folder:
-`tools\python\python.exe tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0 --name "San Andreas (SkateAndreas)" --folder "SkateAndreas San Andreas"`
-— same result as the button.)*
+`tools\python\python.exe tools\gta_to_thaw_map.py "C:\Games\GTA San Andreas" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0 --name "San Andreas (SkateAndreas)" --folder "SkateAndreas San Andreas" --proxy-cars 8 --thaw-dir "C:\Games\reTHAWed"`
+— same result as the button. Put your own GTA and reTHAWed folders in place of the two `C:\Games\...` ones.)*
 
 ---
 
@@ -120,9 +125,10 @@ In GTA, once you're on foot:
 - **L3 + R3** (click both sticks in together) — **start skating**. Press again to stop.
 - On a **BMX** — **L3 + R3** turns **BMX mode** on and off instead (the game tells you the first
   time you get on a bike).
-- **Cars** — the **roofs of parked cars** are grindable. To **skitch** a moving car, get directly
-  behind it (1 to 8 m back, lined up with its nose) and press **Up** on the D-pad (or push the left stick up): CJ grabs on and
-  is pulled along. Press **Down** to let go. (Balance with Left and Right is not in yet.)
+- **Cars** — the **roofs of parked cars** are grindable. To **skitch** a car, skate up behind it and
+  use reTHAWed's own skitch (**Up** on the D-pad): CJ grabs the rear bumper and is pulled along,
+  with reTHAWed's balance meter. Skitching starts working about a minute after the map has loaded
+  (the mod first finds its stand-in cars inside reTHAWed); there is no key to press.
 - **Radio** — hold **Back / Share** for the wheel: reTHAWed's soundtrack, any GTA station, the User
   Track Player, or Off. Move with the stick, D-pad Up/Down changes the volume.
 - **Right stick** always moves the camera, in every mode.

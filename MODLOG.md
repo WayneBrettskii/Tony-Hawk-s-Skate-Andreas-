@@ -2,6 +2,16 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.52: skitching without F2; the old 8.42 tow removed
+
+**Changed:** `src/thaw/vehscan.cpp`: follow mode (the proxies following GTA's cars) turns on by itself when the vehicle scan is done, in every level; F2 still switches it off / on. Log: `vehicles: follow mode ON (automatic, the scan is done): ...`. `src/thaw/bmx.cpp`: the 8.42 tow (Up behind a moving car, our own velocity tow; Down let go) and its `skitch 8.42` log lines are removed; `CarSkitchGameThread` only clears thawSkitching / thawSkitchId while follow mode is off. `README.md`, `INSTALL.md`: skitching described without F2 and without the old Up / Down tow. Plan: DESIGN 8.52 "Plan: skitching without F2, old tow taken out".
+**Why:** user, before the release: cars should be skitchable without pressing F2, and the old tow should go.
+**Tested how:** built both plugins with MSVC: no errors or warnings; `SkateAndreas.asi` copied to the GTA modloader folder. **Not run in game.**
+**Still broken / not tested:** no skitching at all in the first minute of a level (25 s wait + about 31 s scan); before, the old tow covered that time. The launcher's Build the map button still makes a map without proxy cars (next, for the release).
+**Next:** user plays once without pressing F2; then the release package.
+
+**Also (same day): the launcher's Build the map button makes the map with 8 proxy cars.** `src/launcher/main.cpp`: `--proxy-cars 8 --thaw-dir` + the reTHAWed folder added to the map tool's arguments; a missing `reTHAWed.exe` stops it with a message. `INSTALL.md`: command line updated; players with an older map are told to build it again. Compiled (MSVC): no errors; the link could not replace `SkateAndreas-launcher.exe` because the launcher was open (LNK1104), so it was linked again after the user closed the launcher: built with no errors, and the new arguments are in the .exe. The button itself is **not run** yet.
+
 ## [2026-10-17] 8.52 test 38: no distance let-go while reTHAWed tows him; skitch move limit 4.5 m
 
 **Changed:** `src/thaw/vehscan.cpp`: the 120-in distance let-go only ends the hold when reTHAWed gives the skater his own speed again; while it reads 0 (towed) the hold stays and the log says `the held skater is N in from the spot but reTHAWed still tows him (own speed 0): the hold stays`. `src/gta/skatemode.cpp`: the skitch move stops beyond 4.5 m (was 3 m) and comes back after 0.3 s within 3 m (was 2 m). Plan: DESIGN 8.52 "Plan for test 38".

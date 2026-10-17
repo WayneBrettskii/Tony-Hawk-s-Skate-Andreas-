@@ -708,10 +708,21 @@ void RunMapBuild()
         return;
     }
 
+    // 8.52 (user 2026-10-17, for the release: "make sure the build the map button makes a map with proxy
+    // cars"): 8 reTHAWed vehicles go into the map as the stand-ins for GTA's cars (skitching, DESIGN 8.51 /
+    // 8.52). The map tool copies the vehicle record and its model from the player's own reTHAWed (read only),
+    // so it needs reTHAWed's folder.
+    const DWORD thawExe = GetFileAttributesW((g_rethawedDir + L"\\reTHAWed.exe").c_str());
+    if (g_rethawedDir.empty() || thawExe == INVALID_FILE_ATTRIBUTES || (thawExe & FILE_ATTRIBUTE_DIRECTORY)) {
+        Log("build map: no reTHAWed.exe in the reTHAWed folder (%ls) - the map needs it for its cars", g_rethawedDir.c_str());
+        SetStatus(L"Set the reTHAWed folder first (the one with reTHAWed.exe): the map takes its cars from it.");
+        return;
+    }
     const std::wstring cmd =
         QuoteArg(python) + L" " + QuoteArg(tool) + L" " + QuoteArg(g_gtaDir) +
         L" --box -3000 -3000 3000 3000 --no-geometry-nodes --rail-pool 4500 --rail-drop-max 0"
-        L" --name \"San Andreas (SkateAndreas)\" --folder \"SkateAndreas San Andreas\"";
+        L" --name \"San Andreas (SkateAndreas)\" --folder \"SkateAndreas San Andreas\""
+        L" --proxy-cars 8 --thaw-dir " + QuoteArg(g_rethawedDir);
     Log("build map: %ls", cmd.c_str());
     SetStatus(L"Building the map - watch the new window. This takes a few minutes.");
 
