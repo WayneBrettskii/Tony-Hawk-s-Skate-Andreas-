@@ -419,7 +419,8 @@ void SkitchStep(LinkBlock* link, unsigned long skater, bool upEdge, bool downEdg
 void CarSkitchGameThread(LinkBlock* link, unsigned long skater)
 {
     if (!link) return;
-    link->thawSkitching = 0; // set again by SkitchStep while a tow is happening
+    // set again by SkitchStep while a tow is happening; in follow mode vehscan.cpp owns it (8.51 step 6)
+    if (!VehFollowOn()) link->thawSkitching = 0;
     InputShared in;
     const bool read = ReadInputShared(link, in);
     // Grab: the D-pad Up, or the left stick pushed up (GTA's stick is negative up, as in spawner.cpp).
@@ -453,6 +454,7 @@ void BmxGameThreadTick(LinkBlock* link)
 
     unsigned long skater = 0;
     const int onBike = ReadOnBike(skater);
+    VehSetSkater(skater); // 8.51 step 8: the skitch facing fix needs the skater object
     // 8.33 skitch: every call, because it sets a velocity and wants every frame
     CarSkitchGameThread(link, skater);
 

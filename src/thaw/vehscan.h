@@ -33,4 +33,7 @@ void VehGameThreadTick();
 // True while follow mode is on (our own skitch then stays off).
 bool VehFollowOn();
 
+// reTHAWed's game thread: the skater object (0 = none), for the skitch facing fix (8.51 step 8).
+void VehSetSkater(unsigned long skater);
+
 } // namespace mp::thaw

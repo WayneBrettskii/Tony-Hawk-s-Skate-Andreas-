@@ -27,7 +27,7 @@ constexpr float kApplyTol = 4.0f;     // a copy must still hold what we last wro
 constexpr int kFollowKey = VK_F2;     // follow mode on / off
 constexpr int kNoseKey = VK_F1;       // turn the car's nose by 90 degrees (which row is the nose is not known yet)
 constexpr float kCarDrop = 24.0f;     // GTA gives the car's middle; a reTHAWed vehicle stands on its origin (~0.6 m lower)
-constexpr DWORD kNoCarParkMs = 1500;  // no GTA car this long: the proxy goes back to its own spot
+constexpr DWORD kNoCarParkMs = 400;   // no GTA car this long: the proxy goes back to its own spot (1500 until test 25: "grabbed the air")
 constexpr float kKeepNear = 400.0f;   // ~10 m: the skater this close to the test car keeps it on the same GTA car
 constexpr unsigned long kOurLevel = 0x9F014B98ul; // load_MPGTALSE
 
@@ -75,6 +75,7 @@ void (*g_log)(const char*, ...) = nullptr;
 void CopyMem(void* to, DWORD from, size_t n, bool& ok); // below (watchdog)
 void CompareTurns();                                    // below
 bool g_followKeyWas = false, g_noseKeyWas = false;
+bool g_followPending = false;         // F2 pressed before the scan was done (test 22)
 
 // Follow mode: our thread decides where the test car goes; reTHAWed's game thread writes it.
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -88,6 +89,100 @@ DWORD g_lastCarSeen = 0;
 LONG g_lastCarId = -1;
 ULONGLONG g_nextLog = 0;
 DWORD g_turnCheckAt = 0;              // our thread: check the rotations this long after a test move
+
+// 8.51 step 5, smooth following (user 2026-10-16: "proceed to next steps"). Before: each new GTA
+// sample was written once, so the car stood still between samples and jumped to the next one.
+// Now our thread keeps the last sample (position, velocity in THAW units per second, heading,
+// the time it arrived), and reTHAWed's game thread places the car every frame where that sample
+// says it is now: position + velocity x time since (at most kPredictMax ahead). A new sample's
+// difference from where we had the car is not snapped but faded out over kBlendS (position,
+// and the heading the short way round); a big jump (> kSnapDist, or > 45 degrees, or another
+// car) snaps. Under g_lock.
+constexpr double kPredictMax = 0.10;  // s: no further ahead than this (0.25 until the test-26 video: a braking car
+                                      // was overrun by up to a car length and CJ ended up inside it)
+constexpr double kBlendS = 0.10;      // s: a new sample's difference fades out over this
+constexpr float kSnapDist = 80.0f;    // inches (2 m): more than this jumps
+constexpr double kWriteEvery = 0.004; // s: the controller hook can run several times a frame
+// 8.51 step 6 (test 18: the hold was inside a limo, a metre beside a motorbike, and traffic
+// braked for CJ): reTHAWed holds the skater at the proxy's back corner, measured at kHoldBack
+// behind its centre and kHoldSide to one side (tests 15-16, this proxy model). The proxy's centre
+// is put kHoldBack - (the GTA car's rear, gtaSkitchBack) along the nose from the GTA car's
+// centre, so the hold is on the GTA car's rear bumper; once he holds, it slides kHoldSide the
+// other way (over kSlideS) so he is on the car's centre line. While he holds, thawSkitching = 1.
+constexpr float kHoldBack = 93.0f;    // inches, measured
+constexpr float kHoldSide = 42.0f;    // inches, measured
+constexpr double kSlideS = 0.25;      // s for the full sideways slide
+constexpr float kDefaultBack = 87.0f; // 2.2 m when the GTA side has no number
+float g_shift = 0.0f;                 // (step 6 slide, replaced by the steer below; kept for the log)
+volatile LONG g_holdSide = 0;         // -1 left, +1 right, 0 not holding (our thread)
+// 8.51 step 7 (test 20 + user: "even when I put the meter back to the center he would stay on the
+// side"): in a turn reTHAWed keeps the skater where he was instead of turning him with the car, so
+// after a 25-35 degree turn he hangs 40-55 in to the side. Steer: while he holds, our thread
+// compares where he is with a point kGap behind the GTA car's rear bumper, on its centre line,
+// and moves the proxy (and him with it) towards it: g_steer += error x kSteerGain x dt, at most
+// kSteerMax. The game thread eases the proxy to it (kSteerRate). Error over kLoseDist for 0.5 s
+// = he has let go / fallen: the steer goes back to 0.
+constexpr float kGap = 20.0f;         // inches behind the bumper (10 until the test-26 video)
+constexpr float kSteerGain = 6.0f;    // 1/s (4 in test 21: ~0.5 s at the corner after the grab)
+constexpr float kSteerMax = 200.0f;   // inches
+constexpr float kSteerRate = 150.0f;  // inches per second, game thread (400 until test 26: the big pulls stuttered)
+constexpr float kSteerAlongMax = 40.0f; // test 26: along the nose the steer only trims (reTHAWed drops him back now and then)
+constexpr float kSteerDead = 4.0f;    // inches: errors smaller than this are left alone
+constexpr float kLoseDist = 120.0f;   // inches
+constexpr float kOwnSpeedLetGo = 40.0f; // in/s: test 28: his own speed reads 0 while he skitches; above this twice = let go
+constexpr float kSkitchMoveMin = 60.0f; // in/s: his position must move at least this fast for speed 0 to mean a grab
+volatile float g_steer[2] = {};       // world x / z, inches (our thread)
+// 8.51 step 8 (test 23: "still got turned a weird direction when I found a limo"): like his place,
+// reTHAWed does not turn the held skater when the proxy turns, so after a turn he faces the old
+// way. While he holds, the game thread turns the skater object's rows (+0x88, the same layout as
+// the vehicle object: row 0 right, row 1 up, row 2 nose) about the up axis so his nose is the GTA
+// car's. Logged: the largest correction in each half second (0 would mean reTHAWed turns him itself).
+constexpr unsigned long kSkaterRows = 0x88;
+volatile unsigned long g_skater = 0;
+volatile float g_faceFixMax = 0.0f;   // degrees, the largest correction since the last log
+volatile LONG g_faceFixes = 0;
+float g_steerApplied[2] = {};         // game thread
+struct Track {
+    bool valid;
+    LONG id;
+    float fwd[3], back;               // GTA car's nose (horizontal, unit) and rear bumper behind its centre (inches)
+    float rise;                       // test 24: inches up per inch along the nose (the car's slope; uphill > 0)
+    float pos[3], vel[3], yaw;        // yaw: relative to the car's start heading, as SetTarget takes it
+    float err[3], errYaw;             // where we had the car minus the new sample, faded out over kBlendS
+    double t;                         // when the sample arrived
+};
+Track g_track = {};
+double g_lastWrite = 0.0;
+volatile LONG g_samples = 0, g_snaps = 0;
+float g_errSum = 0.0f;                // inches, summed over the samples of the last second
+LONG g_errN = 0;
+
+double NowSec()
+{
+    static LARGE_INTEGER f = {};
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return static_cast<double>(c.QuadPart) / static_cast<double>(f.QuadPart);
+}
+
+float WrapPi(float a)
+{
+    while (a > 3.14159265f) a -= 6.2831853f;
+    while (a < -3.14159265f) a += 6.2831853f;
+    return a;
+}
+
+// Where the track puts the car at time now (lock held).
+void TrackAt(double now, float* p, float& yaw)
+{
+    double dt = now - g_track.t;
+    if (dt < 0.0) dt = 0.0;
+    if (dt > kPredictMax) dt = kPredictMax;
+    const float w = dt >= kBlendS ? 0.0f : static_cast<float>(1.0 - dt / kBlendS);
+    for (int k = 0; k < 3; ++k) p[k] = g_track.pos[k] + g_track.vel[k] * static_cast<float>(dt) + g_track.err[k] * w;
+    yaw = g_track.yaw + g_track.errYaw * w;
+}
 
 // 8.51 step 4, first test (2026-10-15): reTHAWed froze about 2 s into a skitch on a following
 // car (its game thread stopped; no crash report). Watchdog: when reTHAWed's game thread has
@@ -413,24 +508,6 @@ DWORD WINAPI ScanThread(LPVOID)
     }
     g_fc = g_carCount >= 3 ? 2 : 0;
     FindTurnSources();
-    if (!g_hangsSearched) {
-        g_hangsSearched = true;
-        const DWORD th = GetTickCount();
-        FindScriptHangs();
-        g_log("script fix: %d line(s) in reTHAWed's scripts that can only hang the game (a built-in function used as a setting) "
-              "found in %lu ms%s", g_hangCount, GetTickCount() - th, g_hangCount ? "; blanking them on the game thread" : "");
-        for (int i = 0; i < g_hangCount; ++i) {
-            BYTE b[kHangLen + 4] = {};
-            bool ok = false;
-            CopyMem(b, g_hangAt[i] - 1, sizeof(b), ok);
-            DWORD sym[3] = {};
-            bool oks = false;
-            CopyMem(sym, g_hangRef[i], sizeof(sym), oks);
-            g_log("script fix:   at 0x%08lX: function entry 0x%08lX (name %08lX, code 0x%08lX); bytes %02X %02X %02X %02X %02X %02X %02X "
-                  "%02X %02X %02X %02X %02X", g_hangAt[i], g_hangRef[i], oks ? sym[0] : 0UL, oks ? sym[2] : 0UL, b[0], b[1], b[2], b[3],
-                  b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11]);
-        }
-    }
     g_log("vehicles: scan done in %lu ms (read only)", GetTickCount() - t0);
     for (int c = 0; c < g_carCount; ++c) {
         int rot = 0;
@@ -454,6 +531,26 @@ DWORD WINAPI ScanThread(LPVOID)
     }
     g_log("vehicles: ready: F2 = the test car follows the nearest moving GTA car (on / off); F1 = turn its nose 90 degrees");
     InterlockedExchange(&g_scanState, 2);
+    // test 22 (2026-10-16): this search took 14 s and held the cars back from "ready"; it now runs after
+    // (follow mode can start meanwhile; the hang line is only reached when the skater lets go)
+    if (!g_hangsSearched) {
+        g_hangsSearched = true;
+        const DWORD th = GetTickCount();
+        FindScriptHangs();
+        g_log("script fix: %d line(s) in reTHAWed's scripts that can only hang the game (a built-in function used as a setting) "
+              "found in %lu ms%s", g_hangCount, GetTickCount() - th, g_hangCount ? "; blanking them on the game thread" : "");
+        for (int i = 0; i < g_hangCount; ++i) {
+            BYTE b[kHangLen + 4] = {};
+            bool ok = false;
+            CopyMem(b, g_hangAt[i] - 1, sizeof(b), ok);
+            DWORD sym[3] = {};
+            bool oks = false;
+            CopyMem(sym, g_hangRef[i], sizeof(sym), oks);
+            g_log("script fix:   at 0x%08lX: function entry 0x%08lX (name %08lX, code 0x%08lX); bytes %02X %02X %02X %02X %02X %02X %02X "
+                  "%02X %02X %02X %02X %02X", g_hangAt[i], g_hangRef[i], oks ? sym[0] : 0UL, oks ? sym[2] : 0UL, b[0], b[1], b[2], b[3],
+                  b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11]);
+        }
+    }
     return 0;
 }
 
@@ -1195,6 +1292,8 @@ void LogSymHits(void (*log)(const char*, ...))
 
 bool VehFollowOn() { return g_follow != 0; }
 
+void VehSetSkater(unsigned long skater) { g_skater = skater; }
+
 void VehGameThreadTick()
 {
     InterlockedExchange(&g_lastGameTick, static_cast<LONG>(GetTickCount()));
@@ -1217,6 +1316,65 @@ void VehGameThreadTick()
         InterlockedExchange(&g_hangPatched, done);
         InterlockedExchange(&g_hangPending, 0);
     }
+    if (g_follow && g_track.valid) {
+        // smooth following: place the car where the last GTA sample says it is now
+        const double now = NowSec();
+        if (now - g_lastWrite < kWriteEvery) return;
+        if (!TryAcquireSRWLockExclusive(&g_lock)) return;
+        if (g_track.valid) {
+            float p[3], yaw;
+            TrackAt(now, p, yaw);
+            // step 6: the hold on the rear bumper; step 7: steered onto it while he holds
+            double dtw = now - g_lastWrite;
+            if (dtw < 0.0 || dtw > 0.1) dtw = 0.1;
+            const float stepMax = static_cast<float>(kSteerRate * dtw);
+            for (int k = 0; k < 2; ++k) {
+                const float want = g_holdSide != 0 ? g_steer[k] : 0.0f;
+                const float d = want - g_steerApplied[k];
+                g_steerApplied[k] += d > stepMax ? stepMax : d < -stepMax ? -stepMax : d;
+            }
+            const float along = kHoldBack - g_track.back;
+            const float* f = g_track.fwd;
+            p[0] += f[0] * along + g_steerApplied[0];
+            p[2] += f[2] * along + g_steerApplied[1];
+            // test 24 ("floated in the air while going uphill"): the proxy stands level, so the hold
+            // is at the GTA car's centre height; behind a car going uphill the road is lower. The
+            // proxy is put at the height of the spot behind the bumper on the car's slope.
+            p[1] -= g_track.rise * (g_track.back + kGap);
+            for (int k = 0; k < 3; ++k) g_target.pos[k] = p[k];
+            g_target.yaw = yaw;
+            g_target.gen = g_levelGen;
+            ++g_target.version;
+            g_lastWrite = now;
+        }
+        ApplyLocked();
+        // step 8: face the held skater the GTA car's way
+        const unsigned long sk = g_skater;
+        if (g_holdSide != 0 && sk && g_track.valid) {
+            __try {
+                float* m = reinterpret_cast<float*>(sk + kSkaterRows);
+                const float* f = g_track.fwd;
+                const float have = atan2f(m[8], m[10]), want = atan2f(f[0], f[2]);
+                const float d = WrapPi(want - have);
+                const float ad = fabsf(d) * 57.2958f;
+                if (ad > 1.0f && ad < 90.0f) { // test 24: 177-178 deg at a grab turned him round; leave those
+
+                    const float c = cosf(d), sn = sinf(d);
+                    for (int r = 0; r < 3; r += 2) { // rows 0 and 2 turn about the up axis; row 1 (up) stays
+                        float* v = m + 4 * r;
+                        const float x = v[0] * c + v[2] * sn, z = -v[0] * sn + v[2] * c;
+                        v[0] = x;
+                        v[2] = z;
+                    }
+                    if (ad > g_faceFixMax) g_faceFixMax = ad;
+                    InterlockedIncrement(&g_faceFixes);
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            }
+        }
+        ReleaseSRWLockExclusive(&g_lock);
+        return;
+    }
     if (g_target.version == g_appliedVersion) return; // nothing new (a racy peek is fine: the lock decides)
     if (!TryAcquireSRWLockExclusive(&g_lock)) return;
     ApplyLocked();
@@ -1237,8 +1395,11 @@ void VehScanSecond(bool inOurLevel, void (*log)(const char*, ...))
                 g_cars[c].yaw = 0.0f;
             }
             InterlockedExchange(&g_follow, 0);
+            g_track.valid = false;
+            InterlockedExchange(&g_holdSide, 0);
             g_srcCount = 0;
             g_lastFailedN = 0;
+            g_followPending = false;
             if (g_twinState == 2) InterlockedExchange(&g_twinState, 0);
             ReleaseSRWLockExclusive(&g_lock);
         }
@@ -1440,18 +1601,30 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
                     t3[0], t3[1], t3[2], TestCar().yaw * 57.2958f);
             }
         }
-    } else if (followPressed) {
+    } else if (followPressed || (g_followPending && ready)) {
+        // test 22: F2 before the scan was done was dropped; now it is kept and follow mode starts when ready
         if (!ready) {
-            log("vehicles (F2): not ready (the vehicle scan runs %lu s into the level, and needs a map built with "
-                "--proxy-cars)", kWaitInLevelS);
+            g_followPending = !g_followPending;
+            log("vehicles (F2): not ready yet (the vehicle scan runs %lu s into the level and takes about 10 s; needs a map built with "
+                "--proxy-cars): follow mode %s", kWaitInLevelS, g_followPending ? "will turn ON when it is done" : "will stay off");
         } else {
+            if (g_followPending) {
+                g_followPending = false;
+                if (g_follow) goto followDone; // already on
+            }
             InterlockedExchange(&g_follow, g_follow ? 0 : 1);
+            AcquireSRWLockExclusive(&g_lock);
+            g_track.valid = false;
+            ReleaseSRWLockExclusive(&g_lock);
+            InterlockedExchange(&g_holdSide, 0);
+            if (link) link->thawSkitching = 0;
             if (!g_follow && link) link->thawSkitchId = -1;
             log("vehicles (F2): follow mode %s%s", g_follow ? "ON: the test car follows the nearest moving GTA car (within 8 m)"
                                                            : "OFF: the test car stays where it is",
                 g_follow ? "; our own skitch (8.42) is off meanwhile, so Up is reTHAWed's" : "");
         }
     }
+followDone:
     if (nosePressed && ready && !g_follow) {
         // F1 with follow mode off: turn the test car a quarter turn where it stands. From the
         // second F1 on, the copies the last check saw put back are watched from now (test 7).
@@ -1512,28 +1685,110 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
     const Car& car = TestCar();
     const float base = StartHeading(car);
     bool have = link->gtaSkitchValid == 1;
-    float cp[3] = {}, cf[3] = {};
+    float cp[3] = {}, cf[3] = {}, cv[3] = {};
     const LONG id = link->gtaSkitchId;
-    for (int k = 0; k < 3; ++k) { cp[k] = link->gtaSkitchPos[k]; cf[k] = link->gtaSkitchFwd[k]; }
+    for (int k = 0; k < 3; ++k) { cp[k] = link->gtaSkitchPos[k]; cf[k] = link->gtaSkitchFwd[k]; cv[k] = link->gtaSkitchVel[k]; }
     for (int k = 0; k < 3 && have; ++k)
-        if (!(cp[k] > -1.0e6f && cp[k] < 1.0e6f) || !(cf[k] > -2.0f && cf[k] < 2.0f)) have = false; // NaN / nonsense
+        if (!(cp[k] > -1.0e6f && cp[k] < 1.0e6f) || !(cf[k] > -2.0f && cf[k] < 2.0f) || !(cv[k] > -1.0e5f && cv[k] < 1.0e5f))
+            have = false; // NaN / nonsense
+    // test-26 video: he grabbed cars coming the other way or passing beside him (and, likely, the
+    // "air"). Unless he holds one, a car is only followed if it heads the way he faces (within
+    // about 60 degrees) and he is behind its centre; otherwise it counts as no car (the proxy parks).
+    if (have && g_holdSide == 0 && pos && at) {
+        const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]), al = sqrtf(at[0] * at[0] + at[2] * at[2]);
+        float same = (fl > 0.1f && al > 0.1f) ? fabsf(cf[0] * at[0] + cf[2] * at[2]) / (fl * al) : 0.0f; // fakie counts too
+        if (vel) { // or he rolls the way the car goes
+            const float vl = sqrtf(vel[0] * vel[0] + vel[2] * vel[2]);
+            if (vl > 50.0f && fl > 0.1f) {
+                const float sv = (cf[0] * vel[0] + cf[2] * vel[2]) / (fl * vl);
+                if (sv > same) same = sv;
+            }
+        }
+        const float behind = fl > 0.1f ? ((pos[0] - cp[0]) * cf[0] + (pos[2] - cp[2]) * cf[2]) / fl : 0.0f;
+        if (same < 0.5f || behind > 0.0f) have = false;
+    }
     const DWORD t = GetTickCount();
     if (have) {
         g_lastCarSeen = t;
         const float target[3] = {cp[0], cp[1] - kCarDrop, cp[2]};
         const float heading = atan2f(cf[0], cf[2]) + g_noseQuarter * 1.5707963f;
-        SetTarget(target, heading - base);
-        if (id != g_lastCarId) {
+        // a new sample (the GTA side writes about once a GTA frame): hand it to the track
+        static float lastCp[3] = {};
+        static LONG lastId = -2;
+        // test 21: while he holds, the GTA side once published another car and the proxy jumped
+        // to it under him. Samples of another car are ignored while he holds (the track carries
+        // on from the held car's last sample); after 1 s of that, the hold ends.
+        static ULONGLONG otherSince = 0;
+        if (g_holdSide != 0 && g_track.valid && id != g_track.id) {
+            const ULONGLONG t0 = GetTickCount64();
+            if (!otherSince) {
+                otherSince = t0;
+                log("vehicles: the GTA side publishes car %ld while the skater holds car %ld: ignored", static_cast<long>(id),
+                    static_cast<long>(g_track.id));
+            }
+            if (t0 - otherSince < 1000) have = false;
+            else {
+                InterlockedExchange(&g_holdSide, 0);
+                log("vehicles: car %ld is gone for 1 s: the hold ends", static_cast<long>(g_track.id));
+            }
+        } else {
+            otherSince = 0;
+        }
+        bool fresh = have && id != lastId;
+        for (int k = 0; k < 3 && have; ++k)
+            if (fabsf(cp[k] - lastCp[k]) > 0.01f) fresh = true;
+        if (fresh) {
+            memcpy(lastCp, cp, sizeof(lastCp));
+            lastId = id;
+            const double tnow = NowSec();
+            AcquireSRWLockExclusive(&g_lock);
+            float was[3] = {}, wasYaw = 0.0f;
+            const bool cont = g_track.valid && g_track.id == id;
+            if (cont) TrackAt(tnow, was, wasYaw);
+            g_track.id = id;
+            for (int k = 0; k < 3; ++k) { g_track.pos[k] = target[k]; g_track.vel[k] = cv[k]; }
+            {
+                const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]);
+                g_track.fwd[0] = fl > 0.1f ? cf[0] / fl : 0.0f;
+                g_track.fwd[1] = 0.0f;
+                g_track.fwd[2] = fl > 0.1f ? cf[2] / fl : 1.0f;
+                float rise = fl > 0.3f ? cf[1] / fl : 0.0f;
+                if (rise > 0.6f) rise = 0.6f;
+                if (rise < -0.6f) rise = -0.6f;
+                g_track.rise = rise;
+                const float b = link->gtaSkitchBack;
+                g_track.back = (b > 10.0f && b < 500.0f) ? b : kDefaultBack;
+            }
+            g_track.yaw = heading - base;
+            g_track.t = tnow;
+            float e2 = 0.0f;
+            for (int k = 0; k < 3; ++k) { g_track.err[k] = cont ? was[k] - target[k] : 0.0f; e2 += g_track.err[k] * g_track.err[k]; }
+            g_track.errYaw = cont ? WrapPi(wasYaw - g_track.yaw) : 0.0f;
+            const float e = sqrtf(e2);
+            if (!cont || e > kSnapDist || fabsf(g_track.errYaw) > 0.785f) {
+                for (int k = 0; k < 3; ++k) g_track.err[k] = 0.0f;
+                g_track.errYaw = 0.0f;
+                InterlockedIncrement(&g_snaps);
+            } else {
+                g_errSum += e;
+                ++g_errN;
+            }
+            g_track.valid = true;
+            ReleaseSRWLockExclusive(&g_lock);
+            InterlockedIncrement(&g_samples);
+        }
+        if (have && id != g_lastCarId) {
             log("vehicles: the test car now follows GTA car %ld (at %.0f %.0f %.0f)", static_cast<long>(id), cp[0], cp[1], cp[2]);
             g_lastCarId = id;
         }
     } else if (g_lastCarId != -1 && t - g_lastCarSeen > kNoCarParkMs) {
-        // back to its own spot - but never while the skater is at it (he may be holding on:
-        // a car jumping away under him is the kind of thing that broke the rails, 8.41)
-        float e[3] = {};
-        if (pos)
-            for (int k = 0; k < 3; ++k) e[k] = pos[k] - car.cur[k];
-        if (!pos || e[0] * e[0] + e[2] * e[2] > kKeepNear * kKeepNear) {
+        // back to its own spot - but never while he holds it (a car jumping away under him is the
+        // kind of thing that broke the rails, 8.41). Test 25: it used to wait while he was merely
+        // near it, so an invisible proxy stood in the road and he could grab the air.
+        if (g_holdSide == 0) {
+            AcquireSRWLockExclusive(&g_lock);
+            g_track.valid = false;
+            ReleaseSRWLockExclusive(&g_lock);
             SetTarget(car.p, 0.0f);
             log("vehicles: no moving GTA car near for %lu ms: the test car parked at its own spot", kNoCarParkMs);
             g_lastCarId = -1;
@@ -1547,6 +1802,160 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
             for (int k = 0; k < 3; ++k) e[k] = pos[k] - car.cur[k];
         const bool close = pos && g_lastCarId >= 0 && e[0] * e[0] + e[2] * e[2] < kKeepNear * kKeepNear;
         link->thawSkitchId = close ? g_lastCarId : -1;
+        // step 6: is he holding the proxy's back corner? (his offset in the proxy's frame: about
+        // kHoldBack behind it and kHoldSide to one side, for 0.3 s; off again after 0.3 s away)
+        static ULONGLONG holdSince = 0, awaySince = 0;
+        const ULONGLONG tnow = GetTickCount64();
+        float fw[3] = {};
+        AcquireSRWLockShared(&g_lock);
+        const bool tv = g_track.valid;
+        memcpy(fw, g_track.fwd, sizeof(fw));
+        ReleaseSRWLockShared(&g_lock);
+        int side = 0;
+        if (pos && tv && g_holdSide == 0) {
+            const float nose = e[0] * fw[0] + e[2] * fw[2];
+            const float right = e[0] * fw[2] - e[2] * fw[0];
+            // test 21: anywhere across the proxy's back; test 24 ("hung to the side" once, not seen as a
+            // hold): wider still (up to 120 in to either side, 40-160 in behind), but only if he moves
+            // with the car (within 150 in/s of its speed), so skating behind it does not count
+            // test 25: the speed test never passed (reTHAWed does not update the skater's velocity
+            // while he skitches), so no hold was seen at all. Instead: he stays put relative to the
+            // proxy (within 20 in of where he was) for the 0.3 s before the hold starts.
+            if (nose > -160.0f && nose < -40.0f && fabsf(right) < 120.0f && fabsf(e[1]) < 80.0f)
+                side = right > 0.0f ? 1 : -1;
+            static float startNose = 0.0f, startRight = 0.0f;
+            static bool startSet = false;
+            if (side == 0) {
+                startSet = false;
+            } else if (!startSet) {
+                startNose = nose;
+                startRight = right;
+                startSet = true;
+            } else if (fabsf(nose - startNose) > 20.0f || fabsf(right - startRight) > 20.0f) {
+                // moving about relative to it: not attached; start the 0.3 s again from here
+                startNose = nose;
+                startRight = right;
+                side = 0;
+            }
+        }
+        // step 6b (test 28): reTHAWed stops updating the skater's own speed while he skitches: it reads
+        // exactly 0 from the frame he grabs until the frame he lets go, while his position moves with the
+        // car. Seen in all four holds of test 28; the stay-put test above saw the grab 0.3-0.7 s late and
+        // the let-go 0.8-2.9 s late (he rode next to the car meanwhile). So: speed 0 while he moves with
+        // a moving car = holding; his own speed back = let go, at once.
+        static float prevPos[3] = {};
+        static double prevPosT = 0.0;
+        static bool still = false, rolling = false;
+        static double sigSince = 0.0;
+        static int fastReads = 0;
+        const double st = NowSec();
+        const float fieldSpeed = vel ? sqrtf(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]) : -1.0f;
+        if (fieldSpeed > kOwnSpeedLetGo) ++fastReads; else fastReads = 0;
+        if (pos && (prevPosT == 0.0 || st - prevPosT >= 0.05)) {
+            if (prevPosT != 0.0 && st - prevPosT < 0.5) {
+                const float dx = pos[0] - prevPos[0], dz = pos[2] - prevPos[2];
+                const float moved = sqrtf(dx * dx + dz * dz) / static_cast<float>(st - prevPosT);
+                still = fieldSpeed >= 0.0f && fieldSpeed < 1.0f;
+                rolling = moved > kSkitchMoveMin;
+            }
+            memcpy(prevPos, pos, sizeof(prevPos));
+            prevPosT = st;
+        }
+        const bool skitchSign = still && rolling;
+        if (!skitchSign) sigSince = 0.0;
+        else if (sigSince == 0.0) sigSince = st;
+        int signSide = 0;
+        if (pos && tv && g_holdSide == 0 && sigSince != 0.0 && st - sigSince >= 0.1) {
+            const float nose = e[0] * fw[0] + e[2] * fw[2];
+            const float right = e[0] * fw[2] - e[2] * fw[0];
+            if (nose > -240.0f && nose < 40.0f && fabsf(right) < 160.0f && fabsf(e[1]) < 80.0f)
+                signSide = right > 0.0f ? 1 : -1;
+        }
+        // step 7: the point he should be at (kGap behind the GTA car's bumper, on its centre line), and how far off he is
+        static double lastSteer = 0.0;
+        const double sn = NowSec();
+        double sdt = sn - lastSteer;
+        lastSteer = sn;
+        if (sdt < 0.0 || sdt > 0.1) sdt = 0.1;
+        float errAlong = 0.0f, errRight = 0.0f, errLen = 1.0e9f;
+        if (pos && tv) {
+            float c[3], yaw;
+            float back;
+            AcquireSRWLockShared(&g_lock);
+            TrackAt(sn, c, yaw);
+            back = g_track.back;
+            // TrackAt includes the fading sample difference: fine for where the GTA car is now
+            ReleaseSRWLockShared(&g_lock);
+            const float want[2] = {c[0] - fw[0] * (back + kGap), c[2] - fw[2] * (back + kGap)};
+            const float ex = want[0] - pos[0], ez = want[1] - pos[2];
+            errLen = sqrtf(ex * ex + ez * ez);
+            errAlong = -(ex * fw[0] + ez * fw[2]);  // + = he is ahead of the point
+            errRight = -(ex * fw[2] - ez * fw[0]);  // + = he is to its right
+            if (g_holdSide != 0 && errLen < kLoseDist && errLen > kSteerDead) {
+                float s0 = g_steer[0] + ex * kSteerGain * static_cast<float>(sdt);
+                float s1 = g_steer[1] + ez * kSteerGain * static_cast<float>(sdt);
+                // test 26: split into along / across the car; along is only trimmed
+                float sa = s0 * fw[0] + s1 * fw[2], sr = s0 * fw[2] - s1 * fw[0];
+                if (sa > kSteerAlongMax) sa = kSteerAlongMax;
+                if (sa < -kSteerAlongMax) sa = -kSteerAlongMax;
+                if (sr > kSteerMax) sr = kSteerMax;
+                if (sr < -kSteerMax) sr = -kSteerMax;
+                g_steer[0] = sa * fw[0] + sr * fw[2];
+                g_steer[1] = sa * fw[2] - sr * fw[0];
+            }
+        }
+        // test 26 ("grabbed what looked like the air and wasn't skitching with it"): the skater was
+        // 1-2.5 m from the proxy for 7 s before a hold was seen, so grabs outside the zone leave no
+        // trace. Twice a second while he is within 5 m of it and no hold is seen: where he is.
+        static ULONGLONG nextNearLog = 0;
+        if (g_holdSide == 0 && pos && tv && tnow >= nextNearLog && e[0] * e[0] + e[2] * e[2] < 200.0f * 200.0f) {
+            nextNearLog = tnow + 500;
+            const float nn = e[0] * fw[0] + e[2] * fw[2], rr = e[0] * fw[2] - e[2] * fw[0];
+            log("vehicles: near (no hold seen): skater %.0f along / %.0f right / %.0f up of the test car's centre (GTA car %ld)", nn, rr, e[1],
+                static_cast<long>(g_lastCarId));
+        }
+        static ULONGLONG nextHoldLog = 0;
+        if (g_holdSide != 0 && pos && tv && tnow >= nextHoldLog) {
+            nextHoldLog = tnow + 500;
+            log("vehicles: holding: skater %.0f in ahead / %.0f in right of the spot behind GTA car %ld's bumper; steer %.0f in; "
+                "facing turned %ld time(s), at most %.0f deg", errAlong, errRight, static_cast<long>(g_lastCarId),
+                sqrtf(g_steer[0] * g_steer[0] + g_steer[1] * g_steer[1]), static_cast<long>(InterlockedExchange(&g_faceFixes, 0)),
+                g_faceFixMax);
+            g_faceFixMax = 0.0f;
+        }
+        if (g_holdSide == 0) {
+            awaySince = 0;
+            if (signSide != 0) side = signSide;
+            if (side != 0) {
+                if (!holdSince) holdSince = tnow;
+                if (signSide != 0 || tnow - holdSince >= 300) {
+                    g_steer[0] = 0.0f;
+                    g_steer[1] = 0.0f;
+                    InterlockedExchange(&g_holdSide, side);
+                    log("vehicles: the skater holds the test car's back (%.0f along / %.0f right of its centre): steering him onto GTA car "
+                        "%ld's centre line, %.0f in behind its bumper (rear %.0f in behind its centre)", e[0] * fw[0] + e[2] * fw[2],
+                        e[0] * fw[2] - e[2] * fw[0], static_cast<long>(g_lastCarId), kGap, link->gtaSkitchBack);
+                }
+            } else {
+                holdSince = 0;
+            }
+        } else if (fastReads >= 2) {
+            InterlockedExchange(&g_holdSide, 0);
+            holdSince = 0;
+            awaySince = 0;
+            log("vehicles: the skater let go of the test car (reTHAWed gives him his own speed again, %.0f in/s; %.0f in from the "
+                "spot): the steer goes back", fieldSpeed, errLen);
+        } else if (errLen > kLoseDist) {
+            if (!awaySince) awaySince = tnow;
+            if (tnow - awaySince >= 500) {
+                InterlockedExchange(&g_holdSide, 0);
+                holdSince = 0;
+                log("vehicles: the skater let go of the test car (%.0f in from the spot): the steer goes back", errLen);
+            }
+        } else {
+            awaySince = 0;
+        }
+        link->thawSkitching = g_holdSide != 0 ? 1 : 0; // GTA leaves CJ alone (no push-out, no car-hit bail)
     }
     if (now >= g_nextLog) {
         g_nextLog = now + 1000;
@@ -1558,11 +1967,16 @@ void VehTestTick(LinkBlock* link, bool inOurLevel, const float* pos, const float
         }
         int rotTotal = 0;
         const int rotHeld = RotationsHeld(rotTotal);
+        const float meanErr = g_errN ? g_errSum / g_errN : 0.0f;
+        g_errSum = 0.0f;
+        g_errN = 0;
         log("vehicles: follow: the test car at %.0f %.0f %.0f (turned %.0f deg; %d of %d rotations hold it), skater %.0f away (%.0f "
-            "higher) | last second: %ld moves written on reTHAWed's game thread, %ld copies skipped, %ld refused (level)",
+            "higher) | last second: %ld moves written on reTHAWed's game thread, %ld copies skipped, %ld refused (level); "
+            "%ld GTA samples, %ld snapped, a new sample was on average %.1f inches from where we had the car",
             car.cur[0], car.cur[1], car.cur[2], car.yaw * 57.2958f, rotHeld, rotTotal, d, pos ? pos[1] - car.cur[1] : 0.0f,
             static_cast<long>(InterlockedExchange(&g_applied, 0)), static_cast<long>(InterlockedExchange(&g_skippedCopies, 0)),
-            static_cast<long>(InterlockedExchange(&g_refused, 0)));
+            static_cast<long>(InterlockedExchange(&g_refused, 0)), static_cast<long>(InterlockedExchange(&g_samples, 0)),
+            static_cast<long>(InterlockedExchange(&g_snaps, 0)), meanErr);
     }
 }
 

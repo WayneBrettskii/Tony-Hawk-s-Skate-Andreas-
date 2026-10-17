@@ -195,8 +195,30 @@ void ResetStats()
 
 RiderBlend g_blend; // 5-3f: blending between reTHAWed frames (blend.cpp)
 
+// 8.51 skitch: CJ's collision is off while he holds a car (see the skitch block in the tick)
+bool g_skitchCollisionOff = false, g_skitchSavedCollision = true;
+CVehicle* g_skitchIgnored = nullptr;
+// test 29: CJ on the spot behind the held car's bumper (offset from reTHAWed's place, GTA metres)
+constexpr float kSkitchGapM = 0.51f;      // 20 in, as the THAW side's kGap
+constexpr float kSkitchBlendMs = 200.0f;  // blend in when he grabs / out when he lets go
+constexpr float kSkitchSnapMax = 3.0f;    // metres: further than this from reTHAWed's place, do not move him
+CVehicle* g_skitchSnapCar = nullptr;
+DWORD g_skitchSnapSince = 0, g_skitchSnapLeft = 0;
+float g_skitchSnapOff[2] = {};
+
+void SkitchCollisionRestore(CPlayerPed* ped)
+{
+    if (ped) {
+        if (g_skitchIgnored && ped->m_pEntityIgnoredCollision == g_skitchIgnored) ped->m_pEntityIgnoredCollision = nullptr;
+        if (g_skitchCollisionOff) ped->bUsesCollision = g_skitchSavedCollision;
+    }
+    g_skitchCollisionOff = false;
+    g_skitchIgnored = nullptr;
+}
+
 void TurnOff(CPlayerPed* ped, CPad* pad, LinkBlock* link, LogFn log, const char* reason)
 {
+    SkitchCollisionRestore(ped); // never leave skate mode with CJ's collision off
     g.on = false;
     g.haveLastTarget = false;
     g.lastHold = nullptr;
@@ -602,7 +624,11 @@ void PushOutOfCars(Vec3& t, LogFn log)
             const float oTop = mx[2] - l[2];
             const float oXl = l[0] - (mn[0] - rad), oXr = (mx[0] + rad) - l[0];
             const float oYl = l[1] - (mn[1] - rad), oYr = (mx[1] + rad) - l[1];
-            float best = oTop;
+            // test-29 video (rode into a stopped car at road level and stood on its roof): the roof only
+            // if his feet are already up near it (he came down on the car from a jump); from the road he
+            // is pushed out of the nearest side, as a wall would stop him.
+            const bool fromAbove = l[2] - 1.0f > mx[2] - 0.4f;
+            float best = fromAbove ? oTop : 1.0e9f;
             int axis = 2;
             float goal = mx[2];
             if (oXl < best) { best = oXl; axis = 0; goal = mn[0] - rad; }
@@ -842,6 +868,89 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     // towing him along one, where being against / inside it is the point.
     if (link->thawSkitching != 1) PushOutOfCars(t, log);
 
+    // 8.51 step 8 (test 23: "cj appears to be pushing the cars forward when they slow down or
+    // stop"): while he holds a car (reTHAWed's skitch on a proxy, link thawSkitching / thawSkitchId),
+    // GTA ignores collisions between CJ and that car, so a car that brakes is not shoved along by
+    // the CJ we place behind it every frame. Cleared again when he lets go.
+    {
+        // test-26 video (user: "the car not being able to move uphill like cj was dragging it"): with
+        // only the ignored-collision link the held taxi still slowed from 0.13 to 0.00-0.02 m/frame
+        // while he held it uphill (gta.log 104-110 s). While he holds a car, CJ uses no collision at
+        // all (as the BMX code does for the bike); his place is set every frame anyway.
+        CVehicle* want = nullptr;
+        const LONG held = link->thawSkitchId;
+        if (link->thawSkitching == 1 && held >= 0 && CPools::ms_pVehiclePool && held < CPools::ms_pVehiclePool->m_nSize)
+            want = CPools::ms_pVehiclePool->GetAt(held);
+        if (want) {
+            ped->m_pEntityIgnoredCollision = want;
+            if (!g_skitchCollisionOff) {
+                g_skitchSavedCollision = ped->bUsesCollision;
+                g_skitchCollisionOff = true;
+            }
+            ped->bUsesCollision = false;
+            if (g_skitchIgnored != want) log("skitch: CJ has no collision while he holds car %ld", static_cast<long>(held));
+            g_skitchIgnored = want;
+            // test 29 ("skitch where" log): GTA has CJ 0.65-1.15 m further back than the spot behind the
+            // bumper at speed and up to 0.56 m to one side in turns (reTHAWed's steer lags the turn; its
+            // numbers come one or two frames late). reTHAWed's skater is never seen, only CJ: so while he
+            // holds, CJ is put on the spot behind the held car's bumper as GTA has the car this frame (this
+            // runs after GTA's world update, so it is where the car is drawn). Blended in over 0.2 s when
+            // he grabs and out over 0.2 s when he lets go. reTHAWed's pose (crouch, lean) is unchanged.
+            const CVector cp = want->GetPosition();
+            const CVector f = want->GetForward();
+            const CVector r = want->GetRight();
+            CBaseModelInfo* mi = CModelInfo::ms_modelInfoPtrs ? CModelInfo::ms_modelInfoPtrs[want->m_nModelIndex] : nullptr;
+            CColModel* col = mi ? mi->m_pColModel : nullptr;
+            float rear = col ? -col->m_boundBox.m_vecMin.y : 2.2f;
+            if (!(rear > 0.3f && rear < 12.0f)) rear = 2.2f;
+            const float midX = col ? (col->m_boundBox.m_vecMax.x + col->m_boundBox.m_vecMin.x) * 0.5f : 0.0f;
+            const float back = rear + kSkitchGapM;
+            const float sx = cp.x - f.x * back + r.x * midX, sy = cp.y - f.y * back + r.y * midX;
+            const float ox = sx - t.x, oy = sy - t.y; // from reTHAWed's place to the spot
+            const DWORD sNow = GetTickCount();
+            if (g_skitchSnapCar != want) {
+                g_skitchSnapCar = want;
+                g_skitchSnapSince = sNow;
+            }
+            float w = static_cast<float>(sNow - g_skitchSnapSince) / kSkitchBlendMs;
+            if (w > 1.0f) w = 1.0f;
+            if (ox * ox + oy * oy > kSkitchSnapMax * kSkitchSnapMax) w = 0.0f; // far off: leave him (a bad sample)
+            g_skitchSnapOff[0] = ox * w;
+            g_skitchSnapOff[1] = oy * w;
+            g_skitchSnapLeft = sNow;
+            static DWORD nextWhereLog = 0;
+            if (sNow >= nextWhereLog) {
+                nextWhereLog = sNow + 500;
+                const float dx = t.x - cp.x, dy = t.y - cp.y;
+                log("skitch where: reTHAWed's place %.2f m along / %.2f m right of car %ld's centre; CJ put on the spot "
+                    "%.2f m behind it (rear bumper %.2f + %.2f), %.0f%% of the way; car heading %.1f deg, speed %.2f",
+                    dx * f.x + dy * f.y, dx * r.x + dy * r.y, static_cast<long>(held), back, rear, kSkitchGapM, w * 100.0f,
+                    atan2f(-f.x, f.y) * 57.2958f, want->m_vecMoveSpeed.Magnitude());
+            }
+        } else if (g_skitchIgnored || g_skitchCollisionOff) {
+            SkitchCollisionRestore(ped);
+            log("skitch: CJ collides with cars again");
+        }
+    }
+
+    // test 29: the skitch spot (see above); after he lets go the last offset fades out over 0.2 s
+    {
+        const DWORD fNow = GetTickCount();
+        float k = 1.0f;
+        if (g_skitchIgnored == nullptr) {
+            g_skitchSnapCar = nullptr;
+            const DWORD since = fNow - g_skitchSnapLeft;
+            k = since >= kSkitchBlendMs ? 0.0f : 1.0f - static_cast<float>(since) / kSkitchBlendMs;
+        }
+        if (k > 0.0f && (g_skitchSnapOff[0] != 0.0f || g_skitchSnapOff[1] != 0.0f)) {
+            t.x += g_skitchSnapOff[0] * k;
+            t.y += g_skitchSnapOff[1] * k;
+            float gz2 = 0.0f;
+            if (GroundZ(t.x, t.y, t.z, gz2) && t.z < gz2 + g.feetOffset + kBoardLift) t.z = gz2 + g.feetOffset + kBoardLift;
+        } else if (k <= 0.0f) {
+            g_skitchSnapOff[0] = g_skitchSnapOff[1] = 0.0f;
+        }
+    }
     ped->SetPosn(CVector(t.x, t.y, t.z));
     ped->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
     float heading = 0.0f;

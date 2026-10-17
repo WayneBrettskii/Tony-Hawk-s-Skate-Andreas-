@@ -24,8 +24,8 @@
 namespace mp {
 
 constexpr LONG kLinkMagic = 0x3154504D; // the letters "MPT1" read as a number
-constexpr LONG kLinkVersion = 17;         // ... 15: skitch (8.33); 16: skitching flag (8.33); 17: skitch grab rules (8.42)
-constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v17";
+constexpr LONG kLinkVersion = 18;         // ... 15: skitch (8.33); 16: skitching flag (8.33); 17: skitch grab rules (8.42); 18: skitch car's rear (8.51)
+constexpr wchar_t kLinkName[] = L"Local\\SkateAndreas_v18";
 constexpr DWORD kLinkMappingSize = 4096; // one memory page; room to grow
 
 // gtaInButtons bits: GTA's own pad button names (GInput maps the controller to
@@ -215,8 +215,12 @@ struct LinkBlock {
     // about inside it.
     volatile LONG thawSkitching;
     volatile LONG thawSkitchId;
+    // ---- 8.51 step 6 (version 18), written by the GTA plugin with gtaSkitchPos: how far the
+    // published car's rear bumper is behind its centre, in THAW inches (from its collision box),
+    // so the THAW side can put the proxy's hold point on the bumper.
+    volatile float gtaSkitchBack;
 };
-static_assert(sizeof(LinkBlock) == 1108, "LinkBlock layout changed: bump kLinkVersion");
+static_assert(sizeof(LinkBlock) == 1112, "LinkBlock layout changed: bump kLinkVersion");
 
 // 8.44 N1 (audit, 2026-10-15): every number one side reads from the other is checked
 // for NaN / infinity before use. A bad value once spread from reTHAWed into CJ's

@@ -42,6 +42,16 @@ inline bool OkThaw(float f) { return f > -5.0e6f && f < 5.0e6f; }
 
 } // namespace
 
+// 8.51 step 6: metres from a car's centre back to its rear bumper (its collision box, -min.y),
+// 2.2 m when the model has no box or a silly one.
+float RearOf(CVehicle* v)
+{
+    CBaseModelInfo* mi = CModelInfo::ms_modelInfoPtrs ? CModelInfo::ms_modelInfoPtrs[v->m_nModelIndex] : nullptr;
+    CColModel* col = mi ? mi->m_pColModel : nullptr;
+    const float back = col ? -col->m_boundBox.m_vecMin.y : 2.2f;
+    return (back > 0.3f && back < 12.0f) ? back : 2.2f;
+}
+
 void CarTick(LinkBlock* link, void (*log)(const char*, ...))
 {
     if (!link || link->gtaSkateMode != 1) return;
@@ -65,6 +75,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     float lockD2 = 0.0f, lockSpeed = 0.0f;
     int lockModel = 0;
     float lockPos[3] = {}, lockVel[3] = {}, lockFwd[3] = {};
+    float skBack = 0.0f, lockBack = 0.0f; // 8.51 step 6: rear bumper behind the centre, THAW inches
     __try {
         auto* pool = CPools::ms_pVehiclePool;
         if (!pool) return;
@@ -96,6 +107,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
                 lockFwd[0] = nose.x;
                 lockFwd[1] = nose.z;
                 lockFwd[2] = nose.y / align->ySign;
+                lockBack = RearOf(v) / align->scale;
             }
             // 8.33 skitch: remember the nearest MOVING car (position + velocity, THAW units)
             // Only when it is close (the GTA side knows the metres, so the THAW side need not
@@ -117,6 +129,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
                 skFwd[0] = nose.x;
                 skFwd[1] = nose.z;
                 skFwd[2] = nose.y / align->ySign;
+                skBack = RearOf(v) / align->scale;
             }
             // 8.41: rails on PARKED cars only, decided by the car not having moved since the
             // last pass - never by its speed (see the note above; the speed test let a slowly
@@ -192,6 +205,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
             link->gtaSkitchVel[k] = pv[k];
             link->gtaSkitchFwd[k] = pf[k];
         }
+        link->gtaSkitchBack = pubLock ? lockBack : skBack;
     }
     link->gtaSkitchId = pubLock ? heldId : (pubCand ? skIdx : -1);
     link->gtaSkitchValid = (pubLock || pubCand) ? 1 : 0;
@@ -200,8 +214,8 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     if (skNow - lastSkLog > 1000) {
         lastSkLog = skNow;
         if (pubLock) {
-            log("skitch: holding car %ld (model %d, %.1f m, speed %.2f) at thaw %.1f %.1f %.1f", heldId, lockModel,
-                sqrtf(lockD2), lockSpeed, pp[0], pp[1], pp[2]);
+            log("skitch: holding car %ld (model %d, %.1f m, speed %.2f, rear %.0f in behind its centre) at thaw %.1f %.1f %.1f", heldId,
+                lockModel, sqrtf(lockD2), lockSpeed, lockBack, pp[0], pp[1], pp[2]);
         } else {
             log("skitch: %s car %d (model %d, %.1f m, speed %.2f) at thaw %.1f %.1f %.1f", pubCand ? "publishing" : "no",
                 skIdx, skModel, pubCand ? sqrtf(skBest) : -1.0f, skSpeed, pp[0], pp[1], pp[2]);

@@ -28,7 +28,39 @@ Test 16: write watch on the THAW.exe entry 0x719AE8 for the whole level, to catc
 Result: never written; it is a built-in C function. FREEZE CAUSE FOUND: a line in reTHAWed's skater animation script uses that
 function's name as a setting, and the script reader loops on it. GRAB POINT IS RIGHT (back-left or back-right corner).
 Test 17: the plugin blanks such lines in reTHAWed's memory once per run ("script fix" in thaw.log). PASSED: blanked 1 of 1, no freeze
-over many skitches at 0/90/180/270 degrees. Next (ask first): smooth following of GTA cars, then a pool of proxies.
+over many skitches at 0/90/180/270 degrees.
+User: the hold should be centred on the rear bumper; ours is ~1 m to the side (open).
+Step 5 (go-ahead given): smooth following - the car is placed every reTHAWed frame from the last GTA sample + its velocity.
+Test 18: smooth (new samples 1-2 in off), but the hold was off (inside a limo, beside a bike) and cars braked for CJ.
+Step 6: link v18 gtaSkitchBack; the proxy's hold lands on the GTA car's rear bumper, centred once he holds; thawSkitching while he holds.
+Rebuild BOTH plugins (link version 18).
+Test 19: cars keep driving, regular cars look good; limo off to the right, bike wobbles (the hold flapped on/off).
+Test 20: wider let-go box once holding (no flapping) + hold offsets logged twice a second.
+Result: centred after the grab, then he drifts sideways. User: not the balance (meter shows in GTA; centred meter, still on the side).
+Cause: the drift follows the car's TURNS (reTHAWed does not turn him with the proxy). Step 7: the proxy is steered so he stays
+10 in behind the GTA car's bumper on its centre line.
+Test 21: steering works through turns (20 s / 18 s holds within ~10 in). Fixes for test 22: never switch cars under a held skater;
+wider grab test; faster steer.
+Test 22: follow mode never came on (F2 pressed during the scan, dropped): the user got the old 8.42 tow.
+Test 23: early F2 kept; the script-fix search no longer delays "ready". Result: "getting better"; 9 holds 3-29 s; limo held on the spot.
+Left: he faces the old way after turns; CJ shoves braking cars. Step 8: turn the held skater to the car's heading; GTA ignores
+CJ-vs-held-car collisions. Test 24: no more pushing; floated uphill; once hung to the side.
+Test 25: proxy height follows the car's slope; wider grab test (moving with the car); facing fix < 90 deg only.
+Result: NO hold recognised (the speed test can't pass: reTHAWed doesn't update velocity while skitching) -> none of the hold fixes ran.
+Test 26: grab = stays put relative to the proxy for 0.3 s; proxy parks 0.4 s after the car is gone (the air grab).
+Result: holds recognised; a 50 s hold up a steep hill, on the spot. Stutter = the steer chasing a short drop-back. One air grab (not logged).
+Test 27: gentler steer (along only trimmed, 150 in/s, 4 in dead zone); logs the skater near the proxy when no hold is seen.
+Video (2 clips): mostly right; CJ inside braking cars; grabs on passing/oncoming cars; thrown over the car at the end = reTHAWed's normal skitch jump (user confirmed, not a bug).
+Test 28: prediction 0.1 s, spot 20 in back, follow only cars he is behind and heading his way; CJ has NO collision while
+holding (the uphill drag: the taxi slowed to 0 while held). Rebuild BOTH plugins.
+Video (2 clips): uphill drag gone (the held car crawled only with the queue in front); holds within 4 in of the spot.
+Grab/let-go seen late (let-go up to 2.9 s: he rode beside the car). reTHAWed's own skater speed reads exactly 0 while he skitches.
+Test 29: grab = own speed 0 while moving with the car (seen in 0.1 s); let-go = own speed back (2 reads). Also: CJ looked off to one side of the bumper in clip 2 (11 s, 24 s) though THAW had him on the spot; GTA now logs
+"skitch where" (CJ relative to the held car, as GTA has it). Rebuild BOTH plugins.
+Test 29 video: grab/let-go now instant. Measured: CJ 0.65-1.15 m behind the spot at speed, up to 0.56 m aside in turns;
+twice stood on a stopped car's roof (push-out took him up). Test 30: CJ put on the spot behind the held car in GTA (0.2 s blends);
+push-out from the road goes to the side, not the roof. Rebuild the GTA plugin only.
+User: being stopped at a car is fine for now; bails on hitting a car maybe later.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 
