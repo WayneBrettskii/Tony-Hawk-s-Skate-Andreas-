@@ -22,8 +22,7 @@ constexpr float kNear = 40.0f;   // m: cars within this of CJ are logged
 constexpr float kRailNear = 22.0f; // m: cars within this give roof rails
 constexpr float kSkitchNear = 8.0f; // m: a moving car within this can be skitched
 constexpr float kSkitchHold = 16.0f; // m: a car the skater holds is followed out to this (8.42)
-constexpr float kPoolNear = 20.0f;   // m: 8.52 step 1: moving cars within this go into the pool list
-constexpr float kPoolMoving = 0.1f;  // m per frame (5 m/s): "moving", as for the one skitch car
+constexpr float kPoolNear = 20.0f;   // m: 8.52 step 1: cars within this go into the pool list (test 36: moving or not)
 constexpr int kPoolCand = 32;        // candidates looked at per pass
 constexpr float kGtaFps = 50.0f;   // GTA's move speed is metres per 50 Hz frame
 
@@ -79,7 +78,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
     int lockModel = 0;
     float lockPos[3] = {}, lockVel[3] = {}, lockFwd[3] = {};
     float skBack = 0.0f, lockBack = 0.0f; // 8.51 step 6: rear bumper behind the centre, THAW inches
-    // 8.52 step 1: the pool list (moving cars within kPoolNear; the held car always)
+    // 8.52 step 1: the pool list (cars within kPoolNear, moving or not since test 36; the held car always)
     struct Cand { PoolCar car; float d2; float dist; float speed; };
     Cand cand[kPoolCand];
     int candN = 0;
@@ -97,7 +96,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
             const CVector vs = v->m_vecMoveSpeed;
             const float cspeed = vs.Magnitude();
             const bool isHeld = heldId >= 0 && i == heldId && dCj < kSkitchHold * kSkitchHold;
-            if (candN < kPoolCand && (isHeld || (cspeed > kPoolMoving && dCj < kPoolNear * kPoolNear))) {
+            if (candN < kPoolCand && (isHeld || dCj < kPoolNear * kPoolNear)) {
                 Cand& k = cand[candN++];
                 const CVector nose = v->GetForward();
                 k.car.id = i;
@@ -242,7 +241,7 @@ void CarTick(LinkBlock* link, void (*log)(const char*, ...))
         if (pNow - lastPoolLog > 1000 && (n > 0 || heldId >= 0)) {
             lastPoolLog = pNow;
             char buf[400];
-            int len = snprintf(buf, sizeof(buf), "skitch pool: %d car(s) published of %d moving within %.0f m%s:", ok ? n : 0, candN,
+            int len = snprintf(buf, sizeof(buf), "skitch pool: %d car(s) published of %d within %.0f m%s:", ok ? n : 0, candN,
                                kPoolNear, ok ? "" : " (NOT published: a bad position)");
             for (int a = 0; a < n && len > 0 && len < static_cast<int>(sizeof(buf)); ++a)
                 len += snprintf(buf + len, sizeof(buf) - len, " car %ld (%s%.1f m, speed %.2f)", static_cast<long>(cand[a].car.id),

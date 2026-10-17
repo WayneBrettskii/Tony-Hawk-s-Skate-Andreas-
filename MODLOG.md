@@ -2,6 +2,16 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.52 test 36: every car within 20 m can get a proxy (both plugins)
+
+**Changed:** `src/gta/cars.cpp`: the pool list takes every car within 20 m of CJ, moving or not (was: moving only). `src/thaw/vehscan.cpp`: every listed car is wanted; the "heads his way, he is behind its centre" test is gone. Plan: DESIGN 8.52 "Plan for test 36".
+**Why:** test 35: the pool was idle most of the time (only cars he was already behind got a proxy), and cars without a proxy are not solid in reTHAWed (clipping).
+**Tested how:** built both plugins with `cmake --build build --config Release --target gta_plugin thaw_plugin` (MSVC): no errors or warnings; `SkateAndreas.asi` copied to the GTA modloader folder. **Not run in game.**
+**Still broken / not tested:** only 3 proxies (the 4th listed car waits); parked cars now have two sets of roof rails (ours and the proxy's); whether riding into a proxy makes reTHAWed bail him is not known.
+**Next:** test 36 (user).
+
+**Test 36 result (user 2026-10-17, run 02:03, no video): "skitching back to back cars was way better that time".** Short run: follow mode on for about 50 s (thaw 89-138 s). No freeze. The pool was busy: in the 56 once-a-second lines, 3 proxies followed cars for 29 s, 2 for 8 s, 1 for 3 s, none for 16 s (test 35: none for 87 of 160 s). 7 holds, on all three proxies (proxy 0 twice, 1 once, 2 four times); from a let-go to the next grab took 0.3-7.7 s (2.3 s typical). **More proxies would help:** in 31 of the 56 lines at least one listed car had no free proxy (up to 3 at once). **Clipping not shown to be better:** 8 `car solid check ... INSIDE` lines in the ~50 s with the pool on (test 35: 16 in 160 s), so CJ still ended up inside cars about as often; which cars (with or without a proxy) is not logged. No bail from riding into a proxy was seen (not tested on purpose).
+
 ## [2026-10-17] 8.52 steps 2 + 3: every proxy follows its own GTA car; the hold works on any of them (reTHAWed side)
 
 **Changed:** `src/thaw/vehscan.cpp`: the single track / target of the test car became one slot per proxy (`Slot`, `g_slots`); the game thread places every slot that has a car in one pass (`ApplySlotLocked`, `WriteAllowed`); cars from the GTA pool list (link v19) are handed to proxies (a car keeps its proxy; a new one takes a parked one); each proxy parks on its own after 0.4 s without its car, never while held or with the skater on / next to it; the grab tests run on the "focus" proxy (the held one, else the nearest following one), and the held proxy (`g_heldSlot`) gets the steer and the facing fix. F2 now switches the whole pool; F1 / Shift+F2 still act on proxy 2. New log lines: `proxy N now follows GTA car X`, `proxy N (...) parked at its own spot`, `the skater holds proxy N's back`, `holding proxy N: ...`, and once a second `vehicles: pool: proxy 0 -> GTA car X (... in from the skater) [HELD] ...`. Design: DESIGN 8.52 "Step 2 + 3 design".

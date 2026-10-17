@@ -50,7 +50,7 @@ Skate through GTA San Andreas with reTHAWed's real skating. reTHAWed runs hidden
 
 - **On-screen hints** (tested 2026-10-12): GTA's own black message box says **`Press L3+R3 to Skate`** when you are on foot (once per session), and **`Press L3+R3 to toggle BMX mode`** while you are on a BMX (at most once a minute). It never covers a message GTA itself is showing, and stays quiet in cars.
 
-- **Skitching on GTA cars, with reTHAWed's own skitch** (tested 2026-10-17, test 32): needs a map built with `--proxy-cars`; press **F2** in reTHAWed to turn follow mode on, then grab a moving car from behind with **Up** (reTHAWed's skitch). CJ holds on at the rear bumper, faces the car's way through turns and up hills; holds of up to 50 s seen. Limits: one car at a time; not tested faster than about 55 km/h; riding into a car stops you at its side (no bail yet); landing on a car's roof from a jump pushes you off its side.
+- **Skitching on GTA cars, with reTHAWed's own skitch** (tested 2026-10-17, tests 32 and 36): needs a map built with `--proxy-cars`; press **F2** in reTHAWed to turn follow mode on, then grab a moving car from behind with **Up** (reTHAWed's skitch). CJ holds on at the rear bumper, faces the car's way through turns and up hills; holds of up to 50 s seen. Back to back on different cars works (tested 2026-10-17, test 36: up to 3 cars near you have an invisible reTHAWed car under them). Limits: only the 3 nearest cars; not tested faster than about 55 km/h; CJ can still clip into cars when not skitching; riding into a car stops you at its side (no bail yet); landing on a car's roof from a jump pushes you off its side.
 
 ## What doesn't work / not tested
 

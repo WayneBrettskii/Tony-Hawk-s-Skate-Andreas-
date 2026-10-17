@@ -1776,22 +1776,10 @@ followDone:
         for (int k = 0; k < 3; ++k)
             if (!(cp[k] > -1.0e6f && cp[k] < 1.0e6f) || !(cf[k] > -2.0f && cf[k] < 2.0f) || !(cv[k] > -1.0e5f && cv[k] < 1.0e5f))
                 ok = false; // nonsense
-        // test-26 video: he grabbed cars coming the other way or passing beside him (and, likely, the
-        // "air"). Unless he holds it, a car is only followed if it heads the way he faces (within
-        // about 60 degrees) and he is behind its centre.
-        if (ok && pc[i].id != heldCar && pos && at) {
-            const float fl = sqrtf(cf[0] * cf[0] + cf[2] * cf[2]), al = sqrtf(at[0] * at[0] + at[2] * at[2]);
-            float same = (fl > 0.1f && al > 0.1f) ? fabsf(cf[0] * at[0] + cf[2] * at[2]) / (fl * al) : 0.0f; // fakie counts too
-            if (vel) { // or he rolls the way the car goes
-                const float vl = sqrtf(vel[0] * vel[0] + vel[2] * vel[2]);
-                if (vl > 50.0f && fl > 0.1f) {
-                    const float sv = (cf[0] * vel[0] + cf[2] * vel[2]) / (fl * vl);
-                    if (sv > same) same = sv;
-                }
-            }
-            const float behind = fl > 0.1f ? ((pos[0] - cp[0]) * cf[0] + (pos[2] - cp[2]) * cf[2]) / fl : 0.0f;
-            if (same < 0.5f || behind > 0.0f) ok = false;
-        }
+        // test 36 (test 35: the pool was idle most of the time): every car in the list is wanted. The
+        // test-26 rule (only a car heading his way with him behind its centre) was made for the single
+        // proxy, which stood at one car and was grabbed beside the wrong one; each proxy now stands
+        // under its own car, and a proxy is solid in reTHAWed, so the nearest cars stop his skater.
         wanted[i] = ok;
         if (ok && pc[i].id == heldCar) heldInList = true;
     }

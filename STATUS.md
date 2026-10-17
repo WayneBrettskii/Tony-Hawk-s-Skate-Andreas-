@@ -80,7 +80,10 @@ Test 34 played: the wait fired once and parked when he was clear; no map jump. L
 the side (dead roof branch, deferred). Next: pool step 2.
 Pool steps 2 + 3 built (reTHAWed plugin, not run): all 3 proxies follow their own GTA cars; grab any of them (test 35).
 Test 35: no freeze; holds on proxies 0 and 1 work. Pool mostly idle (only cars he is already behind get a proxy);
-clipping only when not skitching: cars without a proxy are not solid in reTHAWed. Next: video at speed; then bails on riding into a car; proxy pool.
+clipping only when not skitching: cars without a proxy are not solid in reTHAWed.
+Test 36 (built, both plugins, not run): every car within 20 m (moving or not) can get a proxy, no behind-it test.
+Test 36 PASSED for back to back (user: "way better"): 3 proxies busy most of the time, holds on all three. Often a
+4th car had no proxy (more proxies = map rebuild). Clipping about as often as before. Next: video at speed; then bails on riding into a car; proxy pool.
 
 # EARLIER (same night): natas everywhere WORKS with 100 posts (8.50); default is 100
 
