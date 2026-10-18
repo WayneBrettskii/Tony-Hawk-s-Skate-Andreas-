@@ -2,6 +2,10 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] INSTALL.md: how to update without rebuilding the map (docs only)
+
+User 2026-10-17, testing zip 83d1132 on the Desktop installs: "i'm pretty sure i have the same map as before but the launcher is telling me to build it anyways". Why: the launcher's "SkateAndreas map built" check (src/launcher/main.cpp, check 5) only looks for `extracted	haw_maps\_railpoolails_in_map.csv` next to the launcher, and a new zip unzipped into a new folder has no `extracted\`. The plugins read the rail list and the proxy cars from that folder too. **Changed:** INSTALL.md's "Updating" note: keep `extracted\` (unzip over the old folder, or copy it next to the new launcher), and rebuild the map only when the update notes say so. No code change. **Tested how:** not tested; the Desktop install's folders weren't checked.
+
 ## [2026-10-17] 8.58: player's skitch freeze - the script fix now finds every copy of the hang line (test 57)
 
 A player's report (passed on by the user, logs.zip): after skitching ~15 s and letting go, reTHAWed froze for good (twice). Their thaw logs: both freezes are the old 8.51 hang in reTHAWed's script reader (function entry 0x719AE8 in ebp). Both are at **copies of the hang line that the script fix had not blanked**: it found and blanked 1 line per run (0x18087705, 0x1808A705), and the freezes were at 0x18087FEB and 0x1808A96A. The script bytes there match our saved test-15 bytes after the function reference exactly. **Change (test 57, `src/thaw/vehscan.cpp`):** the search no longer needs a new-line byte before the reference; instead the address must be a built-in function entry (third word a THAW.exe code address). It logs the byte before each line found. Blanking unchanged (memory only). Why the other copies were missed is **not proven** (the scripts are packed in reTHAWed's .pak files). Built (MSVC Release, thaw_plugin): no errors. Not run in game. Nothing committed. The player needs a new release zip to get it.

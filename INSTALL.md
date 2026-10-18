@@ -77,10 +77,18 @@ included in the download (that data is GTA's, not ours). You make it yourself in
    *(The launcher can't do this step for you — nothing of ours writes inside your reTHAWed folder.)*
 4. **Only one SkateAndreas map at a time.** If an older one is already there, remove it first.
 
-**Updating from an older SkateAndreas?** Build the map again and replace the old map folder in
-reTHAWed's `Maps`: the map now carries the stand-in cars that make skitching work. The button needs
-the reTHAWed folder set in the launcher (it reads the cars from your own reTHAWed; nothing is
-written there).
+**Updating from an older SkateAndreas?**
+
+- **Keep your `extracted\` folder.** Unzip the new version over the old one (same folder), or
+  unzip it somewhere new and copy the old `extracted\` folder next to the new launcher. The
+  launcher looks for your map's files in `extracted\` next to itself. Without that folder it says
+  the map is not built yet, even when the map in reTHAWed's `Maps` is fine, and the rails, natas
+  posts and skitch cars won't work in game.
+- **Rebuild the map only when the update notes say so.** Then replace the old map folder in
+  reTHAWed's `Maps` with the new one. The button needs the reTHAWed folder set in the launcher
+  (it reads the cars from your own reTHAWed; nothing is written there).
+- If you don't have the old `extracted\` folder any more, just build the map again (step 2) and
+  copy it over (step 3).
 
 **Leave `extracted\` where it is.** The mod reads your rail list from it every time you play, so
 if you move the launcher, move `extracted\` with it.
