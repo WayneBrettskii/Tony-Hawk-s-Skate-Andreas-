@@ -447,17 +447,31 @@ void FindTurnSources()
     }
 }
 
+DWORD ReadDwordOr0(unsigned long at)
+{
+    __try {
+        return *reinterpret_cast<const DWORD*>(at);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 void FindHangRegion(unsigned long base, unsigned long end)
 {
     __try {
-        for (unsigned long a = base; a + kHangLen + 1 <= end && g_hangCount < kMaxHangs; ++a) {
-            const BYTE* b = reinterpret_cast<const BYTE*>(a);
-            if (b[0] != 0x01 || b[1] != 0x46 || b[6] != 0x07) continue;
+        // 8.58 (a player's logs, 2026-10-17): two freezes, each at a copy of the hang line this search had not
+        // found; it insisted on a new-line byte (0x01) before the reference. Now any byte may come before it,
+        // and the address must be a built-in function entry (its third word a THAW.exe code address).
+        for (unsigned long a = base + 1; a + kHangLen + 1 <= end && g_hangCount < kMaxHangs; ++a) {
+            const BYTE* b = reinterpret_cast<const BYTE*>(a - 1); // b[0] = the byte before the reference
+            if (b[1] != 0x46 || b[6] != 0x07) continue;
             const DWORD ref = static_cast<DWORD>(b[2]) | static_cast<DWORD>(b[3]) << 8 | static_cast<DWORD>(b[4]) << 16 |
                               static_cast<DWORD>(b[5]) << 24;
             if (ref < 0x700000 || ref >= 0x800000) continue;
             if (b[7] != 0x16 && b[7] != 0x17 && b[7] != 0x1A) continue; // a name, a whole number or a decimal
-            g_hangAt[g_hangCount] = a + 1;
+            const DWORD code = ReadDwordOr0(ref + 8);
+            if (code < 0x401000 || code >= 0x700000) continue;
+            g_hangAt[g_hangCount] = a;
             g_hangRef[g_hangCount] = ref;
             ++g_hangCount;
         }
@@ -570,9 +584,10 @@ DWORD WINAPI ScanThread(LPVOID)
             DWORD sym[3] = {};
             bool oks = false;
             CopyMem(sym, g_hangRef[i], sizeof(sym), oks);
-            g_log("script fix:   at 0x%08lX: function entry 0x%08lX (name %08lX, code 0x%08lX); bytes %02X %02X %02X %02X %02X %02X %02X "
-                  "%02X %02X %02X %02X %02X", g_hangAt[i], g_hangRef[i], oks ? sym[0] : 0UL, oks ? sym[2] : 0UL, b[0], b[1], b[2], b[3],
-                  b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11]);
+            g_log("script fix:   at 0x%08lX: function entry 0x%08lX (name %08lX, code 0x%08lX); byte before %02X%s; bytes %02X %02X %02X %02X %02X %02X %02X "
+                  "%02X %02X %02X %02X %02X", g_hangAt[i], g_hangRef[i], oks ? sym[0] : 0UL, oks ? sym[2] : 0UL, b[0],
+                  b[0] == 0x01 ? " (a new line)" : " (8.58: the old search missed these)", b[0], b[1], b[2], b[3], b[4], b[5], b[6],
+                  b[7], b[8], b[9], b[10], b[11]);
         }
     }
     return 0;

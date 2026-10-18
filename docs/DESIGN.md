@@ -1770,3 +1770,22 @@ User (after test 55, which worked): "instead of L1 + circle can we do L1 + R2 so
 **Not changed:** the reTHAWed plugin, link and map (no map rebuild). The wheel still cancels with Circle while it is open.
 
 **Result (user 2026-10-17): test 56 worked** ("fuck yeah it worked"). Test 55 (8.56) worked too ("okay that worked great").
+
+### 8.58 Player report: reTHAWed froze after letting go of a skitch (2026-10-17) - findings and fix
+
+**Report (a player, passed on by the user, logs in a zip):** "when I was skitching for around 15 seconds or so and let go, I would get completely stuck, only able to move by switching back to SA mode. But if I go back into reTHAW mode, I'll snap right back to skitching where I got stuck. reTHAW itself gets stuck, unable to do anything but close it." The player rebuilt the map and updated. Their logs: GTA 1.0 US, reTHAWed 5.0.0.1, installed on another PC (F:\SteamLibrary).
+
+**Findings (from their thaw.log and thaw.prev.log, two runs, one freeze each):**
+- Both freezes are the old 8.51 hang (tests 1-16). reTHAWed's game thread stops in its script reader (THAW.exe+0xE359, +0xF0B2), and the function entry at THAW.exe 0x719AE8 (name F8CFD515) is in ebp.
+- The 64 script bytes at esi are **the same hang line** that the 8.51 script fix blanks: `= 1`, a new line, then `28 01 01 16 0901D9F0 07 0E 16 D0E8C534 0F ...`. Our saved test-15 bytes (extracted\veh_code\script_1808F2EA.bin, offset 0x800) match them byte for byte after `46 E8 9A 71 00`.
+- In both runs the script fix ran and blanked **one** line (0x18087705 and 0x1808A705). The freezes were at other copies: 0x18087FEB (0x8E6 later) and 0x1808A96A (0x265 later). So the player's reTHAWed has **more than one** such line, and the search found only one each time.
+- The likely reason: the search insists on a new-line byte (0x01) right before the function reference. The copy it found has one; the others most likely don't (for example, the reference straight after a `)`). **Not proven:** their scripts are packed in reTHAWed's .pak files, and we can't read them without unpacking. On this PC the freeze hasn't come back since test 17, which fits our scripts having only the 0x01 copy, or reaching the others less often.
+- What the player sees fits this. With reTHAWed hung, its skater stops where the skitch ended. Going back to skate mode puts CJ there again.
+
+**Fix (test 57):**
+- The search accepts **any byte before** `46 <address in 0x700000-0x7FFFFF> 07 <16|17|1A> <4-byte value>`.
+- To stay safe without the 0x01, it now also checks that the address really is one of reTHAWed's built-in function entries: the third word of the 24-byte entry must be a THAW.exe code address (0x401000-0x6FFFFF). For example, 0x719AE8's is 0x0042EDB0.
+- The blanking is unchanged: the 11 bytes from 0x46 become new-line bytes (0x01), which the reader skips. This is still in reTHAWed's memory only; nothing on disk changes.
+- The log names each line found and the byte before it, so the next log shows whether the other copies were found.
+
+**Not done:** freeing reTHAWed from a hang once it has happened (the watchdog only looks). If a player still freezes, the watchdog's `script bytes at esi` line and the `script fix:` lines show which copy was missed.
