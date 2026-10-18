@@ -1729,3 +1729,44 @@ Step 3: integrate main frame/pad/HUD, keep cheat actions on the game thread, avo
 Implementation references (read only): gta-reversed Cheat.cpp ApplyCheat for native function-or-toggle dispatch; Hud.cpp DrawWeaponIcon for model-key + ICON lookup. https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Cheat.cpp and https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Hud.cpp . No decompiled sources or assets stored in the repository.
 
 **8.55 built (test 54):** Insert-only menu (no controller shortcut), 90 native entries plus god/no-reload, 44 weapon types. GTA slot replacement rules retained. New arsenal module integrated before shooting each frame and before radio/shoot input filters; reInitGameEvent resets custom state. Native icon lookup does not retain TXD pointers between frames. Async model requests time out after 5 s. Main frame logs actions; wheel open logs carried/native-icon counts. No slowdown or projectile firing added. Release build, helper tests, extracted pad-filter harness, unique cheat IDs and installed hash passed. Gameplay/rendering **not tested**. Detailed steps in STATUS.
+
+**Test 54, what the log shows (gta.log 21:38-21:47, the test 54 build; read 2026-10-17, no code change):** the weapon wheel opened 5 times, each with `13 carried slots, 13 native icons` (every icon found, no text fallback), and each release equipped a weapon (M4, Minigun, Silenced pistol, MP5, Minigun). God mode ON and Unlimited ammo / no reload ON were switched on once; neither was switched OFF again in this run. After ammo went ON, every logged shot kept its clip (for example `ammo 500/99999 -> 500/99999`, `30/99999 -> 30/99999`). Gun-hand lines: 172 x `rigid yes`, no `rigid skipped`, row lengths after 1.0000, barrel . aim and top . up 0.996-1.000 at full aim. No `arsenal: exception` or other errors. **Not shown by the log** (no line for them): any native GTA cheat (each one logs its name; none appear, so none were activated in this run), the weapon picker (no `Loading weapon...`), Delete / remove, ammo and god mode turned back OFF, taking damage with god mode, the short Back tap / radio with gun mode off, Circle cancel, whether the menu keys leaked into tricks or shots, and how the wheel and icons looked. These still need the user's in-game check.
+
+### 8.56 Cheat menu on the controller, gun mode without a gun (2026-10-17) - plan
+
+User (after test 54): "The wheel was working fine i could change guns and shoot god mode worked i want to tweak the cheat menu just a bit leave insert to bring it up but also allow controller navigation as fot gun mode allow cj to enter it even if he isn't holding a gun since we have the weapon wheel".
+
+**1. Controller in the cheat menu (test 55).** Insert still opens and closes it (keyboard only). While it is open, the controller also works:
+- D-pad Up / Down moves (held: repeats like the arrow keys).
+- Cross selects (Enter).
+- Circle goes back (Backspace); on the first page it closes the menu.
+- Square removes the highlighted weapon on the Choose weapons page (Delete).
+
+The buttons are read in `ArsenalFilterPad` (padlink's copy of GTA's pad, which runs every frame on foot, skating and on the BMX). While the menu is open, the controller already reaches neither GTA nor reTHAWed. Each press is kept as a "pressed" flag and used by the menu on the next frame. After Circle closes the menu, the existing release guard keeps that press from reaching the games. The footer text names both sets of keys. Log: `arsenal: controller in the menu: N press(es)` once a second while used.
+
+**2. Gun mode with any weapon (test 55).** D-pad Left + Cross turns gun mode on whatever CJ holds (fists, melee, throwables, an empty gun), so the weapon wheel (hold Back) can be used to pick a gun. Firing and aiming still only happen with a bullet gun that has ammo, as now. While CJ holds no bullet gun, L1 and Circle go to reTHAWed as normal (spin and grab), since gun mode has nothing to use them for. The "Gun mode needs a gun" / "no ammo" messages go away; the log says what CJ held when it turned on.
+
+**Not changed:** the wheel itself, cheats, god mode and ammo; reTHAWed plugin, link and map (no map rebuild).
+
+### 8.57 Gun mode fires with R2, Circle back to grabs (2026-10-17) - plan
+
+User (after test 55, which worked): "instead of L1 + circle can we do L1 + R2 so we don't have to sacrifice grab tricks R2 controls pivots, reverts, acid/bank drops and spine transfers turn off pivots and reverts and leave the rest".
+
+**Change (test 56):**
+- In gun mode with a bullet gun, **R2 fires** (held for automatic guns), and **Circle goes to reTHAWed again** (grabs). L1 still aims, and L1 + R1 is still caveman.
+- **R2 and reTHAWed:** acid drops, bank drops and spine transfers are done in the air, while pivots and reverts are done on the ground or on landing. So each R2 press is decided once, when it starts:
+  - If CJ's feet are more than **0.5 m above GTA's ground** under him, the whole press also goes to reTHAWed (drops and transfers still work).
+  - Otherwise reTHAWed doesn't get R2 until it is let go (no pivot, no revert).
+  - The gun fires in both cases.
+- **Height:** skate mode already finds GTA's ground under CJ every frame (the "never below the ground" check). It now also keeps how far his feet are above it (CJ's height minus the ground, his feet offset and the board lift), for the pad filter to read.
+- **Log:** once a second in gun mode, `gun mode: R2 presses: N passed to reTHAWed (in the air), M kept (on the ground)`, with the lowest and highest feet height seen at those presses.
+- With no bullet gun in hand, R2 and Circle go to reTHAWed as normal.
+
+**Risks / not sure:**
+- reTHAWed ramps that don't exist in GTA's world: on them GTA's ground is the flat street underneath, so CJ counts as "in the air" and a pivot at the top of such a ramp would still happen. Ramps that GTA has (skate parks) behave as planned.
+- If reTHAWed reads a revert from an R2 press made just before landing (higher than 0.5 m), that revert still happens. The 0.5 m can be tuned from the log.
+- Firing while in the air near a ramp can trigger an acid drop or spine transfer, since that R2 press also goes to reTHAWed.
+
+**Not changed:** the reTHAWed plugin, link and map (no map rebuild). The wheel still cancels with Circle while it is open.
+
+**Result (user 2026-10-17): test 56 worked** ("fuck yeah it worked"). Test 55 (8.56) worked too ("okay that worked great").

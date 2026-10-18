@@ -21,6 +21,10 @@ void SkateModeFrameSafe(LinkBlock* link, LogFn log);
 // True while skate mode is on (used by the F8 teleport helper to refuse).
 bool SkateModeIsOn();
 
+// 8.57: how far CJ's feet were above GTA's ground under him in the last skate-mode frame (metres);
+// false when no ground was found or skate mode is off.
+bool SkateModeFeetAboveGround(float* metres);
+
 // 8.29 B10: switch skate mode on as soon as GTA allows it (CJ off the bike,
 // no script holding him), trying for `forMs` milliseconds. BMX mode calls this
 // when the rider gets off the bike in reTHAWed (L1 + R1). GTA's main thread.

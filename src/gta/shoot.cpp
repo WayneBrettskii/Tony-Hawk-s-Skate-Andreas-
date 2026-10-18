@@ -68,6 +68,16 @@ bool g_r1 = false, g_b = false; // raw aim (L1 since test 40; the name stays) / 
 LONG g_heldBack = 0;          // frames a button was kept from reTHAWed (log)
 // test 48: L1 + R1 together pass to reTHAWed (caveman / off the board) instead of aiming
 bool g_pairPass = false;      // pad thread only
+// 8.56: gun mode can be on with no bullet gun in hand; then L1 and R2 (8.57; Circle before) stay reTHAWed's
+volatile bool g_gunReady = false;
+// 8.57: R2 fires; each R2 press also goes to reTHAWed only if it started in the air (drops, spine transfers),
+// not on the ground (pivots, reverts)
+constexpr short kR2Down = 60;        // R2 counts as pressed above this (0..255)
+constexpr float kR2AirM = 0.5f;      // feet above GTA's ground for "in the air"
+bool g_r2Was = false, g_r2Pass = false; // pad thread only
+LONG g_r2Passed = 0, g_r2Kept = 0;
+volatile float g_r2LowM = 1e9f, g_r2HighM = -1e9f; // feet heights seen at R2 presses (log)
+unsigned g_r2NoGround = 0;
 LONG g_pairPasses = 0;        // times the pair was passed (log)
 
 // ---- game side (ShootFrame) ----
@@ -427,6 +437,13 @@ void TurnOn(CPlayerPed* ped, CWeapon* w, CWeaponInfo* info)
     ClearLock("shoot mode on");
     SetMessage("Gun mode ON");
     LogCameraOnce();
+    // 8.56: gun mode turns on whatever CJ holds; the weapon wheel (hold Back) picks a gun
+    if (!w || !IsGun(info)) {
+        g_log("shoot mode ON (Left + X): CJ holds weapon %d (%s), not a gun that fires bullets: no aiming or firing until "
+              "one is picked (weapon wheel); L1 and R2 go to reTHAWed meanwhile",
+              w ? static_cast<int>(w->m_eWeaponType) : -1, info ? FireKind(info->m_nWeaponFire) : "no info");
+        return;
+    }
     g_log("shoot mode ON (Left + X): weapon %d, ammo %u/%u, fire interval %.2f s (GTA's firing loop %.2f-%.2f), %s, target range %.0f m, "
           "clip %u, skill %d",
           static_cast<int>(w->m_eWeaponType), w->m_nAmmoInClip, w->m_nAmmoTotal, FireInterval(info), info->m_fAnimLoopStart,
@@ -476,6 +493,15 @@ void LogHeld(CPlayerPed* ped)
         g_secondShots = 0;
         if (const LONG pp = InterlockedExchange(&g_pairPasses, 0))
             g_log("gun mode: L1 + R1 passed to reTHAWed %ld time(s) (caveman / on or off the board), not used to aim", static_cast<long>(pp));
+        const LONG passed = InterlockedExchange(&g_r2Passed, 0), kept = InterlockedExchange(&g_r2Kept, 0);
+        if (passed || kept) {
+            g_log("gun mode: R2 presses: %ld passed to reTHAWed (in the air), %ld kept (on the ground) | feet above GTA's ground at "
+                  "those presses %.2f to %.2f m (in the air above %.2f m) | no ground found %u",
+                  static_cast<long>(passed), static_cast<long>(kept), g_r2LowM, g_r2HighM, kR2AirM, g_r2NoGround);
+            g_r2LowM = 1e9f;
+            g_r2HighM = -1e9f;
+            g_r2NoGround = 0;
+        }
     }
 }
 
@@ -518,6 +544,7 @@ void ShootFrame(LogFn log)
     const DWORD now = GetTickCount();
     CWeapon* w = ped->GetWeapon();
     CWeaponInfo* info = InfoOf(ped, w);
+    g_gunReady = w && IsGun(info);
     CPad* pad = CPad::GetPad(0);
     const bool scriptHolds = pad && (pad->DisablePlayerControls & ~kOurControlBit) != 0;
 
@@ -525,13 +552,6 @@ void ShootFrame(LogFn log)
         g_toggleWanted = false;
         if (g_on) {
             TurnOff("Left + X", true);
-        } else if (!w || !IsGun(info)) {
-            SetMessage("Gun mode needs a gun");
-            log("shoot mode: not turned on: CJ holds weapon %d (%s), not a gun that fires bullets", w ? static_cast<int>(w->m_eWeaponType) : -1,
-                info ? FireKind(info->m_nWeaponFire) : "no info");
-        } else if (w->m_nAmmoInClip == 0 && w->m_nAmmoTotal == 0) {
-            SetMessage("Gun mode: no ammo");
-            log("shoot mode: not turned on: no ammo");
         } else if (scriptHolds) {
             log("shoot mode: not turned on: a script has taken the controls");
         } else {
@@ -680,11 +700,11 @@ void DrawMarker()
 
 void ShootFilterPad(LONG& buttons, short* axes)
 {
-    (void)axes;
     if (!SkateModeIsOn()) {
         g_leftWas = g_xWas = false;
         g_comboLatched = g_holdX = false;
         g_r1 = g_b = false;
+        g_r2Was = g_r2Pass = false;
         return;
     }
     const DWORD now = GetTickCount();
@@ -728,8 +748,31 @@ void ShootFilterPad(LONG& buttons, short* axes)
     }
     if (!l1) g_pairPass = false;
     g_r1 = l1 && !g_pairPass;
-    g_b = (buttons & kBtnCircle) != 0;
-    const LONG ours = (g_pairPass ? 0 : kBtnL1) | kBtnCircle;
+    // 8.57 (user: "instead of L1 + circle can we do L1 + R2 so we don't have to sacrifice grab tricks"): R2 fires,
+    // Circle stays reTHAWed's. R2 is also reTHAWed's pivot / revert / acid and bank drop / spine transfer button:
+    // a press that starts with CJ's feet more than kR2AirM above GTA's ground goes to reTHAWed too (drops and
+    // transfers are done in the air); one that starts lower is kept from it until let go (pivots, reverts).
+    const bool r2 = axes[kAxisR2] > kR2Down;
+    if (g_on && g_gunReady && r2 && !g_r2Was) {
+        float h = 0.0f;
+        const bool known = SkateModeFeetAboveGround(&h);
+        g_r2Pass = known && h > kR2AirM;
+        if (g_r2Pass) InterlockedIncrement(&g_r2Passed);
+        else InterlockedIncrement(&g_r2Kept);
+        if (!known) ++g_r2NoGround;
+        else {
+            if (h < g_r2LowM) g_r2LowM = h;
+            if (h > g_r2HighM) g_r2HighM = h;
+        }
+    }
+    if (!r2) g_r2Pass = false;
+    g_r2Was = r2;
+    g_b = r2;
+    if (g_on && g_gunReady && r2 && !g_r2Pass) {
+        axes[kAxisR2] = 0;
+        InterlockedIncrement(&g_heldBack);
+    }
+    const LONG ours = g_gunReady ? (g_pairPass ? 0 : kBtnL1) : 0;
     if (g_on && (buttons & ours)) {
         buttons &= ~ours;
         InterlockedIncrement(&g_heldBack);

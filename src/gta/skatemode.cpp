@@ -195,6 +195,10 @@ void ResetStats()
 
 RiderBlend g_blend; // 5-3f: blending between reTHAWed frames (blend.cpp)
 
+// 8.57: CJ's feet above GTA's ground in the last frame (gun mode's R2: in the air or not)
+volatile float g_feetAbove = 0.0f;
+volatile bool g_feetAboveValid = false;
+
 // 8.51 skitch: CJ's collision is off while he holds a car (see the skitch block in the tick)
 bool g_skitchCollisionOff = false, g_skitchSavedCollision = true;
 CVehicle* g_skitchIgnored = nullptr;
@@ -1075,6 +1079,8 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
     // Never below GTA's ground (THAW's slopes don't exist in GTA).
     float gz = 0.0f;
     const bool haveGround = GroundZ(t.x, t.y, t.z, gz);
+    g_feetAboveValid = haveGround;
+    if (haveGround) g_feetAbove = t.z - (gz + g.feetOffset + kBoardLift);
     if (haveGround && t.z < gz + g.feetOffset + kBoardLift) {
         t.z = gz + g.feetOffset + kBoardLift;
         ++g.clamps;
@@ -1146,6 +1152,14 @@ void SkateModeFrame(LinkBlock* link, LogFn log)
 } // namespace
 
 bool SkateModeIsOn() { return g.on; }
+
+bool SkateModeFeetAboveGround(float* metres)
+{
+    const float h = g_feetAbove;
+    if (!g.on || !g_feetAboveValid) return false;
+    if (metres) *metres = h;
+    return true;
+}
 
 bool SkateModeThawToGta(const float thawPos[3], const float thawDir[3], float gtaPos[3], float gtaDir[3])
 {

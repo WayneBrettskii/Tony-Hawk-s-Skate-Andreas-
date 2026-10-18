@@ -2,6 +2,20 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] 8.57: gun mode fires with R2, Circle back to grabs (test 56)
+
+**Test 56 result (user 2026-10-17): "fuck yeah it worked".**
+
+Test 55 result (user 2026-10-17): "okay that worked great" (controller in the cheat menu, gun mode without a gun). Test 56 (8.57, built and installed, not run): in gun mode with a bullet gun, **R2 fires** instead of Circle, and Circle goes back to reTHAWed (grabs). Each R2 press is decided once, when it starts: with CJ's feet more than 0.5 m above GTA's ground it also goes to reTHAWed (acid / bank drops, spine transfers); lower, it is kept from reTHAWed until let go (no pivots or reverts). skatemode.cpp keeps the feet height from its existing ground check (`SkateModeFeetAboveGround`). Log once a second: `gun mode: R2 presses: N passed ..., M kept ... | feet above GTA's ground at those presses A to B m`. Not sure: reTHAWed ramps GTA doesn't have count as air (GTA's ground there is the street); a revert pressed higher than 0.5 m before landing still happens; firing in the air near a ramp can trigger a drop or transfer. Built (MSVC Release): no errors; arsenal_tests PASS; installed ASI matches the build. Not run in game. Nothing committed.
+
+## [2026-10-17] 8.56: cheat menu on the controller, gun mode without a gun (test 55)
+
+Test 55 (8.56, built and installed, not run): the cheat menu also works on the controller while open (Insert still opens and closes it): D-pad Up / Down moves (hold repeats), Cross selects, Circle goes back (closes on the first page), Square removes a weapon on Choose weapons; only buttons pressed after the menu opened count; log `arsenal: controller in the menu: N press(es)`. Gun mode now turns on with any weapon in hand (fists too), so the weapon wheel can pick a gun; no aiming or firing until a bullet gun is in hand, and meanwhile L1 and Circle go to reTHAWed (spin, grab) as without gun mode. Log: `shoot mode ON (Left + X): CJ holds weapon N ..., not a gun that fires bullets`. User test 54 result: "The wheel was working fine i could change guns and shoot god mode worked". Built (MSVC Release, gta_plugin + arsenal_tests): no errors; arsenal_tests PASS; installed ASI matches the build. Not run in game. Nothing committed.
+
+## [2026-10-17] Test 54 log read: wheel, icons, god mode and ammo ON seen; the rest unchecked (docs only)
+
+**Test 54, what the log shows (gta.log 21:38-21:47, the test 54 build; read 2026-10-17, no code change):** the weapon wheel opened 5 times, each with `13 carried slots, 13 native icons` (every icon found, no text fallback), and each release equipped a weapon (M4, Minigun, Silenced pistol, MP5, Minigun). God mode ON and Unlimited ammo / no reload ON were switched on once; neither was switched OFF again in this run. After ammo went ON, every logged shot kept its clip (for example `ammo 500/99999 -> 500/99999`, `30/99999 -> 30/99999`). Gun-hand lines: 172 x `rigid yes`, no `rigid skipped`, row lengths after 1.0000, barrel . aim and top . up 0.996-1.000 at full aim. No `arsenal: exception` or other errors. **Not shown by the log** (no line for them): any native GTA cheat (each one logs its name; none appear, so none were activated in this run), the weapon picker (no `Loading weapon...`), Delete / remove, ammo and god mode turned back OFF, taking damage with god mode, the short Back tap / radio with gun mode off, Circle cancel, whether the menu keys leaked into tricks or shots, and how the wheel and icons looked. These still need the user's in-game check.
+
 ## [2026-10-17] Session hand-off and user-authorized commit
 
 **Changed:** STATUS.md now opens with a Claude hand-off covering tests 50-54, exact user feedback, verification, controls, next tests and build commands. User requested committing all session work. Older uncommitted notes are historical.

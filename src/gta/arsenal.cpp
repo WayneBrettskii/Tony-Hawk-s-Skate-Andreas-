@@ -44,6 +44,11 @@ bool savedDamage = true;
 int pendingWeapon = -1;
 DWORD pendingAt = 0;
 DWORD repeatAt = 0;
+// 8.56: controller in the cheat menu; presses seen by ArsenalFilterPad, used by Frame
+LONG padWas = 0, padPressed = 0, padPresses = 0;
+bool padHoldUp = false, padHoldDown = false;
+DWORD padLoggedAt = 0;
+bool TakePad(LONG bit) { if(!(padPressed&bit)) return false; padPressed&=~bit; return true; }
 
 const char* names[] = {"Unarmed", "Brass knuckles", "Golf club", "Nightstick", "Knife", "Baseball bat", "Shovel",
  "Pool cue", "Katana", "Chainsaw", "Purple dildo", "Dildo", "Vibrator", "Silver vibrator", "Flowers", "Cane",
@@ -229,14 +234,18 @@ void Draw() {
             Text(w*.23f,y,label,.65f,false);
         }
         char pos[40]; sprintf_s(pos,"%d / %d",selected+1,n); Text(w*.5f,h*.73f,pos,.5f);
-        Text(w*.5f,h*.78f,"Arrows: move   Enter: select   Backspace: back   Insert: close",.48f);
-        if(page==2) Text(w*.5f,h*.82f,"Enter: give/equip   Delete: remove   One weapon per GTA slot",.48f);
+        Text(w*.5f,h*.78f,"Arrows / D-pad: move   Enter / Cross: select   Backspace / Circle: back   Insert: close",.48f);
+        if(page==2) Text(w*.5f,h*.82f,"Enter / Cross: give/equip   Delete / Square: remove   One weapon per GTA slot",.48f);
     }
     if(GetTickCount()<messageUntil && message[0]) Text(w*.5f,h*.94f,message,.65f);
 }
 void Frame(LogFn log) {
     logLine=log;
     bool toggle=Press(VK_INSERT), up=Press(VK_UP),down=Press(VK_DOWN),enter=Press(VK_RETURN),back=Press(VK_BACK),del=Press(VK_DELETE);
+    // 8.56: D-pad Up / Down, Cross = Enter, Circle = Backspace, Square = Delete (menu open only)
+    if(menu) { up|=TakePad(kBtnUp); down|=TakePad(kBtnDown); enter|=TakePad(kBtnCross); back|=TakePad(kBtnCircle); del|=TakePad(kBtnSquare); }
+    padPressed=0;
+    if(log && padPresses && GetTickCount()-padLoggedAt>=1000) { log("arsenal: controller in the menu: %ld press(es)",static_cast<long>(padPresses)); padPresses=0; padLoggedAt=GetTickCount(); }
     auto* p=FindPlayerPed();
     auto* pad=CPad::GetPad(0);
     bool scripted=pad && (pad->DisablePlayerControls & ~(1u<<4))!=0;
@@ -244,7 +253,8 @@ void Frame(LogFn log) {
     if(!active) { if(menu) guard=true; menu=false; if(wheel) CloseWheel(false); backDown=false;backUsed=true;taps=0;equip=-1; ReleaseRequest(); return; }
     if(toggle && !SpawnerIsOpen()) { menu=!menu; if(wheel) CloseWheel(false); guard=true; backDown=false; backUsed=true; taps=0; Say(menu?"Cheat menu opened (Insert to close)":"Cheat menu closed"); }
     if(up||down) repeatAt=GetTickCount()+350;
-    else if(menu && (keys[VK_UP]||keys[VK_DOWN]) && static_cast<LONG>(GetTickCount()-repeatAt)>=0) {up=keys[VK_UP];down=!up&&keys[VK_DOWN];repeatAt=GetTickCount()+90;}
+    else if(menu && (keys[VK_UP]||keys[VK_DOWN]||padHoldUp||padHoldDown) && static_cast<LONG>(GetTickCount()-repeatAt)>=0) {
+        up=keys[VK_UP]||padHoldUp; down=!up&&(keys[VK_DOWN]||padHoldDown); repeatAt=GetTickCount()+90;}
     if(menu) { if(up) selected=arsenal::Wrap(selected-1,RowCount()); if(down) selected=arsenal::Wrap(selected+1,RowCount());
         if(back) { if(page) {page=0;selected=0;} else {menu=false;guard=true;} }
         else if(enter || (del&&page==2)) Activate(p,del); }
@@ -262,6 +272,13 @@ void Frame(LogFn log) {
 bool ArsenalBlocksInput() { return menu||wheel||guard; }
 void ArsenalFilterPad(LONG& buttons,short* axes) {
     const LONG raw=buttons;
+    if(menu) {
+        // 8.56: new presses for the menu (only buttons that were up last frame, so the press that was
+        // already held when the menu opened does nothing)
+        const LONG nav=kBtnUp|kBtnDown|kBtnCross|kBtnCircle|kBtnSquare, now=raw&nav, fresh=now&~padWas;
+        if(fresh) { padPressed|=fresh; ++padPresses; }
+        padWas=now; padHoldUp=(now&kBtnUp)!=0; padHoldDown=(now&kBtnDown)!=0;
+    } else { padWas=raw; padHoldUp=padHoldDown=false; }
     if(menu || guard) {
         bool held=raw!=0; for(int i=0;i<kAxisCount;++i) if(std::abs(static_cast<int>(axes[i]))>30) held=true;
         if(!menu&&!held) guard=false;
