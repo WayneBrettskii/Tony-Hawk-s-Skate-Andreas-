@@ -4,7 +4,7 @@
 guns by type), our own hit via CWeapon::ProcessLineOfSight + DoBulletImpact (peds take damage, test 45). CJ points the gun
 (body.cpp aim pose): chest turn shared between spine bones 2 and 3 (max 60 deg), right arm kept within 55 deg of the chest's
 front, gun turned on bone 24 (GTA's gun hand) barrel at the target, top up; left hand on the barrel for two-handed guns.
-L1 + R1 together go to reTHAWed (caveman / on or off the board; not confirmed by the user yet).
+L1 + R1 together go to reTHAWed (caveman / on or off the board): **works in gun mode** (user 2026-10-17).
 User on test 49: "That looked pretty good".
 
 **Open problem:** "when I used the m4 sometimes the gun looked huge". Not investigated. First step: log the lengths of bone
