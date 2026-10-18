@@ -1,5 +1,14 @@
 # Tony Hawk's SkateAndreas
 
+Update 1.0
+I guess we'll call this 1.0 since guns are added and it's now a true blend of both games
+You won't have to rebuild the map if you copy your extracted folder next to the new launcher
+To enter gun mode hold left d pad and press X select brings up your weapon wheel L1 aims R2 shoots
+Hold select to bring up a weapon wheel on your board
+Press insert to bring up a cheat menu you can navigate with your controller once it is up
+I added a skitch freeze fix for a bug a user reported wasn't able to duplicate the freeze so it isn't tested
+Have fun causing chaos
+
 Update Notes:
 Skitching now works it may be a little buggy please send any feedback
 The skitching plugin takes about a minute to load 8 proxy cars from rethawed follow the gta cars as you move so you should be able to skitch from car to car easily
