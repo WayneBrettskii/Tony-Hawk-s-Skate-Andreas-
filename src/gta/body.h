@@ -40,6 +40,18 @@ void BodyClearLimbTargets();
 // For the log: limbs bent onto a target since the last call.
 unsigned BodyReachedAndReset();
 
+// 8.53 step 3 (gun mode): after copying the body, turn CJ's chest towards this GTA world point (at most
+// 70 degrees), stretch his right arm at it and, for two-handed guns, put his left hand under the barrel;
+// weight 0..1 eases it in and out. Each frame while aiming; BodyClearAim when done.
+void BodySetAim(const float* point, float weight, bool twoHanded);
+void BodyClearAim();
+// For the log: frames drawn with the aim pose since the last call, how many of them had the point
+// further round than the chest limit, the last chest turn used (degrees), and in how many the arm's
+// direction was pulled back in front of the chest (test 48).
+unsigned BodyAimFramesAndReset(unsigned* beyond, float* chestDeg, unsigned* armClamped);
+// test 46: one detail line about the first aim frame after each BodyClearAim (nullptr when none waits).
+const char* BodyTakeAimInfo();
+
 // No body this frame (skate mode off, or reTHAWed didn't send it). Also
 // clears the limb targets.
 void BodyClear();

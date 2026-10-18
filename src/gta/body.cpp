@@ -203,6 +203,28 @@ struct LimbTargets {
     float weight[4] = {};
 } g_limbs;
 unsigned g_reached = 0; // limbs bent onto a target since the last log
+// 8.53 step 3: gun mode's aim pose, on top of the skater copy: chest turned towards the point, right arm
+// stretched at it, left hand under the barrel for two-handed guns (GTA world point; weight 0..1)
+struct AimTarget {
+    bool valid = false;
+    ULONGLONG tick = 0;
+    V3 point;
+    float weight = 0.0f;
+    bool twoHanded = false;
+} g_aim;
+constexpr float kAimChestMaxDeg = 60.0f; // test 49: was 70
+// test 48 (video: "arms were going behind him"): the arm aims at most this far round from the (turned)
+// chest's front, and at most kAimArmPitchDeg up or down; a point further round is aimed at the edge
+constexpr float kAimArmMaxDeg = 55.0f;
+constexpr float kAimLowerShare = 0.45f; // test 49: part of the chest turn given to the bone below spine1
+constexpr float kAimArmPitchDeg = 60.0f;
+unsigned g_aimArmClamped = 0; // frames where the arm's direction was pulled back in front of the chest
+unsigned g_aimFrames = 0, g_aimBeyond = 0; // frames with the aim pose / with the point further round than the chest limit
+float g_aimChestDeg = 0.0f;                // the chest turn used in the last such frame
+// test 46: one detail line per gun-mode aim (the chest turn read 0 deg in every log line)
+char g_aimInfo[900] = {};
+bool g_aimInfoReady = false;
+bool g_aimInfoWanted = true;
 unsigned g_frames = 0;
 unsigned g_skipped = 0; // samples skipped as half-updated
 float g_segRef[7] = {};  // usual bone lengths of the skater
@@ -396,6 +418,182 @@ void Apply(CPed* ped)
             if (Reach(local, world, parent, n, root, l.a, l.b, l.c, l.e, lt[forLeft], g_limbs.weight[forLeft])) ++g_reached;
         }
     }
+    // 8.53 step 3: gun mode's aim pose (only while aiming; eased in and out by the caller's weight)
+    if (g_aim.valid && GetTickCount64() - g_aim.tick <= kStaleMs && g_aim.weight > 0.001f) {
+        Recompute(local, parent, n, root, world);
+        const V3 aimPt = worldSpace ? g_aim.point : RotateRow(g_aim.point, toSpace) + toSpace.p;
+        const float wgt = g_aim.weight > 1.0f ? 1.0f : g_aim.weight;
+        const V3 up(0.0f, 0.0f, 1.0f); // z is up in GTA's world and in CJ's own space alike
+        // (3) chest: the upper spine turns about the vertical towards the point, at most kAimChestMaxDeg
+        // test 48: the chest's sideways line runs between the shoulders (22, 32): the two clavicle bones sit
+        // on the same spot (test 47 log: "clavicle line 0.00 0.00 0.00 (too short)"), so the chest never turned
+        const int sp = idx(G_SPINE1), rc = idx(G_R_SHOULDER), lc = idx(G_L_SHOULDER);
+        int infoLen = 0;
+        const bool wantInfo = g_aimInfoWanted && !g_aimInfoReady;
+        if (wantInfo)
+            infoLen = snprintf(g_aimInfo, sizeof(g_aimInfo), "aim pose detail: matrices in %s space; spine %d, shoulders R %d L %d; aim point "
+                               "%.2f %.2f %.2f", worldSpace ? "world" : "CJ's own", sp, rc, lc, aimPt.x, aimPt.y, aimPt.z);
+        if (sp >= 0 && rc >= 0 && lc >= 0) {
+            V3 right = world[rc].p - world[lc].p;
+            right = right - up * Dot(right, up);
+            V3 want = aimPt - world[sp].p;
+            want = want - up * Dot(want, up);
+            const bool okR = Unit(right), okW = Unit(want);
+            if (wantInfo && infoLen > 0 && infoLen < static_cast<int>(sizeof(g_aimInfo)))
+                infoLen += snprintf(g_aimInfo + infoLen, sizeof(g_aimInfo) - infoLen,
+                                    " | spine at %.2f %.2f %.2f; shoulder line %.2f %.2f %.2f (%s); to the point %.2f %.2f %.2f (%s)",
+                                    world[sp].p.x, world[sp].p.y, world[sp].p.z, right.x, right.y, right.z, okR ? "ok" : "too short",
+                                    want.x, want.y, want.z, okW ? "ok" : "too short");
+            if (okR && okW) {
+                const V3 fwd = Cross(up, right);
+                float ang = std::atan2(Dot(Cross(fwd, want), up), Dot(fwd, want));
+                if (wantInfo && infoLen > 0 && infoLen < static_cast<int>(sizeof(g_aimInfo)))
+                    infoLen += snprintf(g_aimInfo + infoLen, sizeof(g_aimInfo) - infoLen, " | chest faces %.2f %.2f %.2f, turn %.0f deg",
+                                        fwd.x, fwd.y, fwd.z, ang * 57.2958f);
+                const float lim = kAimChestMaxDeg * 3.14159265f / 180.0f;
+                if (ang > lim) { ang = lim; ++g_aimBeyond; }
+                if (ang < -lim) { ang = -lim; ++g_aimBeyond; }
+                g_aimChestDeg = ang * 57.2958f;
+                // test 49 ("cj's body still kinda cork screws"): the whole turn sat in one spine bone, a sharp
+                // twist at mid-back. It is now shared: the bone below spine1 (the lower spine, when it is not the
+                // pelvis) takes kAimLowerShare, spine1 the rest, so the twist spreads over the back.
+                const int low = parent[sp];
+                const bool share = low >= 0 && low != idx(G_PELVIS1);
+                const float lowAng = share ? ang * kAimLowerShare : 0.0f;
+                if (share) {
+                    const M43 ql = AxisAngle(up, lowAng * wgt);
+                    M43 wl = world[low];
+                    for (int k = 0; k < 3; ++k) wl.r[k] = RotateRow(wl.r[k], ql);
+                    local[low] = Mul(wl, InverseRigid(parent[low] < 0 ? root : world[parent[low]]));
+                    Recompute(local, parent, n, root, world);
+                }
+                const M43 q = AxisAngle(up, (ang - lowAng) * wgt);
+                M43 w = world[sp];
+                for (int k = 0; k < 3; ++k) w.r[k] = RotateRow(w.r[k], q);
+                local[sp] = Mul(w, InverseRigid(parent[sp] < 0 ? root : world[parent[sp]]));
+                Recompute(local, parent, n, root, world);
+                if (wantInfo && infoLen > 0 && infoLen < static_cast<int>(sizeof(g_aimInfo)))
+                    infoLen += snprintf(g_aimInfo + infoLen, sizeof(g_aimInfo) - infoLen, " | lower spine bone %d %s", low,
+                                        share ? "shares the turn" : "is the pelvis or missing: spine1 alone");
+            }
+        }
+        // (4) right arm stretched at the point: the forearm, and the gun with it, points there
+        const int ra = idx(G_R_SHOULDER), rb = idx(G_R_ELBOW), rcw = idx(G_R_WRIST), re = idx(G_R_HAND);
+        V3 handGoal;
+        bool haveHand = false;
+        if (ra >= 0 && rb >= 0 && rcw >= 0) {
+            const int e = re >= 0 ? re : rcw;
+            V3 dir = aimPt - world[ra].p;
+            const float armLen = Len(world[rb].p - world[ra].p) + Len(world[e].p - world[rb].p);
+            bool okDir = Unit(dir);
+            // test 48: keep the arm in front of the (now turned) chest: at most kAimArmMaxDeg round from its
+            // front and kAimArmPitchDeg up / down, so a point behind CJ never pulls the arm behind his back
+            if (okDir && rc >= 0 && lc >= 0) {
+                V3 side = world[rc].p - world[lc].p;
+                side = side - up * Dot(side, up);
+                V3 flat = dir - up * Dot(dir, up);
+                if (Unit(side) && Unit(flat)) {
+                    const V3 front = Cross(up, side);
+                    const float yaw = std::atan2(Dot(Cross(front, flat), up), Dot(front, flat));
+                    float pitch = std::asin(Dot(dir, up) > 1.0f ? 1.0f : Dot(dir, up) < -1.0f ? -1.0f : Dot(dir, up));
+                    const float yawLim = kAimArmMaxDeg * 3.14159265f / 180.0f, pitchLim = kAimArmPitchDeg * 3.14159265f / 180.0f;
+                    float yawUse = yaw;
+                    if (yawUse > yawLim) yawUse = yawLim;
+                    if (yawUse < -yawLim) yawUse = -yawLim;
+                    if (pitch > pitchLim) pitch = pitchLim;
+                    if (pitch < -pitchLim) pitch = -pitchLim;
+                    if (yawUse != yaw || std::fabs(pitch - std::asin(Dot(dir, up) > 1.0f ? 1.0f : Dot(dir, up) < -1.0f ? -1.0f : Dot(dir, up))) > 1e-4f) {
+                        ++g_aimArmClamped;
+                        const V3 h = RotateRow(front, AxisAngle(up, yawUse));
+                        dir = h * std::cos(pitch) + up * std::sin(pitch);
+                        okDir = Unit(dir);
+                    }
+                }
+            }
+            if (okDir && armLen > 0.1f) {
+                handGoal = world[ra].p + dir * (armLen * 0.97f);
+                haveHand = Reach(local, world, parent, n, root, ra, rb, rcw, re, handGoal, wgt);
+                if (haveHand) {
+                    ++g_reached;
+                    // test 46 (video: the gun pointed up, lay on its side or tilted while the arm aimed): the hand keeps
+                    // the skater's wrist turn, so the gun did not follow the forearm. The hand is now turned so the
+                    // gun's barrel (its model's X axis: GTA's muzzle offsets are along +X) points at the point and
+                    // the gun stays upright (its Z axis as close to straight up as the aim allows), eased by the weight.
+                    V3 gunUp = up;
+                    // test 49 ("the gun is sideways"): GTA draws the gun on bone 24 (its "hand"; plugin-sdk calls it
+                    // the wrist) and its muzzle offsets are in that bone's axes; 25 is the fingers. Test 47/48 turned
+                    // 25, so the gun kept the skater's wrist roll. Now bone 24 is turned (the fingers follow it).
+                    const int gb = rcw;
+                    if (gb >= 0) {
+                        Recompute(local, parent, n, root, world);
+                        // test 48: along the arm's (possibly clamped) direction when the point is out of reach round
+                        // the side, else at the point itself
+                        V3 dHand = aimPt - world[gb].p;
+                        if (Unit(dHand) && Dot(dHand, dir) < 0.94f) dHand = dir;
+                        if (Unit(dHand)) {
+                            V3 z = up - dHand * Dot(up, dHand);
+                            if (Unit(z)) {
+                                gunUp = z;
+                                M43 want = world[gb];
+                                if (wantInfo && infoLen > 0 && infoLen < static_cast<int>(sizeof(g_aimInfo)))
+                                    infoLen += snprintf(g_aimInfo + infoLen, sizeof(g_aimInfo) - infoLen,
+                                                        " | hand rows before: x %.2f %.2f %.2f, y %.2f %.2f %.2f, z %.2f %.2f %.2f; aim %.2f %.2f %.2f",
+                                                        want.r[0].x, want.r[0].y, want.r[0].z, want.r[1].x, want.r[1].y, want.r[1].z,
+                                                        want.r[2].x, want.r[2].y, want.r[2].z, dHand.x, dHand.y, dHand.z);
+                                M43 target = want;
+                                target.r[0] = dHand;
+                                target.r[2] = z;
+                                target.r[1] = Cross(z, dHand);
+                                // ease: turn from the current hand towards the target by the weight
+                                V3 from = want.r[0];
+                                if (Unit(from)) {
+                                    M43 q1 = FromTo(from, dHand);
+                                    M43 eased = want;
+                                    for (int k = 0; k < 3; ++k) eased.r[k] = RotateRow(want.r[k], q1);
+                                    // then roll about the barrel so Z goes up
+                                    V3 zNow = eased.r[2] - dHand * Dot(eased.r[2], dHand);
+                                    if (Unit(zNow)) {
+                                        const float roll = std::atan2(Dot(Cross(zNow, z), dHand), Dot(zNow, z));
+                                        const M43 q2 = AxisAngle(dHand, roll);
+                                        for (int k = 0; k < 3; ++k) eased.r[k] = RotateRow(eased.r[k], q2);
+                                    }
+                                    if (wgt < 0.999f) {
+                                        // partial: only part of the barrel turn (keeps the roll fix small too)
+                                        V3 mid = want.r[0] * (1.0f - wgt) + dHand * wgt;
+                                        if (Unit(mid)) {
+                                            M43 qp = FromTo(from, mid);
+                                            for (int k = 0; k < 3; ++k) eased.r[k] = RotateRow(want.r[k], qp);
+                                        }
+                                    }
+                                    const int hp = parent[gb];
+                                    local[gb] = Mul(eased, InverseRigid(hp < 0 ? root : world[hp]));
+                                    Recompute(local, parent, n, root, world);
+                                    if (wantInfo && infoLen > 0 && infoLen < static_cast<int>(sizeof(g_aimInfo))) {
+                                        V3 gx = world[gb].r[0], gz = world[gb].r[2];
+                                        Unit(gx);
+                                        Unit(gz);
+                                        infoLen += snprintf(g_aimInfo + infoLen, sizeof(g_aimInfo) - infoLen,
+                                                            " | gun bone %d after: barrel . aim %.2f, top . up %.2f (1 = right on)", gb,
+                                                            Dot(gx, dHand), Dot(gz, z));
+                                    }
+                                }
+                                (void)target;
+                            }
+                        }
+                    }
+                    // (5) left hand under the barrel for two-handed guns
+                    if (g_aim.twoHanded) {
+                        const int la = idx(G_L_SHOULDER), lb = idx(G_L_ELBOW), lcw = idx(G_L_WRIST), le = idx(G_L_HAND);
+                        const V3 handNow = rcw >= 0 ? world[rcw].p : handGoal;
+                        const V3 grip = handNow + dir * 0.18f - gunUp * 0.04f;
+                        if (Reach(local, world, parent, n, root, la, lb, lcw, le, grip, wgt)) ++g_reached;
+                    }
+                }
+            }
+        }
+        ++g_aimFrames;
+        if (wantInfo) g_aimInfoReady = true;
+    }
     Recompute(local, parent, n, root, world);
     for (int i = 0; i < n; ++i)
         if (!Finite(world[i])) return; // something went wrong: leave GTA's pose
@@ -510,6 +708,41 @@ void BodySetLimbTargets(const float (*pos)[3], const float* weight)
 
 void BodyClearLimbTargets() { g_limbs.valid = false; }
 
+void BodySetAim(const float* point, float weight, bool twoHanded)
+{
+    g_aim.point = V3(point[0], point[1], point[2]);
+    g_aim.weight = weight;
+    g_aim.twoHanded = twoHanded;
+    g_aim.tick = GetTickCount64();
+    g_aim.valid = true;
+}
+
+void BodyClearAim()
+{
+    if (g_aim.valid) g_aimInfoWanted = true; // the next aim logs its detail line again
+    g_aim.valid = false;
+}
+
+const char* BodyTakeAimInfo()
+{
+    if (!g_aimInfoReady) return nullptr;
+    g_aimInfoReady = false;
+    g_aimInfoWanted = false;
+    return g_aimInfo;
+}
+
+unsigned BodyAimFramesAndReset(unsigned* beyond, float* chestDeg, unsigned* armClamped)
+{
+    const unsigned f = g_aimFrames;
+    if (armClamped) *armClamped = g_aimArmClamped;
+    g_aimArmClamped = 0;
+    if (beyond) *beyond = g_aimBeyond;
+    if (chestDeg) *chestDeg = g_aimChestDeg;
+    g_aimFrames = 0;
+    g_aimBeyond = 0;
+    return f;
+}
+
 unsigned BodyReachedAndReset()
 {
     const unsigned r = g_reached;
@@ -521,6 +754,7 @@ void BodyClear()
 {
     g_target.valid = false;
     g_limbs.valid = false;
+    g_aim.valid = false;
     for (float& r : g_segRef) r = 0.0f; // next skater may be built differently
     g_tornRun = 0;
     g_haveLock = false; // fix 3: take a fresh calm head pose next time

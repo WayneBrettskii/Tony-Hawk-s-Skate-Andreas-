@@ -1,3 +1,22 @@
+# HAND-OFF (2026-10-17, evening): gun mode on the board (DESIGN 8.53), aim pose at test 49
+
+**Where it stands:** gun mode works: D-pad Left + Cross toggles it, L1 held = GTA's own lock-on, Circle fires (automatic
+guns by type), our own hit via CWeapon::ProcessLineOfSight + DoBulletImpact (peds take damage, test 45). CJ points the gun
+(body.cpp aim pose): chest turn shared between spine bones 2 and 3 (max 60 deg), right arm kept within 55 deg of the chest's
+front, gun turned on bone 24 (GTA's gun hand) barrel at the target, top up; left hand on the barrel for two-handed guns.
+L1 + R1 together go to reTHAWed (caveman / on or off the board; not confirmed by the user yet).
+User on test 49: "That looked pretty good".
+
+**Open problem:** "when I used the m4 sometimes the gun looked huge". Not investigated. First step: log the lengths of bone
+24's rows after the turn (body.cpp, the hand block in the aim pose); if they aren't 1, re-normalise them (Gram-Schmidt) before
+writing local[gb]. Also the detail line's `gun bone 24 after` part never got logged: grow g_aimInfo or log it separately.
+
+**Not done / later:** weapon wheel on hold-Back; projectiles and throwables; BMX drive-by; bails and roof landing.
+README's opening lines (the user's own words) still say skitching is planned and there's no car collision; ask before editing.
+
+**Test:** `cmake --build build --config Release --target gta_plugin` (copies SkateAndreas.asi into modloader\SkateAndreas);
+start through the launcher, skate, Left + Cross, hold L1 on peds with an M4; read logs\gta.log `gun mode:` lines.
+
 # NOW (2026-10-15, night): skitching route A started (DESIGN 8.51) - step 1, the vehicle load test
 
 Whole pool map + `--proxy-cars 3 --thaw-dir D:\Games\reTHAWed`: do three reTHAWed cars load 15 m east of the skatepark?
@@ -117,6 +136,14 @@ ped's position, log what each shot line meets + target health; message box at th
 Test 44: line met the ped 81x, health stayed 100 (Fire ignores our line). Test 45 (built, not run): the hit is ours,
 GTA's CWeapon::ProcessLineOfSight + DoBulletImpact after each Fire; health before / after logged.
 Test 45 PASSED (user: "that worked"): peds take damage (25 per MP5 hit), no double damage. Next: step 3 (CJ aims the gun).
+Committed 56f0af1. Step 3 built (not run): aim pose (chest turn, right arm at the target, left hand for 2-handed guns) (test 46).
+Test 46 (video): arm aims, but the gun sits at odd angles; chest turn stuck at 0. Test 47 (built, not run): hand turned so
+the barrel points at the target, gun upright; one detail line per aim to find the chest problem.
+Test 47 (video + log): chest line used the clavicles, which share one spot (zero length), so no chest turn; arms reached behind CJ;
+no caveman in gun mode (L1 kept from reTHAWed). Test 48 (built, not run): shoulders for the chest line, arm kept within 55 deg of
+the chest's front, L1 + R1 passed to reTHAWed for caveman.
+Test 48 (user): better, but the body corkscrews and the gun is sideways. Test 49 (built, not run): chest turn shared with the
+lower spine (max 60 deg), barrel turn on bone 24 (GTA's gun hand) instead of 25 (fingers); log reads barrel / top alignment.
 Next feature: shooting on the board, plan in DESIGN 8.53 (no code; waiting for the go-ahead and the aim button).
 Shooting step 1 built (GTA plugin, not run): skate-mode weapon log once a second; F12 = one test shot via CWeapon::Fire (test 39). Next: video at speed; then bails on riding into a car; proxy pool.
 

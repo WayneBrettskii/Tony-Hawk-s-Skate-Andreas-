@@ -34,6 +34,7 @@
 
 #include "shoot.h"
 #include "skatemode.h"
+#include "body.h" // 8.53 step 3: the aim pose
 #include "../common/link.h"
 
 #include <cmath>
@@ -64,6 +65,9 @@ bool g_holdX = false;         // X is being kept from reTHAWed (pressed with Lef
 bool g_toggleWanted = false;  // for ShootFrame
 bool g_r1 = false, g_b = false; // raw aim (L1 since test 40; the name stays) / B, for ShootFrame
 LONG g_heldBack = 0;          // frames a button was kept from reTHAWed (log)
+// test 48: L1 + R1 together pass to reTHAWed (caveman / off the board) instead of aiming
+bool g_pairPass = false;      // pad thread only
+LONG g_pairPasses = 0;        // times the pair was passed (log)
 
 // ---- game side (ShootFrame) ----
 bool g_on = false;
@@ -83,6 +87,12 @@ char g_msg[64] = "";
 DWORD g_msgUntil = 0;
 volatile LONG g_markerDraws = 0, g_markerMissed = 0;
 const char* g_aimWhat = "";   // what the last unlocked shot was aimed at (log)
+// 8.53 step 3: the aim pose (body.cpp) while L1 is held or just after a shot, eased in and out
+constexpr DWORD kAimAfterShotMs = 600;
+constexpr float kAimEaseS = 0.15f;
+DWORD g_lastShotAt = 0, g_aimTick = 0;
+float g_aimW = 0.0f;
+bool g_skipImpactLogged = false;
 float g_aimDist = -1.0f;
 
 bool GtaIsForeground()
@@ -314,6 +324,22 @@ void PickNext(CPlayerPed* ped, CWeaponInfo* info)
           c[pick].model, c[pick].dist, c[pick].deg, pick + 1, n);
 }
 
+// What the camera's own line meets (CJ ignored), as far as the gun's range: the middle of the screen.
+CVector CentrePoint(CPlayerPed* ped, CWeaponInfo* info, CEntity** hitOut, bool* anyOut)
+{
+    const float range = (info->m_fWeaponRange > 1.0f && info->m_fWeaponRange < 500.0f) ? info->m_fWeaponRange : kAimRange;
+    const CVector cam = TheCamera.GetPosition();
+    const CVector farPt = cam + CameraFront() * (range + 5.0f);
+    CColPoint cp;
+    CEntity* hit = nullptr;
+    CWorld::pIgnoreEntity = ped;
+    const bool any = CWorld::ProcessLineOfSight(cam, farPt, cp, hit, true, true, true, true, false, false, false, true);
+    CWorld::pIgnoreEntity = nullptr;
+    if (hitOut) *hitOut = any ? hit : nullptr;
+    if (anyOut) *anyOut = any;
+    return any ? cp.m_vecPoint : farPt;
+}
+
 void Shot(CPlayerPed* ped, CWeapon* w, CWeaponInfo* info, DWORD now)
 {
     CVector origin = BonePos(ped, kRightWrist);
@@ -335,18 +361,12 @@ void Shot(CPlayerPed* ped, CWeapon* w, CWeaponInfo* info, DWORD now)
     } else {
         // test 42 ("bullets weren't hitting peds or anything"): a line from CJ's wrist parallel to the camera misses
         // what is in the middle of the screen; the shot now goes to what the camera's own line meets (CJ ignored)
-        const float range = (info->m_fWeaponRange > 1.0f && info->m_fWeaponRange < 500.0f) ? info->m_fWeaponRange : kAimRange;
-        const CVector cam = TheCamera.GetPosition();
-        const CVector farPt = cam + CameraFront() * (range + 5.0f);
-        CColPoint cp;
         CEntity* hit = nullptr;
-        CWorld::pIgnoreEntity = ped;
-        const bool any = CWorld::ProcessLineOfSight(cam, farPt, cp, hit, true, true, true, true, false, false, false, true);
-        CWorld::pIgnoreEntity = nullptr;
-        target = any ? cp.m_vecPoint : farPt;
+        bool any = false;
+        target = CentrePoint(ped, info, &hit, &any);
         if (any && hit && (hit->m_nType == ENTITY_TYPE_PED || hit->m_nType == ENTITY_TYPE_VEHICLE)) t = hit;
         g_aimWhat = any ? HitKind(hit) : "nothing (in range)";
-        g_aimDist = any ? (cp.m_vecPoint - origin).Magnitude() : -1.0f;
+        g_aimDist = any ? (target - origin).Magnitude() : -1.0f;
     }
     // test 44 (the line met the locked ped 81 times, its health stayed 100: GTA's Fire does not shoot along
     // the line we give it while CJ's arm is not aiming): Fire still gives the sound, flash, ammo and wanted
@@ -371,7 +391,13 @@ void Shot(CPlayerPed* ped, CWeapon* w, CWeaponInfo* info, DWORD now)
     const bool fired = w->Fire(ped, &origin, &origin, t, &target, nullptr);
     const float hp1 = health(hitEnt);
     bool impact = false;
-    if (fired && hitAny && hitEnt && hitEnt != ped) {
+    // step 3: with the arm aimed, GTA's own Fire may start hitting; then ours is left out (no double damage)
+    const bool gtaHurt = hp0 >= 0.0f && hp1 < hp0;
+    if (gtaHurt && !g_skipImpactLogged) {
+        g_skipImpactLogged = true;
+        g_log("shoot: GTA's own Fire damaged the hit (%.0f -> %.0f): our impact is left out when that happens", hp0, hp1);
+    }
+    if (fired && hitAny && hitEnt && hitEnt != ped && !gtaHurt) {
         CVector hitPoint = hitCp.m_vecPoint;
         w->DoBulletImpact(ped, hitEnt, &origin, &hitPoint, &hitCp, 0);
         impact = true;
@@ -379,6 +405,7 @@ void Shot(CPlayerPed* ped, CWeapon* w, CWeaponInfo* info, DWORD now)
     const float hp2 = health(hitEnt);
     ++g_modeShots;
     ++g_secondShots;
+    g_lastShotAt = now;
     g_nextShotAt = now + static_cast<DWORD>(FireInterval(info) * 1000.0f);
     g_log("shoot: shot %d %s, %.1f m away | our hit line: %s%s at %.1f m (model %d) | its health %.0f, after GTA's Fire %.0f, after "
           "our impact %.0f%s | Fire %s | ammo %u/%u -> %u/%u",
@@ -426,6 +453,16 @@ void LogHeld(CPlayerPed* ped)
           static_cast<int>(w->m_eWeaponType), static_cast<int>(ped->m_nSelectedWepSlot), info ? FireKind(info->m_nWeaponFire) : "no info",
           static_cast<int>(w->m_nState), w->m_nAmmoInClip, w->m_nAmmoTotal, ped->m_pWeaponObject ? "yes" : "no", ped->m_nWeaponModelId,
           g_on ? "ON" : "off", g_on && g_targetHandle >= 0 ? ", locked" : "");
+    if (g_on) {
+        unsigned beyond = 0;
+        float chest = 0.0f;
+        unsigned armClamped = 0;
+        const unsigned af = BodyAimFramesAndReset(&beyond, &chest, &armClamped);
+        if (const char* info = BodyTakeAimInfo()) g_log("gun mode: %s", info);
+        if (af)
+            g_log("gun mode: aim pose drawn in %u frame(s) (last second), chest turned %.0f deg, target further round than 60 deg "
+                  "in %u, arm kept in front of the chest in %u", af, chest, beyond, armClamped);
+    }
     if (g_on && (g_markerDraws || g_markerMissed))
         g_log("gun mode: lock marker drawn in %ld frame(s), not on screen in %ld (last second)",
               static_cast<long>(InterlockedExchange(&g_markerDraws, 0)), static_cast<long>(InterlockedExchange(&g_markerMissed, 0)));
@@ -433,6 +470,8 @@ void LogHeld(CPlayerPed* ped)
         g_log("shoot mode: last second: %d shot(s), %ld frame(s) with buttons kept from reTHAWed", g_secondShots,
               static_cast<long>(InterlockedExchange(&g_heldBack, 0)));
         g_secondShots = 0;
+        if (const LONG pp = InterlockedExchange(&g_pairPasses, 0))
+            g_log("gun mode: L1 + R1 passed to reTHAWed %ld time(s) (caveman / on or off the board), not used to aim", static_cast<long>(pp));
     }
 }
 
@@ -559,6 +598,26 @@ void ShootFrame(LogFn log)
         const bool wantShot = IsAutomatic(w, info) ? b : (b && !g_bWas);
         if (wantShot && !g_reloading && w->m_nAmmoInClip > 0 && now >= g_nextShotAt) Shot(ped, w, info, now);
         g_bWas = b;
+        // step 3: CJ points the gun while L1 is held or just after a shot, at the target or the screen's middle
+        const bool aiming = g_r1 || (g_lastShotAt && now - g_lastShotAt < kAimAfterShotMs);
+        float dt = g_aimTick ? (now - g_aimTick) / 1000.0f : 0.0f;
+        if (dt > 0.1f) dt = 0.1f;
+        g_aimTick = now;
+        g_aimW += (aiming ? dt : -dt) / kAimEaseS;
+        if (g_aimW > 1.0f) g_aimW = 1.0f;
+        if (g_aimW < 0.0f) g_aimW = 0.0f;
+        if (g_aimW > 0.0f) {
+            CEntity* t = Target();
+            const CVector p = t ? AimPoint(t, g_targetIsPed) : CentrePoint(ped, info, nullptr, nullptr);
+            const float pt[3] = {p.x, p.y, p.z};
+            BodySetAim(pt, g_aimW, !info->m_nFlags.bAimWithArm);
+        } else {
+            BodyClearAim();
+        }
+    } else {
+        g_aimW = 0.0f;
+        g_aimTick = 0;
+        BodyClearAim();
     }
 
     if (now - g_nextInfo < 0x80000000ul) {
@@ -653,10 +712,21 @@ void ShootFilterPad(LONG& buttons, short* axes)
     }
     // while shoot mode is on, L1 (spin left; test 40: R1 is also the bert slide, so aim moved to L1)
     // and B / Circle (grab) are ours
-    g_r1 = (buttons & kBtnL1) != 0;
+    // test 48 ("make it so cj can still caveman back to his board if he's on foot"): reTHAWed gets on and
+    // off the board (caveman) with L1 + R1 together, the same pair that gets the rider off the BMX (B10).
+    // With L1 held back that pair never reached it. So while R1 is down, L1 goes to reTHAWed and does not
+    // aim; it stays passed until L1 is let go, so a press that starts as the pair is never cut in half.
+    const bool l1 = (buttons & kBtnL1) != 0, r1 = (buttons & kBtnR1) != 0;
+    if (g_on && l1 && r1 && !g_pairPass) {
+        g_pairPass = true;
+        InterlockedIncrement(&g_pairPasses);
+    }
+    if (!l1) g_pairPass = false;
+    g_r1 = l1 && !g_pairPass;
     g_b = (buttons & kBtnCircle) != 0;
-    if (g_on && (buttons & (kBtnL1 | kBtnCircle))) {
-        buttons &= ~(kBtnL1 | kBtnCircle);
+    const LONG ours = (g_pairPass ? 0 : kBtnL1) | kBtnCircle;
+    if (g_on && (buttons & ours)) {
+        buttons &= ~ours;
         InterlockedIncrement(&g_heldBack);
     }
 }
