@@ -46,6 +46,11 @@ $defaultRethawed = "C:/Games/reTHAWed"
 # Native programs (git, cmake, the tests) write warnings to stderr; that must not stop the
 # script, only their exit code may.
 function Invoke-Native([string]$exe, [string[]]$argList) {
+    # 2026-10-17: a program that does not exist left the previous program's exit code (0) behind,
+    # so a missing cmake or test counted as success. Stop instead.
+    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) {
+        throw "not found: $exe (run this from Developer PowerShell for VS 2026, so cmake is on the PATH)"
+    }
     $old = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $out = & $exe @argList 2>&1 | ForEach-Object { "$_" }
