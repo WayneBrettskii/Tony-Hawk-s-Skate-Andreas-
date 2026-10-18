@@ -1,3 +1,93 @@
+# CLAUDE HAND-OFF (2026-10-17): session complete; gun fixes, wheel and cheats
+
+Read AGENTS.md, this block, then the test 54 block immediately below. This hand-off supersedes older "nothing committed" and "next step" statements further down. User explicitly requested committing this session and handing back to Claude. This block is included in that commit; use `git log -1` for its identity. No push requested.
+
+## What changed this session
+
+- Tests 50-53 (DESIGN 8.53): separate continuous gun-hand scale diagnostics; minigun low carry with bent arm/support grip and 5-degree downward pitch trim; GunLocalRigid removes gun-hand scale/shear and uses a full affine parent inverse. Broader body/IK conversion remains unchanged.
+- Test 54 (DESIGN 8.55): GTA V-style carried-weapon wheel with native SA icons, and keyboard-only Insert cheat menu. Native cheats, god mode, unlimited ammo/no reload, and give/equip/remove weapons. Code and detailed controls are described below.
+- CMake includes arsenal.cpp and the standalone arsenal_tests target. No game assets/decompiled sources stored; icons come from live TXDs. No changes to reTHAWed plugin, shared link format, or map; no map rebuild needed.
+
+## User feedback versus verification
+
+- Minigun test 52: "That looked better I can live with that" (accepted).
+- M4 test 53: "Okay that seemed to be better forgot to check the minigun tho". M4 improvement confirmed; minigun regression after the scale fix still untested.
+- After test 54 delivery user said "nice work let's commit and make a hand off for claude". This is NOT explicit gameplay confirmation of the wheel/cheats. Treat test 54 rendering and gameplay as **not tested**.
+- Last Release GTA build succeeded with no compiler warnings, installed ASI SHA-256 matched build. arsenal_tests passed; scratch actual-pad-filter harness passed tap/hold/equip/cancel/release and mode/focus/pause/radio cases. Earlier gun maths harness passed 102 basis/position cases plus trim and invalid-input checks.
+
+## First thing next session
+
+Run the test 54 checklist below with the user; inspect logs/gta.log `arsenal:` and `gun mode:` lines. Check wheel icons/count, correct equip and input isolation; ammo/no-reload ON then OFF; god mode ON then OFF; native cheats; minigun carry after test 53. Do not assume these work until observed. If a native icon is missing, the log reports native-icon count and the UI falls back to a weapon name. Gun scale diagnostics include the pre-correction error: judge AFTER row lengths near 1 and AFTER dot products near 0, plus `rigid yes`.
+
+## Controls / known limits
+
+- Gun mode: D-pad Left + Cross; L1 aim; Circle fire; L1+R1 caveman (previously confirmed).
+- Weapon wheel: hold Back/Create/View 400 ms in gun mode, right stick, release to equip; Circle cancels. Outside gun mode Back remains radio. No slow motion across the two game processes.
+- Cheat menu: **Insert** only. User rejected F5 (white diagnostic text); F1-F12 already assigned. Up/Down, Enter, Backspace; Delete removes highlighted owned weapon.
+- Weapon inventory follows SA's one-per-slot rule. All 44 normal types can be equipped, but skate firing remains bullet-only. Projectile/throwable/BMX firing is future work. Native cheats retain base-game effects/limitations; new custom toggles reset on load/new game.
+- Pending future features from older plan: projectiles/throwables, BMX drive-by, bails/roof landing. README opening lines are the user's wording: do not rewrite those without asking.
+
+## Build / test commands (PowerShell in project folder)
+
+`& 'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release --target gta_plugin arsenal_tests`
+
+`& '.\build\Release\arsenal_tests.exe'`
+
+`& '.\build\Release\SkateAndreas-launcher.exe'`
+
+GTA build automatically deploys only to the approved modloader/SkateAndreas folder. Game/reTHAWed assets stay outside source control. Scratch harnesses are in work/ (ignored), production helper test is src/tests/arsenal_tests.cpp. Do not commit further work without a new user request.
+
+---
+# HAND-OFF (2026-10-17): test 54 weapon wheel + Insert cheat menu built and installed
+
+User requested the weapon wheel already planned in DESIGN 8.53, native SA icons, built-in cheats, god mode, unlimited ammo/no reload, and weapon selection. User chose keyboard-only cheat-menu opening and rejected F5; use **Insert**. Earlier: M4 test 53 looked better to user; minigun not rechecked after scale correction (test 52 pose itself was accepted).
+
+**Built:** new arsenal module; Back/Create/View hold 400 ms in gun mode opens a segmented wheel of carried slots, right stick selects, release equips, Circle cancels. Short Back taps pass through; outside gun mode Back retains radio. SA icons read from live weapon TXDs; text fallback if missing, icon count logged. No assets extracted/copied. Wheel does not slow time because both games run together. Input/camera blocked while wheel/menu open, with release guard. Selecting non-bullet/empty weapons keeps the wheel available; firing while skating is still bullet-only.
+
+**Cheat menu:** Insert opens/closes; Up/Down (hold repeats), Enter activates, Backspace returns. Categories: Player custom toggles, Choose weapons, GTA player cheats, World/weather, Traffic, Peds/themes, Vehicle spawns. 90 native entries (unused entry excluded, native infinite ammo covered by custom toggle), using the native handler/flag table. God mode stores/restores damage-proof flags and damage permission for the same ped, maintains health/breath; unlimited ammo uses native flag plus filled clips and clears reload state without resetting shot cadence. Toggles reset on new game/load. Native cheats retain GTA's own behavior, including cheats with lasting effects. Individual effects **not tested**.
+
+**Weapon picker:** all 44 normal weapon types, owned markers, Enter gives/equips with 500 ammo, Delete removes owned weapon. Streams required models with timeout; one weapon per GTA inventory slot. Projectile/throwable/special weapons can be equipped but skate firing support has not been expanded. Use them on foot with normal GTA controls.
+
+**Verified:** MSVC Release gta_plugin build passed with no compiler warnings; installed/build SHA-256 match. `arsenal_tests` passed sectors/dead zone/wrap, stick orientation, weapon bounds, menu wrap. Scratch harness extracted actual ArsenalFilterPad and passed tap/hold/select/equip/cancel/release, focus/pause/mode-loss and radio passthrough. 90 cheat IDs checked unique. Gameplay and rendering **not tested**. Nothing committed. Relevant code: arsenal.cpp/.h, arsenal_logic.h, cheat_entries.inl, shoot.cpp, radio.cpp, padlink.cpp, main.cpp, spawner.cpp, src/tests/arsenal_tests.cpp, CMakeLists.txt.
+
+**Test 54:** run `& 'D:\Mods\my-passthrough\build\Release\SkateAndreas-launcher.exe'`. (1) Insert, Choose weapons: give pistol, M4 and minigun; verify owned tags and replacement within a shared slot. Delete one and give it back. (2) Close menu, skate, Left+Cross for gun mode; hold Back/Create/View, move right stick, release to equip. Check native icons, ammo, selected marker, cancel with Circle, short Back tap, and radio with gun mode off. (3) Insert -> Player: enable god and unlimited ammo; close, sustain firing beyond a magazine, take ordinary gun/fire/fall damage, then turn both OFF and verify normal ammo/reload/damage returns. (4) Try clear wanted, weather and a vehicle-spawn native cheat. Check keyboard/menu navigation does not fire or perform tricks. Inspect `logs\gta.log` for `arsenal:` lines and any exceptions. Please report missing icons or menu/input problems first.
+
+# HAND-OFF (2026-10-17): test 53 M4 gun-hand scale fix built and installed
+
+User accepted test 52 minigun pose ("I can live with that"), then requested the M4 stretching fix.
+
+**Change:** `GunLocalRigid` in body.cpp removes scale/shear from the desired hand basis while preserving its barrel direction, projected top direction and position. A full affine parent inverse replaces the hand's transpose-only inverse, preventing the stretched parent from reintroducing distortion. Invalid or near-singular inputs leave the previous local hand untouched. Scope is the gun-hand conversion only; minigun carry and 5-degree trim retained. Existing broader body/limb conversions are unchanged.
+
+**Verified:** numerical harness compiled from the actual body.cpp maths: 102 basis/position cases (including scaled/sheared parents), minigun trim, and 4 invalid-input cases passed. Release GTA plugin build passed; installed/build SHA-256 match; diff check passed. Gameplay **not tested**. Nothing committed.
+
+**Test 53:** run `& 'D:\Mods\my-passthrough\build\Release\SkateAndreas-launcher.exe'`. Skate with M4, Left + Cross for gun mode, repeatedly hold/release L1 while turning and firing Circle, using near/far targets. Expected: gun keeps its size through aiming transitions. Also verify the accepted minigun pose. In `logs\gta.log`, gun-hand lines should show `rigid yes`, AFTER row lengths near 1.0000 and AFTER dots near 0.0000. The worst basis error still includes the uncorrected turned basis and may remain large; use AFTER values to judge the correction. `rigid skipped` indicates rejected degenerate input needing investigation. Scratch numerical harness: work/gun_math_test.cpp (derived from production code).
+
+# HAND-OFF (2026-10-17): test 52 minigun barrel down-trim built and installed
+
+User test 51: hand placement better, barrel a little too high. Full-weight minigun log samples had barrel/aim dot 1.000 and hand about 0.386 m below shoulder; visible model alignment remains unverified by those numbers.
+
+Test 52 adds a minigun-only 5-degree downward hand rotation, scaled by aim weight. Hand positions and supporting-hand targets remain as in test 51. Shot direction unchanged. This is initial visual tuning, not a confirmed model-axis fix. Log adds `down trim 5.00 deg` at full aim (standard weapons: 0).
+
+**Verified:** Release GTA build passed; installed ASI SHA-256 matches build; diff whitespace check passed. Gameplay **not tested**. Nothing committed. M4 distortion still open.
+**Test:** run `& 'D:\Mods\my-passthrough\build\Release\SkateAndreas-launcher.exe'`, skate with minigun, Left + Cross for gun mode, hold/release L1 and fire Circle at nearby and farther targets while turning. Expected: barrel slightly lower, with previous low hand placement retained. Report whether still too high, now too low, or right, and whether the support grip still looks right. Check `logs\gta.log` for `down trim`.
+
+# HAND-OFF (2026-10-17): test 51 minigun low carry built and installed
+
+**Test 50 result:** user did not visually reproduce M4 enlargement, but the log caught distorted M4 hand axes (85 worst-frame samples, lengths 0.2272-2.0325). Minigun scale was near unit (40 samples, 1.0006-1.0018). M4 scale correction is still open. User clarified minigun aim was wrong because it was held up like a rifle instead of low at the waist.
+
+**Test 51 change:** minigun alone now targets the right hand below the shoulder by 65% of arm length and forward by 45%, keeping the arm bent. Its left hand supports above/forward of the grip. Barrel aiming and chest turn remain; all other weapons keep the standard pose. Log includes `pose minigun low` and `hand below shoulder` in metres. Grip offsets are initial tuning, not verified against the model.
+
+**Verified:** Release GTA build passed and installed ASI hash matches build. Gameplay **not tested**. Nothing committed.
+**Test:** run `& 'D:\Mods\my-passthrough\build\Release\SkateAndreas-launcher.exe'`; skate with the minigun, toggle Left + Cross, hold/release L1 and fire Circle while turning. Expected: the minigun stays down near the waist with bent arms while the barrel follows the aim. Check the left hand's grip and try an M4 afterward to check its pose is unchanged. Read `logs\gta.log` for `pose minigun low`.
+
+# HAND-OFF (2026-10-17): test 50 built and installed; M4 scale diagnosis awaits gameplay
+
+Continued test 49's oversized M4 investigation. The pose is unchanged. `body.cpp` now samples gun bone 24 on every aimed frame and keeps the largest scale/perpendicular-axis error until the next once-per-second log. A separate `gun mode: gun bone 24` line reports row lengths before the turn, after the turn, the parent's lengths, and after conversion through the parent; it includes aim weight and barrel/top alignment. This fixes the missing gun diagnostic without competing with the long chest detail. Row lengths should be near 1; axis dot products near 0. The parent's rigid inverse is a possible source of amplified scale, not a confirmed cause. No normalisation fix applied before evidence.
+
+**Verified:** Release GTA plugin built successfully with MSVC; installed plugin SHA-256 matches the build. **Gameplay: not tested.** Nothing committed.
+
+**Test 50:** run `& 'D:\Mods\my-passthrough\build\Release\SkateAndreas-launcher.exe'`, start both games as usual, skate with an M4, toggle gun mode with D-pad Left + Cross, hold/release L1 on nearby peds while turning, and fire Circle. Try to reproduce the large gun, especially as aiming starts/stops. Read `logs\gta.log` for `gun mode: gun bone 24`. The line should appear every second with sampled aiming frames, including after holding aim continuously. Expected gameplay remains test 49's behaviour; the size issue is not fixed yet. Compare before/turned/parent/after lengths before choosing a correction.
+
 # HAND-OFF (2026-10-17, evening): gun mode on the board (DESIGN 8.53), aim pose at test 49
 
 **Where it stands:** gun mode works: D-pad Left + Cross toggles it, L1 held = GTA's own lock-on, Circle fires (automatic

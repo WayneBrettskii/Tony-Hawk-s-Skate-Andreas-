@@ -6,6 +6,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(SkateAndreas LANGUAGES CXX)
 
+# Standalone numerical checks for weapon-wheel selection and inventory bounds.
+add_executable(arsenal_tests src/tests/arsenal_tests.cpp)
+target_compile_features(arsenal_tests PRIVATE cxx_std_17)
+
 # Both games are 32-bit, so our plugins must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "SkateAndreas must be built as 32-bit. Delete the build folder and run: cmake -B build -A Win32")
@@ -21,7 +25,7 @@ if(NOT EXISTS "${PLUGIN_SDK_LIB}")
 endif()
 
 # --- GTA San Andreas plugin: SkateAndreas.asi ---
-add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp src/gta/recorder.cpp src/gta/pacer.cpp src/gta/hudshow.cpp src/gta/radio.cpp src/gta/spawner.cpp src/gta/tags.cpp src/gta/bmxmode.cpp src/gta/blend.cpp src/gta/gps.cpp src/gta/testrail.cpp src/gta/cars.cpp src/gta/hint.cpp src/gta/shoot.cpp)
+add_library(gta_plugin SHARED src/gta/main.cpp src/gta/skatemode.cpp src/gta/teleport.cpp src/gta/padlink.cpp src/gta/mark.cpp src/gta/skateanim.cpp src/gta/board.cpp src/gta/body.cpp src/gta/recorder.cpp src/gta/pacer.cpp src/gta/hudshow.cpp src/gta/radio.cpp src/gta/spawner.cpp src/gta/tags.cpp src/gta/bmxmode.cpp src/gta/blend.cpp src/gta/gps.cpp src/gta/testrail.cpp src/gta/cars.cpp src/gta/hint.cpp src/gta/shoot.cpp src/gta/arsenal.cpp)
 
 # Match plugin-sdk's own settings for SA plugins (its tools/premake/premake5.lua):
 # GTA SA 1.0 US, newest C++ standard, multi-byte characters, /sdl- off.

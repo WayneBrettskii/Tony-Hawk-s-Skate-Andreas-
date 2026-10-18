@@ -2,6 +2,52 @@
 
 One entry per change, newest at the top. Template: `MODLOG-template.md`.
 
+## [2026-10-17] Session hand-off and user-authorized commit
+
+**Changed:** STATUS.md now opens with a Claude hand-off covering tests 50-54, exact user feedback, verification, controls, next tests and build commands. User requested committing all session work. Older uncommitted notes are historical.
+**Verified:** existing build/test results preserved; no additional gameplay claimed. Wheel/cheats remain **not tested** in game; M4 improvement confirmed by user, minigun regression check pending.
+**Next:** Claude reads STATUS.md and runs the test 54 checklist with the user. No push requested.
+
+## [2026-10-17] 8.55 test 54: weapon wheel and keyboard cheat menu
+
+**Changed:** new arsenal module implements planned Back-hold wheel with native SA weapon icons, inventory/ammo display and equip-on-release; Insert keyboard cheat menu with 90 native cheat entries, custom god mode, unlimited ammo/no reload, and a 44-type give/equip/remove weapon picker. Integrated pad, frame, HUD, radio routing and vehicle-menu exclusion; gun mode stays available with non-bullet/empty slots. Added arsenal_tests target and DESIGN plan. User explicitly rejected F5; Insert used.
+**Why:** user requested GTA V-style wheel, SA gun icons, cheats and inventory selection.
+**Tested how:** Release plugin build passed with no compiler warnings; installed hash matches. arsenal_tests passed (selection/dead zone/wrap/orientation/weapon bounds). Extracted production pad filter harness passed tap/hold/equip/cancel/guard and mode/focus/pause/radio cases. Cheat IDs unique (90). Gameplay/rendering **not tested**.
+**Still broken / not tested:** individual native cheat effects, damage protection/reversal, continuous ammo/no-reload and native icon availability need gameplay testing. No slow motion; no projectile/throwable skate firing added. Native cheats retain base-game limitations. Weapon inventory remains one per GTA slot.
+**Next:** test 54 procedure in STATUS. Nothing committed; earlier gun pose work remains uncommitted too.
+
+## [2026-10-17] 8.53 test 53: gun-hand scale correction
+
+**Changed:** body.cpp gun-hand conversion now orthonormalises the desired basis and uses a checked full affine parent inverse. Preserves position and barrel direction; rejects invalid/near-singular input. Adds `rigid yes/skipped` to diagnostics. DESIGN/STATUS updated; user acceptance of test 52 minigun recorded.
+**Why:** M4 logs showed pre-existing scale/shear amplified by using a transpose as the inverse of a stretched forearm.
+**Tested how:** actual production maths extracted into work/gun_math_test.cpp and compiled with MSVC: 102 basis/position cases, minigun trim preservation and 4 invalid-input cases passed. Release GTA build passed and installed/build hashes match; diff check passed. Gameplay **not tested**.
+**Still broken / not tested:** in-game size stability and minigun regression require user test. Broader skeleton scale sources unchanged.
+**Next:** test 53 in STATUS; judge AFTER lengths/dots, since the worst-error metric includes pre-correction distortion. Nothing committed.
+
+## [2026-10-17] 8.53 test 52: minigun barrel pitch trim
+
+**Changed:** `body.cpp`: 5-degree minigun-only downward hand-basis rotation eased with aim weight; log records applied trim. Hand positions/support targets retained. DESIGN and STATUS updated.
+**Why:** user test 51: hand placement better but barrel a little too high.
+**Tested how:** Release GTA build passed; installed/build ASI hashes match. Diff whitespace check passed. Gameplay **not tested**.
+**Still broken / not tested:** 5 degrees is initial visual tuning; user must verify barrel and grip. M4 distortion remains open.
+**Next:** test 52 procedure in STATUS. Nothing committed.
+
+## [2026-10-17] 8.53 test 51: low minigun carry
+
+**Changed:** `body.cpp`, `body.h`, `shoot.cpp`: explicit minigun pose selection, low right-hand target with bent arm, upper supporting grip for the left hand, and pose/hand-height logging. Other weapons keep their existing targets. DESIGN and STATUS updated with test 50 findings and test 51 plan.
+**Why:** user: minigun held up like a rifle instead of low at the waist.
+**Tested how:** Release GTA plugin built successfully and installed; build/install SHA-256 matched. No compiler warnings; linker performed its normal /LTCG restart. Gameplay **not tested**.
+**Still broken / not tested:** minigun carry height and grip need user verification; M4 matrix distortion measured in test 50 remains unresolved.
+**Next:** test minigun while aiming/firing/turning, then compare the M4. Test command and expected behavior in STATUS. Nothing committed.
+
+## [2026-10-17] 8.53 test 50: measure the intermittent oversized M4
+
+**Changed:** `src/gta/body.cpp`, `body.h`, `shoot.cpp`: separate gun-hand diagnostics; every aimed frame is sampled, the largest basis error retained, and one short line emitted per second with before/turned/parent/after row lengths, after-axis dot products, aim weight and barrel/top alignment. DESIGN plan and STATUS hand-off updated.
+**Why:** test 49's M4 sometimes looked huge, while the long detail line cut off the gun alignment. A transient error needs continuous sampling, not only the first frame of each aim.
+**Tested how:** `cmake --build build --config Release --target gta_plugin` using Visual Studio's bundled CMake succeeded; installed and built ASI SHA-256 hashes match. No compiler warnings; linker reported its normal /LTCG restart. Gameplay **not tested**.
+**Still broken / not tested:** oversized M4 cause and correction; actual diagnostic output in game. Pose unchanged pending measurements.
+**Next:** user runs test 50 in STATUS; inspect row lengths and parent conversion, then choose a targeted correction. Nothing committed.
+
 ## [2026-10-17] 8.53 step 3: CJ points the gun (GTA side)
 
 **Changed:** `src/gta/body.cpp` / `body.h` (aim pose on top of the skater copy: chest turn up to 70 deg, right arm reached at the point, left hand under the barrel for two-handed guns), `src/gta/shoot.cpp` (aim while L1 is held or 0.6 s after a shot, eased over 0.15 s; aim point = locked target or the screen's middle; our impact skipped if GTA's Fire already did damage). Plan and details: DESIGN 8.53 "Step 3 plan" / "Step 3 built".

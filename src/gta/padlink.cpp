@@ -8,6 +8,7 @@
 #include "padlink.h"
 #include "radio.h"
 #include "shoot.h"
+#include "arsenal.h"
 #include "spawner.h"
 #include "skatemode.h"
 
@@ -94,6 +95,7 @@ void Publish()
     in.axes[kAxisL2] = Clamp16(s.LeftShoulder2);
     in.axes[kAxisR2] = Clamp16(s.RightShoulder2);
     // 8.27: Back hold = radio wheel (right stick picks), tap = passed on to reTHAWed
+    ArsenalFilterPad(in.buttons, in.axes);
     RadioFilterPad(in.buttons, in.axes);
     ShootFilterPad(in.buttons, in.axes); // 8.53 step 2
 
@@ -188,7 +190,7 @@ void __cdecl OurUpdatePads()
     }
     // 8.32: the right stick keeps GTA's camera moveable while skate / BMX mode is on,
     // but not while the radio wheel is open (the stick picks the station there).
-    if (blank || spawnerHolds) BlankSafe(blank, blank && !RadioWheelIsOpen());
+    if (blank || spawnerHolds || ArsenalBlocksInput()) BlankSafe(blank, blank && !RadioWheelIsOpen() && !ArsenalBlocksInput());
     BlockReplay(blank);
     if (blank) g_blanked.fetch_add(1, std::memory_order_relaxed);
     if (blank != g_wasBlanking) {

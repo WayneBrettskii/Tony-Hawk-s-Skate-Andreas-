@@ -19,6 +19,7 @@ void SpawnerFrame(LogFn log);
 // padlink.cpp, every controller frame (before GTA uses it): reads the list's
 // buttons; returns true when GTA must not get the controller this frame.
 bool SpawnerPadFilter();
+bool SpawnerIsOpen();
 
 // Once, from DllMain: hook GTA's HUD drawing (the list).
 void SpawnerAddHook();

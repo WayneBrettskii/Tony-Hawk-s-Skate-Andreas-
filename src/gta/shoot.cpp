@@ -33,6 +33,7 @@
 #include <windows.h>
 
 #include "shoot.h"
+#include "arsenal.h"
 #include "skatemode.h"
 #include "body.h" // 8.53 step 3: the aim pose
 #include "../common/link.h"
@@ -453,6 +454,9 @@ void LogHeld(CPlayerPed* ped)
           static_cast<int>(w->m_eWeaponType), static_cast<int>(ped->m_nSelectedWepSlot), info ? FireKind(info->m_nWeaponFire) : "no info",
           static_cast<int>(w->m_nState), w->m_nAmmoInClip, w->m_nAmmoTotal, ped->m_pWeaponObject ? "yes" : "no", ped->m_nWeaponModelId,
           g_on ? "ON" : "off", g_on && g_targetHandle >= 0 ? ", locked" : "");
+    unsigned gunSamples = 0;
+    if (const char* gun = BodyTakeGunInfo(&gunSamples))
+        g_log("gun mode: %s | %u sampled frame(s)", gun, gunSamples);
     if (g_on) {
         unsigned beyond = 0;
         float chest = 0.0f;
@@ -536,11 +540,10 @@ void ShootFrame(LogFn log)
     }
     if (g_on) {
         if (scriptHolds) TurnOff("a script took the controls", false);
-        else if (!w || !IsGun(info)) TurnOff("CJ no longer holds a gun", true);
-        else if (w->m_nAmmoInClip == 0 && w->m_nAmmoTotal == 0) TurnOff("out of ammo", true);
+        // Keep gun mode's wheel available with a non-bullet or empty slot selected.
     }
 
-    if (g_on) {
+    if (g_on && w && IsGun(info) && !ArsenalBlocksInput()) {
         // test 42: the user holds L1 to aim, as in GTA (the old "tap = lock, held 0.5 s = clear" never locked):
         // L1 pressed = lock on (GTA's own first, ours if it finds none); while held, a lost target is looked for
         // again every 0.3 s; L1 released = no lock
@@ -610,7 +613,8 @@ void ShootFrame(LogFn log)
             CEntity* t = Target();
             const CVector p = t ? AimPoint(t, g_targetIsPed) : CentrePoint(ped, info, nullptr, nullptr);
             const float pt[3] = {p.x, p.y, p.z};
-            BodySetAim(pt, g_aimW, !info->m_nFlags.bAimWithArm);
+            const bool minigun = w->m_eWeaponType == WEAPONTYPE_MINIGUN;
+            BodySetAim(pt, g_aimW, minigun || !info->m_nFlags.bAimWithArm, minigun);
         } else {
             BodyClearAim();
         }
@@ -618,13 +622,14 @@ void ShootFrame(LogFn log)
         g_aimW = 0.0f;
         g_aimTick = 0;
         BodyClearAim();
+        if (g_targetHandle >= 0) ClearLock("menu or non-bullet weapon");
     }
 
     if (now - g_nextInfo < 0x80000000ul) {
         g_nextInfo = now + 1000;
         LogHeld(ped);
     }
-    if (pressed && GtaIsForeground()) TestShot(ped);
+    if (pressed && GtaIsForeground() && !ArsenalBlocksInput()) TestShot(ped);
 }
 
 // The gun-mode message in the middle of the screen, and a small red square over the locked target.
@@ -730,6 +735,8 @@ void ShootFilterPad(LONG& buttons, short* axes)
         InterlockedIncrement(&g_heldBack);
     }
 }
+
+bool ShootModeIsOn() { return g_on && SkateModeIsOn(); }
 
 void ShootFrameSafe(LogFn log)
 {

@@ -11,6 +11,7 @@ using LogFn = void (*)(const char* fmt, ...);
 // Call once per GTA world update, on GTA's main thread, after skate mode has placed CJ.
 // Never crashes the game.
 void ShootFrameSafe(LogFn log);
+bool ShootModeIsOn();
 
 // 8.53 step 2: in GTA's pad update, right after the radio wheel's filter, before reTHAWed gets the
 // buttons: the Left + X toggle, and R1 / B kept from reTHAWed while shoot mode is on.

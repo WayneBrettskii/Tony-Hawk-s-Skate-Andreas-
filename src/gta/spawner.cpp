@@ -12,6 +12,7 @@
 #include <windows.h>
 
 #include "spawner.h"
+#include "arsenal.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -227,10 +228,12 @@ bool SpawnerPadFilter()
     return true; // GTA doesn't get the controller while the list is open
 }
 
+bool SpawnerIsOpen() { return g_open; }
+
 void SpawnerFrame(LogFn log)
 {
     const bool key = (GetAsyncKeyState(kKey) & 0x8000) != 0;
-    if (key && !g_keyWas && GtaInFront()) {
+    if (key && !g_keyWas && GtaInFront() && !ArsenalBlocksInput()) {
         if (g_open) {
             Close();
         } else if (SkateModeIsOn()) {

@@ -188,6 +188,36 @@ bool Finite(const M43& m)
     return true;
 }
 
+// Test 53: remove gun scale/shear, then undo the actual parent basis. A transpose
+// only inverts a rigid parent; the M4 logs show that assumption does not hold.
+bool GunLocalRigid(const M43& desired, const M43& parent, M43& result)
+{
+    if (!Finite(desired) || !Finite(parent)) return false;
+    M43 rigid = desired;
+    if (!Unit(rigid.r[0])) return false;
+    rigid.r[2] = rigid.r[2] - rigid.r[0] * Dot(rigid.r[2], rigid.r[0]);
+    if (!Unit(rigid.r[2])) return false;
+    rigid.r[1] = Cross(rigid.r[2], rigid.r[0]);
+    if (!Unit(rigid.r[1])) return false;
+    const V3 c0 = Cross(parent.r[1], parent.r[2]);
+    const V3 c1 = Cross(parent.r[2], parent.r[0]);
+    const V3 c2 = Cross(parent.r[0], parent.r[1]);
+    const float det = Dot(parent.r[0], c0);
+    const float scale = Len(parent.r[0]) * Len(parent.r[1]) * Len(parent.r[2]);
+    if (!std::isfinite(det) || !std::isfinite(scale) || !(scale > 1e-12f) ||
+        std::fabs(det) <= scale * 1e-5f) return false;
+    M43 inv;
+    const float s = 1.0f / det;
+    inv.r[0] = V3(c0.x, c1.x, c2.x) * s;
+    inv.r[1] = V3(c0.y, c1.y, c2.y) * s;
+    inv.r[2] = V3(c0.z, c1.z, c2.z) * s;
+    inv.p = RotateRow(parent.p, inv) * -1.0f;
+    const M43 local = Mul(rigid, inv);
+    if (!Finite(local)) return false;
+    result = local;
+    return true;
+}
+
 // ---- state ----
 struct Target {
     bool valid = false;
@@ -211,6 +241,7 @@ struct AimTarget {
     V3 point;
     float weight = 0.0f;
     bool twoHanded = false;
+    bool minigun = false;
 } g_aim;
 constexpr float kAimChestMaxDeg = 60.0f; // test 49: was 70
 // test 48 (video: "arms were going behind him"): the arm aims at most this far round from the (turned)
@@ -218,11 +249,28 @@ constexpr float kAimChestMaxDeg = 60.0f; // test 49: was 70
 constexpr float kAimArmMaxDeg = 55.0f;
 constexpr float kAimLowerShare = 0.45f; // test 49: part of the chest turn given to the bone below spine1
 constexpr float kAimArmPitchDeg = 60.0f;
+constexpr float kMinigunPitchTrimDeg = 5.0f; // test 52: initial downward visual calibration
 unsigned g_aimArmClamped = 0; // frames where the arm's direction was pulled back in front of the chest
 unsigned g_aimFrames = 0, g_aimBeyond = 0; // frames with the aim pose / with the point further round than the chest limit
 float g_aimChestDeg = 0.0f;                // the chest turn used in the last such frame
 // test 46: one detail line per gun-mode aim (the chest turn read 0 deg in every log line)
 char g_aimInfo[900] = {};
+// Test 50: separate from the long chest detail; retain the worst frame until the next log.
+char g_gunInfo[700] = {};
+float g_gunWorst = -1.0f;
+unsigned g_gunSamples = 0;
+float BasisError(const M43& m)
+{
+    if (!Finite(m)) return INFINITY;
+    float error = 0.0f;
+    for (int k = 0; k < 3; ++k) {
+        const float scale = std::fabs(Len(m.r[k]) - 1.0f);
+        const float skew = std::fabs(Dot(m.r[k], m.r[(k + 1) % 3]));
+        if (scale > error) error = scale;
+        if (skew > error) error = skew;
+    }
+    return error;
+}
 bool g_aimInfoReady = false;
 bool g_aimInfoWanted = true;
 unsigned g_frames = 0;
@@ -512,6 +560,13 @@ void Apply(CPed* ped)
             }
             if (okDir && armLen > 0.1f) {
                 handGoal = world[ra].p + dir * (armLen * 0.97f);
+                if (g_aim.minigun) {
+                    // Test 51: carry the minigun low with a bent elbow. Aim pitch turns the gun,
+                    // rather than lifting the whole heavy weapon to shoulder height.
+                    V3 forward = dir - up * Dot(dir, up);
+                    if (Unit(forward))
+                        handGoal = world[ra].p - up * (armLen * 0.65f) + forward * (armLen * 0.45f);
+                }
                 haveHand = Reach(local, world, parent, n, root, ra, rb, rcw, re, handGoal, wgt);
                 if (haveHand) {
                     ++g_reached;
@@ -565,16 +620,43 @@ void Apply(CPed* ped)
                                             for (int k = 0; k < 3; ++k) eased.r[k] = RotateRow(want.r[k], qp);
                                         }
                                     }
+                                    float pitchTrim = 0.0f;
+                                    if (g_aim.minigun) {
+                                        // Rotate only the hand basis; keep test 51's hand positions and
+                                        // support target. Positive about up x barrel tilts the muzzle down.
+                                        V3 pitchAxis = Cross(up, dHand);
+                                        if (Unit(pitchAxis)) {
+                                            pitchTrim = kMinigunPitchTrimDeg * wgt;
+                                            const M43 trim = AxisAngle(pitchAxis, pitchTrim * 3.14159265f / 180.0f);
+                                            for (int k = 0; k < 3; ++k) eased.r[k] = RotateRow(eased.r[k], trim);
+                                        }
+                                    }
                                     const int hp = parent[gb];
-                                    local[gb] = Mul(eased, InverseRigid(hp < 0 ? root : world[hp]));
+                                    // On invalid input retain the existing pose; never write a bad inverse.
+                                    const bool rigidGun = GunLocalRigid(eased, hp < 0 ? root : world[hp], local[gb]);
                                     Recompute(local, parent, n, root, world);
-                                    if (wantInfo && infoLen > 0 && infoLen < static_cast<int>(sizeof(g_aimInfo))) {
+                                    ++g_gunSamples;
+                                    float error = BasisError(world[gb]);
+                                    const float turnError = BasisError(eased);
+                                    if (turnError > error) error = turnError;
+                                    if (error > g_gunWorst) {
+                                        g_gunWorst = error;
+                                        const M43& par = hp < 0 ? root : world[hp];
                                         V3 gx = world[gb].r[0], gz = world[gb].r[2];
                                         Unit(gx);
                                         Unit(gz);
-                                        infoLen += snprintf(g_aimInfo + infoLen, sizeof(g_aimInfo) - infoLen,
-                                                            " | gun bone %d after: barrel . aim %.2f, top . up %.2f (1 = right on)", gb,
-                                                            Dot(gx, dHand), Dot(gz, z));
+                                        snprintf(g_gunInfo, sizeof(g_gunInfo),
+                                                 "gun bone 24 (node %d), worst basis error %.4f, weight %.3f | row lengths before %.4f %.4f %.4f; "
+                                                 "turned %.4f %.4f %.4f; parent %.4f %.4f %.4f; after %.4f %.4f %.4f | "
+                                                 "after dots xy/xz/yz %.4f %.4f %.4f | barrel . aim %.3f, top . up %.3f | pose %s, hand below shoulder %.3f m, down trim %.2f deg, rigid %s",
+                                                 gb, error, wgt, Len(want.r[0]), Len(want.r[1]), Len(want.r[2]),
+                                                 Len(eased.r[0]), Len(eased.r[1]), Len(eased.r[2]),
+                                                 Len(par.r[0]), Len(par.r[1]), Len(par.r[2]),
+                                                 Len(world[gb].r[0]), Len(world[gb].r[1]), Len(world[gb].r[2]),
+                                                 Dot(world[gb].r[0], world[gb].r[1]), Dot(world[gb].r[0], world[gb].r[2]),
+                                                 Dot(world[gb].r[1], world[gb].r[2]), Dot(gx, dHand), Dot(gz, z),
+                                                 g_aim.minigun ? "minigun low" : "standard", Dot(world[ra].p - world[gb].p, up), pitchTrim,
+                                                 rigidGun ? "yes" : "skipped");
                                     }
                                 }
                                 (void)target;
@@ -585,7 +667,9 @@ void Apply(CPed* ped)
                     if (g_aim.twoHanded) {
                         const int la = idx(G_L_SHOULDER), lb = idx(G_L_ELBOW), lcw = idx(G_L_WRIST), le = idx(G_L_HAND);
                         const V3 handNow = rcw >= 0 ? world[rcw].p : handGoal;
-                        const V3 grip = handNow + dir * 0.18f - gunUp * 0.04f;
+                        const V3 grip = g_aim.minigun
+                            ? handNow + dir * 0.22f + gunUp * 0.10f
+                            : handNow + dir * 0.18f - gunUp * 0.04f;
                         if (Reach(local, world, parent, n, root, la, lb, lcw, le, grip, wgt)) ++g_reached;
                     }
                 }
@@ -708,11 +792,12 @@ void BodySetLimbTargets(const float (*pos)[3], const float* weight)
 
 void BodyClearLimbTargets() { g_limbs.valid = false; }
 
-void BodySetAim(const float* point, float weight, bool twoHanded)
+void BodySetAim(const float* point, float weight, bool twoHanded, bool minigun)
 {
     g_aim.point = V3(point[0], point[1], point[2]);
     g_aim.weight = weight;
     g_aim.twoHanded = twoHanded;
+    g_aim.minigun = minigun;
     g_aim.tick = GetTickCount64();
     g_aim.valid = true;
 }
@@ -729,6 +814,14 @@ const char* BodyTakeAimInfo()
     g_aimInfoReady = false;
     g_aimInfoWanted = false;
     return g_aimInfo;
+}
+
+const char* BodyTakeGunInfo(unsigned* samples)
+{
+    *samples = g_gunSamples;
+    g_gunSamples = 0;
+    g_gunWorst = -1.0f;
+    return *samples ? g_gunInfo : nullptr;
 }
 
 unsigned BodyAimFramesAndReset(unsigned* beyond, float* chestDeg, unsigned* armClamped)

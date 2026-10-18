@@ -11,6 +11,8 @@
 #include <wincodec.h>
 
 #include "radio.h"
+#include "shoot.h"
+#include "arsenal.h"
 #include "../common/paths.h" // 8.44: reTHAWed's folder as the launcher set it
 
 #include <cmath>
@@ -589,7 +591,7 @@ bool RadioWheelIsOpen() { return g_wheelOpen; }
 
 void RadioFilterPad(LONG& buttons, short* axes)
 {
-    if (!RideModeIsOn()) { // 8.29: BMX mode too
+    if (!RideModeIsOn() || ShootModeIsOn() || ArsenalBlocksInput()) { // weapon wheel owns Back in gun mode
         g_backDown = g_backFired = false;
         g_tapFrames = 0;
         g_wheelOpen = false;

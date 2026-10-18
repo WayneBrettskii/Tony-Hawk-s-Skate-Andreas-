@@ -54,6 +54,7 @@
 #include "gps.h"
 #include "hint.h"
 #include "shoot.h"
+#include "arsenal.h"
 #include "testrail.h"
 #include <atomic>
 #include <cstdarg>
@@ -129,6 +130,7 @@ void AddHooks()
         mp::gta::SkateModeFrameSafe(g_link, &Log);
 mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
         // 8.53 step 1: shooting probe (log what CJ holds; F12 = one test shot)
+        mp::gta::ArsenalFrame(&Log);
         mp::gta::ShootFrameSafe(&Log);
         // Test helper: F8 = move CJ to the map waypoint.
         mp::gta::TeleportFrameSafe(&Log);
@@ -170,6 +172,7 @@ mp::gta::CarTick(g_link, &Log); // 8.33 C2: publish the cars' roof rails
     mp::gta::GpsAddHook(&Log);
     // 8.53 step 2: the shoot-mode lock-on marker.
     mp::gta::ShootAddHook();
+    mp::gta::ArsenalAddHook();
 
     g_drawAfter = ReadHookBytes(kDrawHookAddr);
     g_processAfter = ReadHookBytes(kProcessHookAddr);
